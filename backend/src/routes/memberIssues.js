@@ -5,6 +5,12 @@ import { parsePositiveInt } from '../utils/validate.js';
 
 const router = Router();
 
+const issueSelect = `
+  SELECT i.id, i.note, i.status, i.resolution_note, i.created_at, i.resolved_at,
+         m.display_name AS member_name, m.pan AS member_pan
+  FROM member_issues i
+  JOIN members m ON m.id = i.member_id`;
+
 router.get('/count', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -21,12 +27,7 @@ router.get('/', async (req, res, next) => {
   try {
     const status = req.query.status;
     const params = [req.tenantId];
-    let sql = `
-      SELECT i.id, i.note, i.status, i.created_at, i.resolved_at,
-             m.display_name AS member_name, m.pan AS member_pan
-      FROM member_issues i
-      JOIN members m ON m.id = i.member_id
-      WHERE i.tenant_id = ?`;
+    let sql = `${issueSelect} WHERE i.tenant_id = ?`;
     if (status === 'OPEN' || status === 'RESOLVED') {
       sql += ' AND i.status = ?';
       params.push(status);
@@ -49,19 +50,24 @@ router.patch('/:id', async (req, res, next) => {
     }
 
     const resolvedAt = status === 'RESOLVED' ? new Date() : null;
+    let resolutionNote = null;
+    if (status === 'RESOLVED' && req.body.resolutionNote !== undefined) {
+      resolutionNote = String(req.body.resolutionNote || '').trim() || null;
+      if (resolutionNote && resolutionNote.length > 2000) {
+        throw new AppError('Resolution note is too long (max 2000 characters)');
+      }
+    }
+
     const [result] = await pool.query(
-      `UPDATE member_issues SET status = ?, resolved_at = ?
+      `UPDATE member_issues
+       SET status = ?, resolved_at = ?, resolution_note = ?
        WHERE id = ? AND tenant_id = ?`,
-      [status, resolvedAt, id, req.tenantId]
+      [status, resolvedAt, status === 'OPEN' ? null : resolutionNote, id, req.tenantId]
     );
     if (!result.affectedRows) throw new AppError('Issue not found', 404);
 
     const [rows] = await pool.query(
-      `SELECT i.id, i.note, i.status, i.created_at, i.resolved_at,
-              m.display_name AS member_name, m.pan AS member_pan
-       FROM member_issues i
-       JOIN members m ON m.id = i.member_id
-       WHERE i.id = ? AND i.tenant_id = ?`,
+      `${issueSelect} WHERE i.id = ? AND i.tenant_id = ?`,
       [id, req.tenantId]
     );
     res.json(rows[0]);

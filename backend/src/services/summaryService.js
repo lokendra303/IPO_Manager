@@ -1,7 +1,10 @@
 export async function getSummary(pool, tenantId) {
   const [members] = await pool.query(
-    `SELECT m.id, m.display_name, m.pan, m.status, m.relationship_note, m.bulk_group_label
-     FROM members m WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`,
+    `SELECT m.id, m.display_name, m.pan, m.status, m.relationship_note,
+            mg.name AS member_group_name
+     FROM members m
+     LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+     WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`,
     [tenantId]
   );
 
@@ -62,7 +65,8 @@ export async function getSummary(pool, tenantId) {
       pan: m.pan,
       status: m.status,
       relationshipNote: m.relationship_note,
-      bulkGroupLabel: m.bulk_group_label,
+      memberGroupName: m.member_group_name,
+      bulkGroupLabel: m.member_group_name,
       totalGiven: lg.given,
       totalReceived: lg.received,
       bonus: lg.bonus || 0,

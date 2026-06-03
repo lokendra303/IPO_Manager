@@ -15,6 +15,8 @@ import SettingsPage from './pages/SettingsPage';
 import ProfitSharingPage from './pages/ProfitSharingPage';
 import MemberPortalPage from './pages/MemberPortalPage';
 import NotificationsPage from './pages/NotificationsPage';
+import MemberGroupsPage from './pages/MemberGroupsPage';
+import AuditLogPage from './pages/AuditLogPage';
 
 function ManagerRoute({ children }) {
   const { isAuthenticated, loading, user } = useAuth();
@@ -40,6 +42,7 @@ function AppRoutes() {
       <Route path="/" element={<ManagerRoute><DashboardPage /></ManagerRoute>} />
       <Route path="/notifications" element={<ManagerRoute><NotificationsPage /></ManagerRoute>} />
       <Route path="/members" element={<ManagerRoute><MembersPage /></ManagerRoute>} />
+      <Route path="/member-groups" element={<ManagerRoute><MemberGroupsPage /></ManagerRoute>} />
       <Route path="/fund-providers" element={<ManagerRoute><FundProvidersPage /></ManagerRoute>} />
       <Route path="/wallet" element={<ManagerRoute><WalletPage /></ManagerRoute>} />
       <Route path="/ipos" element={<ManagerRoute><IposPage /></ManagerRoute>} />
@@ -47,6 +50,7 @@ function AppRoutes() {
       <Route path="/summary" element={<ManagerRoute><SummaryPage /></ManagerRoute>} />
       <Route path="/settings" element={<ManagerRoute><SettingsPage /></ManagerRoute>} />
       <Route path="/profit-sharing" element={<ManagerRoute><ProfitSharingPage /></ManagerRoute>} />
+      <Route path="/audit-log" element={<ManagerRoute><AuditLogPage /></ManagerRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

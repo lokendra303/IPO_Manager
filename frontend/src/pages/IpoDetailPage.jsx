@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert,
-  message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip,
+  message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined, LockOutlined, UnlockOutlined, PercentageOutlined } from '@ant-design/icons';
 import client from '../api/client';
@@ -18,6 +18,8 @@ export default function IpoDetailPage() {
   const [ipo, setIpo] = useState(null);
   const [applications, setApplications] = useState([]);
   const [members, setMembers] = useState([]);
+  const [memberGroups, setMemberGroups] = useState([]);
+  const [distributeMode, setDistributeMode] = useState('groups');
   const [wallet, setWallet] = useState(0);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [payMode, setPayMode] = useState('single');
@@ -42,15 +44,19 @@ export default function IpoDetailPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [ipoRes, appsRes, membersRes, walletRes] = await Promise.all([
+      const [ipoRes, appsRes, membersRes, walletRes, groupsRes] = await Promise.all([
         client.get(`/ipos/${id}`),
         client.get(`/ipos/${id}/applications`),
         client.get('/members'),
         client.get('/wallet'),
+        client.get('/member-groups'),
       ]);
       setIpo(ipoRes.data);
       setApplications(appsRes.data);
-      setMembers(membersRes.data.filter((m) => m.status === 'ACTIVE'));
+      const activeMembers = membersRes.data.filter((m) => m.status === 'ACTIVE');
+      const uniqueActive = [...new Map(activeMembers.map((m) => [m.id, m])).values()];
+      setMembers(uniqueActive);
+      setMemberGroups(groupsRes.data);
       const accts = walletRes.data.accounts || [];
       setWallet(Number(walletRes.data.balance));
       setBankAccounts(accts);
@@ -66,7 +72,31 @@ export default function IpoDetailPage() {
 
   const activeMemberIds = new Set(applications.map((a) => a.member_id));
   const availableMembers = members.filter((m) => !activeMemberIds.has(m.id));
+  const isMemberAvailable = (memberId) => availableMembers.some((m) => m.id === memberId);
+  const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const isClosed = ipo?.status === 'CLOSED';
+
+  const toggleGroupSelection = (group, checked) => {
+    const ids = group.members.filter((m) => isMemberAvailable(m.id)).map((m) => m.id);
+    setSelectedIds((prev) => {
+      if (checked) return [...new Set([...prev, ...ids])];
+      return prev.filter((id) => !ids.includes(id));
+    });
+  };
+
+  const toggleMemberSelection = (memberId) => {
+    if (!isMemberAvailable(memberId)) return;
+    setSelectedIds((prev) =>
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    );
+  };
+
+  const openDistribute = () => {
+    setSelectedIds([]);
+    setStep(0);
+    setDistributeMode(memberGroups.length ? 'groups' : 'individual');
+    setDistributeOpen(true);
+  };
 
   const totalNeeded = selectedIds.length * Number(ipo?.lot_amount || 0);
 
@@ -414,11 +444,7 @@ export default function IpoDetailPage() {
             >
               <Button
                 type="primary"
-                onClick={() => {
-                  setSelectedIds(availableMembers.map((m) => m.id));
-                  setStep(0);
-                  setDistributeOpen(true);
-                }}
+                onClick={openDistribute}
                 disabled={!availableMembers.length || isClosed}
               >
                 Distribute Funds
@@ -613,7 +639,7 @@ export default function IpoDetailPage() {
             Confirm Distribution
           </Button>,
         ]}
-        width={640}
+        width={720}
         destroyOnClose
       >
         <Steps current={step} items={[{ title: 'Members' }, { title: 'Options' }, { title: 'Confirm' }]} style={{ marginBottom: 24 }} />
@@ -622,13 +648,114 @@ export default function IpoDetailPage() {
           <>
             {availableMembers.length ? (
               <>
-                <Checkbox.Group
-                  style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-                  value={selectedIds}
-                  onChange={setSelectedIds}
-                  options={availableMembers.map((m) => ({ label: `${m.display_name} (${m.pan})`, value: m.id }))}
+                {memberGroups.length > 0 && (
+                  <Segmented
+                    value={distributeMode}
+                    onChange={setDistributeMode}
+                    options={[
+                      { label: 'By sub-group', value: 'groups' },
+                      { label: 'All members', value: 'individual' },
+                    ]}
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
+
+                {distributeMode === 'groups' && memberGroups.length > 0 ? (
+                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                    {memberGroups.map((group) => {
+                      const groupAvailable = group.members.filter((m) => isMemberAvailable(m.id));
+                      const selectedInGroup = groupAvailable.filter((m) => selectedIds.includes(m.id));
+                      const allSelected =
+                        groupAvailable.length > 0 && selectedInGroup.length === groupAvailable.length;
+                      const someSelected = selectedInGroup.length > 0 && !allSelected;
+
+                      return (
+                        <div
+                          key={group.id}
+                          style={{
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 8,
+                            padding: 12,
+                            background: selectedInGroup.length ? '#f8fafc' : undefined,
+                          }}
+                        >
+                          <Checkbox
+                            indeterminate={someSelected}
+                            checked={allSelected}
+                            disabled={!groupAvailable.length}
+                            onChange={(e) => toggleGroupSelection(group, e.target.checked)}
+                          >
+                            <Typography.Text strong>{group.name}</Typography.Text>
+                            <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                              {selectedInGroup.length}/{group.members.length} selected
+                              {selectedInGroup.length > 0 &&
+                                ` · ${formatCurrency(selectedInGroup.length * Number(ipo?.lot_amount || 0))}`}
+                              {!groupAvailable.length && ' · all already applied'}
+                            </Typography.Text>
+                          </Checkbox>
+                          <div style={{ marginLeft: 24, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {group.members.map((m) => {
+                              const available = isMemberAvailable(m.id);
+                              return (
+                                <Checkbox
+                                  key={m.id}
+                                  checked={selectedIds.includes(m.id)}
+                                  disabled={!available}
+                                  onChange={() => toggleMemberSelection(m.id)}
+                                >
+                                  {m.displayName} ({m.pan})
+                                  {!available && (
+                                    <Typography.Text type="secondary"> — already applied</Typography.Text>
+                                  )}
+                                </Checkbox>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {ungroupedAvailable.length > 0 && (
+                      <>
+                        <Divider style={{ margin: '8px 0' }}>No sub-group</Divider>
+                        <Checkbox.Group
+                          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                          value={selectedIds}
+                          onChange={setSelectedIds}
+                          options={ungroupedAvailable.map((m) => ({
+                            label: `${m.display_name} (${m.pan})`,
+                            value: m.id,
+                          }))}
+                        />
+                      </>
+                    )}
+                  </Space>
+                ) : (
+                  <>
+                    <Checkbox.Group
+                      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                      value={selectedIds}
+                      onChange={setSelectedIds}
+                      options={availableMembers.map((m) => ({ label: `${m.display_name} (${m.pan})`, value: m.id }))}
+                    />
+                    <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>
+                      Select all
+                    </Button>
+                  </>
+                )}
+
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                  message={
+                    <>
+                      Total: <strong>{selectedIds.length}</strong> member(s) ×{' '}
+                      <strong>{formatCurrency(ipo?.lot_amount)}</strong> ={' '}
+                      <strong>{formatCurrency(totalNeeded)}</strong>
+                    </>
+                  }
                 />
-                <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>Select all</Button>
               </>
             ) : (
               <Alert type="warning" message="All active members already have applications for this IPO" showIcon />

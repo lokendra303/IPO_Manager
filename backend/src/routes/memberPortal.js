@@ -18,7 +18,7 @@ router.get('/dashboard', async (req, res, next) => {
 router.get('/issues', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, note, status, created_at, resolved_at
+      `SELECT id, note, status, resolution_note, created_at, resolved_at
        FROM member_issues
        WHERE tenant_id = ? AND member_id = ?
        ORDER BY created_at DESC`,

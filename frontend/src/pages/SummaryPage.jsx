@@ -63,7 +63,7 @@ export default function SummaryPage() {
         <span className={Number(v) !== 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
       ),
     },
-    { title: 'Bulk Group', dataIndex: 'bulkGroupLabel', ellipsis: true },
+    { title: 'Sub-Group', dataIndex: 'memberGroupName', ellipsis: true },
   ];
 
   return (

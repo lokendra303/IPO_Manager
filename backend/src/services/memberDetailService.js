@@ -5,7 +5,10 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   const id = parsePositiveInt(memberId, 'member id');
 
   const [members] = await pool.query(
-    'SELECT * FROM members WHERE id = ? AND tenant_id = ?',
+    `SELECT m.*, mg.name AS member_group_name
+     FROM members m
+     LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+     WHERE m.id = ? AND m.tenant_id = ?`,
     [id, tenantId]
   );
   if (!members.length) return null;

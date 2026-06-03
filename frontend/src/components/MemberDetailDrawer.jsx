@@ -105,13 +105,24 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
         <Alert type="error" message={error} showIcon />
       ) : data ? (
         <>
+          {m.status === 'INACTIVE' && (
+            <Alert
+              type="warning"
+              showIcon
+              message="This member is inactive"
+              description="They are excluded from IPO distribute and cannot log in with PAN. Activate them from the Members page to restore access."
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
             <Descriptions.Item label="PAN">{m.pan}</Descriptions.Item>
             <Descriptions.Item label="Status">
-              <Tag color={m.status === 'ACTIVE' ? 'green' : 'red'}>{m.status}</Tag>
+              <Tag color={m.status === 'ACTIVE' ? 'green' : 'default'}>
+                {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+              </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="Relationship">{m.relationship_note || '—'}</Descriptions.Item>
-            <Descriptions.Item label="Bulk Group">{m.bulk_group_label || '—'}</Descriptions.Item>
+            <Descriptions.Item label="Sub-Group">{m.member_group_name || '—'}</Descriptions.Item>
             <Descriptions.Item label="P&L share rules" span={2}>
               {data.profitShare?.configured ? (
                 <div>

@@ -279,6 +279,71 @@ async function applyMemberIssuesV7(conn) {
   }
 }
 
+async function applyMemberGroupsV8(conn) {
+  if (!(await tableExists(conn, 'member_groups'))) {
+    const sql = fs.readFileSync(path.join(__dirname, 'schema-member-groups.sql'), 'utf8');
+    await conn.query(sql);
+    console.log('Created member_groups');
+  }
+
+  if (!(await columnExists(conn, 'members', 'member_group_id'))) {
+    await conn.query(
+      `ALTER TABLE members
+       ADD COLUMN member_group_id INT DEFAULT NULL,
+       ADD INDEX idx_members_group (member_group_id),
+       ADD CONSTRAINT fk_members_group
+         FOREIGN KEY (member_group_id) REFERENCES member_groups(id) ON DELETE SET NULL`
+    );
+    console.log('Added members.member_group_id');
+  }
+
+  const [legacy] = await conn.query(
+    `SELECT DISTINCT tenant_id, bulk_group_label
+     FROM members
+     WHERE bulk_group_label IS NOT NULL AND TRIM(bulk_group_label) != ''`
+  );
+
+  for (const row of legacy) {
+    const label = row.bulk_group_label.trim();
+    const tenantId = row.tenant_id;
+    const [existing] = await conn.query(
+      'SELECT id FROM member_groups WHERE tenant_id = ? AND name = ?',
+      [tenantId, label]
+    );
+    let groupId = existing[0]?.id;
+    if (!groupId) {
+      const [ins] = await conn.query(
+        'INSERT INTO member_groups (tenant_id, name, sort_order) VALUES (?, ?, 0)',
+        [tenantId, label]
+      );
+      groupId = ins.insertId;
+      console.log(`Migrated bulk group "${label}" for tenant ${tenantId}`);
+    }
+    await conn.query(
+      `UPDATE members SET member_group_id = ?
+       WHERE tenant_id = ? AND bulk_group_label = ? AND member_group_id IS NULL`,
+      [groupId, tenantId, label]
+    );
+  }
+}
+
+async function applyIssueResolutionNotesV9(conn) {
+  if (await tableExists(conn, 'member_issues')) {
+    if (!(await columnExists(conn, 'member_issues', 'resolution_note'))) {
+      await conn.query('ALTER TABLE member_issues ADD COLUMN resolution_note TEXT DEFAULT NULL');
+      console.log('Added member_issues.resolution_note');
+    }
+  }
+}
+
+async function applyAuditLogV10(conn) {
+  if (!(await tableExists(conn, 'audit_logs'))) {
+    const sql = fs.readFileSync(path.join(__dirname, 'schema-audit-log.sql'), 'utf8');
+    await conn.query(sql);
+    console.log('Created audit_logs');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -299,6 +364,9 @@ async function migrate() {
   await applyBankAccountsV5(conn);
   await applyBankTransfersV6(conn);
   await applyMemberIssuesV7(conn);
+  await applyMemberGroupsV8(conn);
+  await applyIssueResolutionNotesV9(conn);
+  await applyAuditLogV10(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

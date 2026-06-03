@@ -1,7 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Table, Button, Tag, Modal, Form, Input, Select, Space, message, Popconfirm } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import {
+  Table,
+  Button,
+  Tag,
+  Modal,
+  Form,
+  Input,
+  Select,
+  Space,
+  message,
+  Switch,
+  Segmented,
+  Typography,
+  Popconfirm,
+} from 'antd';
+import { PlusOutlined, EditOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
+import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
 import MemberDetailDrawer from '../components/MemberDetailDrawer';
@@ -12,19 +27,43 @@ import { tableDefaults } from '../utils/table';
 export default function MembersPage() {
   const navigate = useNavigate();
   const [members, setMembers] = useState([]);
+  const [memberGroups, setMemberGroups] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('ALL');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [detailMemberId, setDetailMemberId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [togglingId, setTogglingId] = useState(null);
   const [form] = Form.useForm();
 
   const load = () => {
     setLoading(true);
-    client.get('/members').then((r) => setMembers(r.data)).finally(() => setLoading(false));
+    Promise.all([client.get('/members'), client.get('/member-groups')])
+      .then(([m, g]) => {
+        setMembers(m.data);
+        setMemberGroups(g.data);
+      })
+      .finally(() => setLoading(false));
   };
 
   useEffect(load, []);
+
+  const uniqueMembers = useMemo(() => {
+    const map = new Map();
+    for (const m of members) {
+      if (!map.has(m.id)) map.set(m.id, m);
+    }
+    return [...map.values()];
+  }, [members]);
+
+  const filteredMembers = useMemo(() => {
+    if (statusFilter === 'ALL') return uniqueMembers;
+    return uniqueMembers.filter((m) => m.status === statusFilter);
+  }, [uniqueMembers, statusFilter]);
+
+  const activeCount = uniqueMembers.filter((m) => m.status === 'ACTIVE').length;
+  const inactiveCount = uniqueMembers.filter((m) => m.status === 'INACTIVE').length;
 
   const openDetail = (record) => {
     setDetailMemberId(record.id);
@@ -46,7 +85,7 @@ export default function MembersPage() {
       displayName: record.display_name,
       status: record.status,
       relationshipNote: record.relationship_note,
-      bulkGroupLabel: record.bulk_group_label,
+      memberGroupId: record.member_group_id ?? undefined,
       sortOrder: record.sort_order,
     });
     setModalOpen(true);
@@ -68,21 +107,52 @@ export default function MembersPage() {
     }
   };
 
-  const onDelete = async (id) => {
+  const setMemberStatus = async (record, makeActive) => {
+    const nextStatus = makeActive ? 'ACTIVE' : 'INACTIVE';
+    setTogglingId(record.id);
     try {
-      await client.delete(`/members/${id}`);
-      message.success('Member deleted');
+      await client.patch(`/members/${record.id}`, { status: nextStatus });
+      message.success(makeActive ? 'Member activated' : 'Member set to inactive');
       load();
     } catch (err) {
-      message.error(getErrorMessage(err, 'Delete failed'));
+      message.error(getErrorMessage(err, 'Status update failed'));
+    } finally {
+      setTogglingId(null);
     }
   };
 
   const columns = [
     {
+      title: 'Active',
+      key: 'active',
+      width: 90,
+      render: (_, r) => (
+        <Popconfirm
+          title={r.status === 'ACTIVE' ? 'Set member inactive?' : 'Activate this member?'}
+          description={
+            r.status === 'ACTIVE'
+              ? 'Inactive members are hidden from IPO distribute and cannot log in. History is kept.'
+              : 'Member can receive IPOs and log in with PAN again.'
+          }
+          onConfirm={() => setMemberStatus(r, r.status !== 'ACTIVE')}
+          okText={r.status === 'ACTIVE' ? 'Set inactive' : 'Activate'}
+          disabled={togglingId === r.id}
+        >
+          <Switch
+            checked={r.status === 'ACTIVE'}
+            loading={togglingId === r.id}
+            onClick={(_, e) => e.stopPropagation()}
+          />
+        </Popconfirm>
+      ),
+    },
+    {
       title: 'Status',
       dataIndex: 'status',
-      render: (s) => <Tag color={s === 'ACTIVE' ? 'green' : 'red'}>{s}</Tag>,
+      width: 100,
+      render: (s) => (
+        <Tag color={s === 'ACTIVE' ? 'green' : 'default'}>{s === 'ACTIVE' ? 'Active' : 'Inactive'}</Tag>
+      ),
     },
     { title: 'PAN', dataIndex: 'pan' },
     {
@@ -110,7 +180,7 @@ export default function MembersPage() {
         );
       },
     },
-    { title: 'Bulk Group', dataIndex: 'bulk_group_label' },
+    { title: 'Sub-Group', dataIndex: 'member_group_name', render: (v) => v ? <Tag>{v}</Tag> : '—' },
     {
       title: 'Actions',
       render: (_, r) => (
@@ -126,9 +196,6 @@ export default function MembersPage() {
             Share %
           </Button>
           <Button icon={<EditOutlined />} size="small" onClick={(e) => openEdit(r, e)} />
-          <Popconfirm title="Delete member?" onConfirm={() => onDelete(r.id)}>
-            <Button icon={<DeleteOutlined />} size="small" danger />
-          </Popconfirm>
         </Space>
       ),
     },
@@ -138,19 +205,38 @@ export default function MembersPage() {
     <div>
       <PageHeader
         title="Team Members"
-        subtitle="Manage PAN, status, and view each member's IPO history"
+        subtitle="Use Active/Inactive instead of deleting — inactive members keep all IPO history"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Add Member
-          </Button>
+          <Space>
+            <Link to="/member-groups">
+              <Button icon={<LinkOutlined />}>Manage sub-groups</Button>
+            </Link>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              Add Member
+            </Button>
+          </Space>
         }
       />
-      <ContentCard title={`Members (${members.length})`}>
+      <ContentCard
+        title={`Members (${filteredMembers.length}${statusFilter !== 'ALL' ? ` of ${uniqueMembers.length}` : ''})`}
+      >
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Segmented
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { label: `All (${uniqueMembers.length})`, value: 'ALL' },
+              { label: `Active (${activeCount})`, value: 'ACTIVE' },
+              { label: `Inactive (${inactiveCount})`, value: 'INACTIVE' },
+            ]}
+          />
+        </Space>
         <Table
           rowKey="id"
           loading={loading}
           columns={columns}
-          dataSource={members}
+          dataSource={filteredMembers}
+          rowClassName={(record) => (record.status === 'INACTIVE' ? 'member-row-inactive' : '')}
           onRow={(record) => ({
             onClick: () => openDetail(record),
             style: { cursor: 'pointer' },
@@ -179,14 +265,32 @@ export default function MembersPage() {
           <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
             <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
           </Form.Item>
-          <Form.Item name="status" label="Status" rules={[{ required: true }]}>
-            <Select options={[{ value: 'ACTIVE', label: 'ACTIVE' }, { value: 'INACTIVE', label: 'INACTIVE' }]} />
+          <Form.Item
+            name="status"
+            label="Status"
+            rules={[{ required: true }]}
+            extra={
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Active — included in IPO distribute and member PAN login. Inactive — hidden from new IPOs and login blocked; all history kept.
+              </Typography.Text>
+            }
+          >
+            <Select
+              options={[
+                { value: 'ACTIVE', label: 'Active' },
+                { value: 'INACTIVE', label: 'Inactive' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="memberGroupId" label="Sub-Group">
+            <Select
+              allowClear
+              placeholder="None — or pick e.g. Rinku"
+              options={memberGroups.map((g) => ({ value: g.id, label: g.name }))}
+            />
           </Form.Item>
           <Form.Item name="relationshipNote" label="Relationship Note">
             <Input placeholder="MOTHER, BROTHER, etc." />
-          </Form.Item>
-          <Form.Item name="bulkGroupLabel" label="Bulk Group">
-            <Input placeholder="Rinku (9 Accounts)" />
           </Form.Item>
           <Form.Item name="sortOrder" label="Sort Order">
             <Input type="number" />

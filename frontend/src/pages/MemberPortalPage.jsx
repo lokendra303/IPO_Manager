@@ -101,11 +101,21 @@ export default function MemberPortalPage() {
       dataIndex: 'created_at',
       render: (v) => new Date(v).toLocaleString('en-IN'),
     },
-    { title: 'Note', dataIndex: 'note', ellipsis: true },
+    { title: 'Your note', dataIndex: 'note', ellipsis: true },
     {
       title: 'Status',
       dataIndex: 'status',
-      render: (s) => <Tag color={s === 'OPEN' ? 'orange' : 'green'}>{s}</Tag>,
+      render: (s) => <Tag color={s === 'OPEN' ? 'orange' : 'green'}>{s === 'OPEN' ? 'Open' : 'Resolved'}</Tag>,
+    },
+    {
+      title: 'Manager reply',
+      dataIndex: 'resolution_note',
+      render: (v, row) =>
+        row.status === 'RESOLVED' ? (
+          v ? v : <Typography.Text type="secondary">Resolved (no note)</Typography.Text>
+        ) : (
+          '—'
+        ),
     },
   ];
 
@@ -185,6 +195,14 @@ export default function MemberPortalPage() {
         </Col>
         <Col xs={24} lg={12}>
           <ContentCard title="Your Submitted Issues">
+            {issues.some((i) => i.status === 'RESOLVED' && i.resolution_note) && (
+              <Alert
+                type="success"
+                showIcon
+                message="Your manager replied to a resolved issue — see the reply column below"
+                style={{ marginBottom: 16 }}
+              />
+            )}
             {issues.some((i) => i.status === 'OPEN') && (
               <Alert
                 type="info"

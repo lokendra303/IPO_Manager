@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Segmented, Space, Table, Tag, message } from 'antd';
+import { Button, Form, Input, Modal, Segmented, Space, Table, Tag, Typography, message } from 'antd';
 import { CheckOutlined, ReloadOutlined, UndoOutlined } from '@ant-design/icons';
 import client from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -13,6 +13,8 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
   const [actionId, setActionId] = useState(null);
+  const [resolveTarget, setResolveTarget] = useState(null);
+  const [resolveForm] = Form.useForm();
 
   const load = useCallback(() => {
     setLoading(true);
@@ -27,17 +29,24 @@ export default function NotificationsPage() {
     load();
   }, [load]);
 
-  const updateStatus = async (id, status) => {
+  const updateStatus = async (id, status, resolutionNote) => {
     setActionId(id);
     try {
-      await client.patch(`/member-issues/${id}`, { status });
-      message.success(status === 'RESOLVED' ? 'Issue marked resolved' : 'Issue reopened');
+      await client.patch(`/member-issues/${id}`, { status, resolutionNote });
+      message.success(status === 'RESOLVED' ? 'Issue resolved — member can see your reply' : 'Issue reopened');
+      setResolveTarget(null);
+      resolveForm.resetFields();
       await load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Update failed'));
     } finally {
       setActionId(null);
     }
+  };
+
+  const onConfirmResolve = (values) => {
+    if (!resolveTarget) return;
+    updateStatus(resolveTarget.id, 'RESOLVED', values.resolutionNote);
   };
 
   const filterOptions = [
@@ -65,6 +74,12 @@ export default function NotificationsPage() {
     },
     { title: 'Issue', dataIndex: 'note', ellipsis: true },
     {
+      title: 'Manager reply',
+      dataIndex: 'resolution_note',
+      ellipsis: true,
+      render: (v) => v || '—',
+    },
+    {
       title: 'Status',
       dataIndex: 'status',
       width: 110,
@@ -86,8 +101,10 @@ export default function NotificationsPage() {
             type="link"
             size="small"
             icon={<CheckOutlined />}
-            loading={actionId === row.id}
-            onClick={() => updateStatus(row.id, 'RESOLVED')}
+            onClick={() => {
+              setResolveTarget(row);
+              resolveForm.resetFields();
+            }}
           >
             Resolve
           </Button>
@@ -111,7 +128,7 @@ export default function NotificationsPage() {
     <div>
       <PageHeader
         title="Notifications"
-        subtitle="Member issues and resolutions"
+        subtitle="Member issues — add a reply when resolving so members see your response"
         extra={
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             Refresh
@@ -134,6 +151,34 @@ export default function NotificationsPage() {
           {...tableDefaults}
         />
       </ContentCard>
+
+      <Modal
+        title={resolveTarget ? `Resolve issue — ${resolveTarget.member_name}` : 'Resolve issue'}
+        open={!!resolveTarget}
+        onCancel={() => setResolveTarget(null)}
+        onOk={() => resolveForm.submit()}
+        confirmLoading={!!actionId}
+        okText="Mark resolved"
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Member wrote: <em>{resolveTarget?.note}</em>
+        </Typography.Paragraph>
+        <Form form={resolveForm} layout="vertical" onFinish={onConfirmResolve}>
+          <Form.Item
+            name="resolutionNote"
+            label="Your reply (optional)"
+            extra="Shown to the member in their portal when resolved"
+          >
+            <Input.TextArea
+              rows={4}
+              placeholder="e.g. Payment sent today, UTR 1234567890..."
+              maxLength={2000}
+              showCount
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

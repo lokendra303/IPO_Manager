@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Col, Row, Table, Tag, Button } from 'antd';
 import {
   WalletOutlined,
@@ -6,6 +6,7 @@ import {
   TeamOutlined,
   ArrowRightOutlined,
   BellOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
@@ -47,12 +48,18 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  const pendingReturns = useMemo(
+    () => (summary?.rows ?? []).filter((r) => Number(r.willReceiveFromTeam) > 0),
+    [summary]
+  );
+  const totalPendingReturn = pendingReturns.reduce((s, r) => s + Number(r.willReceiveFromTeam), 0);
+
   if (loading) return <PageLoading />;
 
   const profit = summary?.totals?.totalIpoProfit ?? 0;
   const activeMembers = summary?.rows?.filter((r) => r.status === 'ACTIVE').length ?? 0;
 
-  const cols = [
+  const txnCols = [
     { title: 'Date', dataIndex: 'txn_date', render: (v) => new Date(v).toLocaleString('en-IN') },
     { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={typeColors[t]}>{t.replace(/_/g, ' ')}</Tag> },
     {
@@ -64,6 +71,21 @@ export default function DashboardPage() {
     },
     { title: 'Balance', dataIndex: 'balance_after', render: (v) => formatCurrency(v) },
     { title: 'Notes', dataIndex: 'notes', ellipsis: true },
+  ];
+
+  const pendingCols = [
+    { title: 'Member', dataIndex: 'displayName' },
+    { title: 'PAN', dataIndex: 'pan' },
+    {
+      title: 'Pending return',
+      dataIndex: 'willReceiveFromTeam',
+      render: (v) => <span className="amount-negative">{formatCurrency(v)}</span>,
+    },
+    {
+      title: 'Sub-Group',
+      dataIndex: 'memberGroupName',
+      render: (v) => (v ? <Tag>{v}</Tag> : '—'),
+    },
   ];
 
   return (
@@ -83,6 +105,20 @@ export default function DashboardPage() {
               <Button size="small" type="primary">
                 View notifications
               </Button>
+            </Link>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {pendingReturns.length > 0 && (
+        <Alert
+          type="error"
+          showIcon
+          icon={<ClockCircleOutlined />}
+          message={`${formatCurrency(totalPendingReturn)} pending from ${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'} (Given − Received)`}
+          action={
+            <Link to="/summary">
+              <Button size="small">View summary</Button>
             </Link>
           }
           style={{ marginBottom: 24 }}
@@ -115,6 +151,27 @@ export default function DashboardPage() {
           />
         </Col>
       </Row>
+      {pendingReturns.length > 0 && (
+        <ContentCard
+          title="Pending fund returns"
+          extra={
+            <Link to="/summary">
+              <Button type="link" icon={<ArrowRightOutlined />}>
+                Full summary
+              </Button>
+            </Link>
+          }
+          style={{ marginBottom: 24 }}
+        >
+          <Table
+            rowKey="memberId"
+            columns={pendingCols}
+            dataSource={pendingReturns.slice(0, 8)}
+            pagination={false}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
       <ContentCard
         title="Recent Wallet Transactions"
         extra={
@@ -125,7 +182,7 @@ export default function DashboardPage() {
           </Link>
         }
       >
-        <Table rowKey="id" columns={cols} dataSource={txns} pagination={false} {...tableDefaults} />
+        <Table rowKey="id" columns={txnCols} dataSource={txns} pagination={false} {...tableDefaults} />
       </ContentCard>
     </div>
   );

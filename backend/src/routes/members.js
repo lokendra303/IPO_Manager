@@ -38,6 +38,7 @@ router.get('/', async (req, res, next) => {
 
       `SELECT m.*,
               fp.name AS fund_provider_name,
+              mg.name AS member_group_name,
               mps.id AS share_rule_id,
               mps.fund_provider_id AS share_fund_provider_id,
               mps.provider_percent AS share_profit_provider_percent,
@@ -47,6 +48,7 @@ router.get('/', async (req, res, next) => {
               fp2.name AS share_provider_name
        FROM members m
        LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
+       LEFT JOIN member_groups mg ON mg.id = m.member_group_id
        LEFT JOIN member_profit_shares mps ON mps.member_id = m.id AND mps.tenant_id = m.tenant_id
        LEFT JOIN fund_providers fp2 ON fp2.id = mps.fund_provider_id
        WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`,
@@ -91,7 +93,7 @@ router.post('/', async (req, res, next) => {
 
   try {
 
-    const { pan, displayName, status, relationshipNote, bulkGroupLabel, sortOrder, fundProviderId } = req.body;
+    const { pan, displayName, status, relationshipNote, bulkGroupLabel, sortOrder, fundProviderId, memberGroupId } = req.body;
 
     if (!pan || !displayName?.trim()) throw new AppError('PAN and display name are required');
 
@@ -110,11 +112,22 @@ router.post('/', async (req, res, next) => {
       providerId = pid;
     }
 
+    let groupId = null;
+    if (memberGroupId) {
+      const gid = parsePositiveInt(memberGroupId, 'member group id');
+      const [grp] = await pool.query(
+        'SELECT id FROM member_groups WHERE id = ? AND tenant_id = ?',
+        [gid, req.tenantId]
+      );
+      if (!grp.length) throw new AppError('Member group not found', 404);
+      groupId = gid;
+    }
+
     const [result] = await pool.query(
 
-      `INSERT INTO members (tenant_id, pan, display_name, status, relationship_note, bulk_group_label, sort_order, fund_provider_id)
+      `INSERT INTO members (tenant_id, pan, display_name, status, relationship_note, bulk_group_label, sort_order, fund_provider_id, member_group_id)
 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
       [
 
@@ -133,6 +146,8 @@ router.post('/', async (req, res, next) => {
         Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
 
         providerId,
+
+        groupId,
 
       ]
 
@@ -189,6 +204,8 @@ router.patch('/:id', async (req, res, next) => {
       sortOrder: 'sort_order',
 
       fundProviderId: 'fund_provider_id',
+
+      memberGroupId: 'member_group_id',
 
     };
 
@@ -262,6 +279,34 @@ router.patch('/:id', async (req, res, next) => {
 
         }
 
+      } else if (key === 'memberGroupId') {
+
+        if (req.body[key] === null || req.body[key] === '') {
+
+          fields.push(`${col} = ?`);
+
+          values.push(null);
+
+        } else {
+
+          const gid = parsePositiveInt(req.body[key], 'member group id');
+
+          const [grp] = await pool.query(
+
+            'SELECT id FROM member_groups WHERE id = ? AND tenant_id = ?',
+
+            [gid, req.tenantId]
+
+          );
+
+          if (!grp.length) throw new AppError('Member group not found', 404);
+
+          fields.push(`${col} = ?`);
+
+          values.push(gid);
+
+        }
+
       } else {
 
         fields.push(`${col} = ?`);
@@ -301,57 +346,39 @@ router.patch('/:id', async (req, res, next) => {
 
 
 router.delete('/:id', async (req, res, next) => {
-
   try {
-
     const id = parsePositiveInt(req.params.id, 'member id');
-
     const [existing] = await pool.query(
-
       'SELECT id FROM members WHERE id = ? AND tenant_id = ?',
-
       [id, req.tenantId]
-
     );
-
     if (!existing.length) throw new AppError('Member not found', 404);
 
+    const checks = [
+      ['ipo_applications', 'IPO applications'],
+      ['member_ledger_entries', 'transaction history'],
+      ['member_issues', 'submitted issues'],
+      ['member_profit_shares', 'profit share rules'],
+    ];
 
-
-    const [apps] = await pool.query(
-
-      'SELECT COUNT(*) as cnt FROM ipo_applications WHERE member_id = ? AND tenant_id = ?',
-
-      [id, req.tenantId]
-
-    );
-
-    if (Number(apps[0].cnt) > 0) {
-
-      throw new AppError(
-
-        'Cannot delete member with IPO history. Set status to INACTIVE instead.',
-
-        409
-
+    for (const [table] of checks) {
+      const [rows] = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM ${table} WHERE member_id = ? AND tenant_id = ?`,
+        [id, req.tenantId]
       );
-
+      if (Number(rows[0].cnt) > 0) {
+        throw new AppError(
+          'Members with history cannot be deleted. Set status to Inactive instead — their records will be kept.',
+          409
+        );
+      }
     }
 
-
-
-    await pool.query('DELETE FROM member_ledger_entries WHERE member_id = ? AND tenant_id = ?', [id, req.tenantId]);
-
     await pool.query('DELETE FROM members WHERE id = ? AND tenant_id = ?', [id, req.tenantId]);
-
     res.json({ success: true });
-
   } catch (err) {
-
     next(err);
-
   }
-
 });
 
 

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeEmail, normalizePan } from '../utils/validate.js';
+import { writeAuditLog } from '../services/auditLogService.js';
 
 const router = Router();
 
@@ -48,6 +49,18 @@ router.post('/register', async (req, res, next) => {
       { expiresIn: '7d' }
     );
 
+    await writeAuditLog({
+      tenantId: result.tenantId,
+      actorType: 'manager',
+      actorId: result.userId,
+      actorLabel: email,
+      action: 'AUTH_REGISTER',
+      entityType: 'tenant',
+      entityId: result.tenantId,
+      summary: `Registered team "${tenantName.trim()}"`,
+      ipAddress: req.ip,
+    });
+
     res.status(201).json({
       token,
       user: { id: result.userId, email, tenantId: result.tenantId, tenantName },
@@ -79,6 +92,16 @@ router.post('/login', async (req, res, next) => {
       process.env.JWT_SECRET || 'dev-secret',
       { expiresIn: '7d' }
     );
+
+    await writeAuditLog({
+      tenantId: user.tenant_id,
+      actorType: 'manager',
+      actorId: user.id,
+      actorLabel: email,
+      action: 'AUTH_LOGIN',
+      summary: 'Manager signed in',
+      ipAddress: req.ip,
+    });
 
     res.json({
       token,
@@ -118,6 +141,18 @@ router.post('/member-login', async (req, res, next) => {
       process.env.JWT_SECRET || 'dev-secret',
       { expiresIn: '7d' }
     );
+
+    await writeAuditLog({
+      tenantId: member.tenant_id,
+      actorType: 'member',
+      actorId: member.id,
+      actorLabel: member.display_name,
+      action: 'AUTH_MEMBER_LOGIN',
+      entityType: 'member',
+      entityId: member.id,
+      summary: `Member signed in (${member.pan})`,
+      ipAddress: req.ip,
+    });
 
     res.json({
       token,

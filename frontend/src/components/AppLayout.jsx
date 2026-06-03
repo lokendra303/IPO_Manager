@@ -12,6 +12,8 @@ import {
   SettingOutlined,
   PercentageOutlined,
   BellOutlined,
+  ApartmentOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -47,11 +49,13 @@ export default function AppLayout({ children }) {
       ),
     },
     { key: '/members', icon: <TeamOutlined />, label: <Link to="/members">Members</Link> },
+    { key: '/member-groups', icon: <ApartmentOutlined />, label: <Link to="/member-groups">Sub-Groups</Link> },
     { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
     { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
     { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
     { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
+    { key: '/audit-log', icon: <HistoryOutlined />, label: <Link to="/audit-log">Audit Log</Link> },
     { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
   ];
 
@@ -73,7 +77,7 @@ export default function AppLayout({ children }) {
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[selectedKey]} items={menuItems} style={{ border: 'none' }} />
       </Sider>
-      <Layout>
+      <Layout className="app-main">
         <Header className="app-header">
           <div className="app-header-inner">
             <div className="app-header-left">

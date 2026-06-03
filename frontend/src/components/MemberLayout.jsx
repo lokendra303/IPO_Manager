@@ -10,7 +10,7 @@ export default function MemberLayout({ children }) {
   const { user, logout } = useAuth();
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="app-main" style={{ minHeight: '100vh' }}>
       <Header className="app-header">
         <div className="app-header-inner">
           <div className="app-header-left">
