@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, LockOutlined, UnlockOutlined, PercentageOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
+import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
 import { formatCurrency, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
@@ -32,13 +33,13 @@ export default function IpoDetailPage() {
   const [distributing, setDistributing] = useState(false);
   const [step, setStep] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
-  const [markReceived, setMarkReceived] = useState(true);
   const [markGiven, setMarkGiven] = useState(true);
   const [editedRows, setEditedRows] = useState({});
   const [statusLoading, setStatusLoading] = useState(false);
   const [profitModalOpen, setProfitModalOpen] = useState(false);
   const [profitPreview, setProfitPreview] = useState([]);
   const [profitLoading, setProfitLoading] = useState(false);
+  const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -91,10 +92,29 @@ export default function IpoDetailPage() {
     );
   };
 
-  const openDistribute = () => {
+  const openDistribute = async () => {
     setSelectedIds([]);
     setStep(0);
     setDistributeMode(memberGroups.length ? 'groups' : 'individual');
+    setPaySplits({});
+    try {
+      const { data } = await client.get('/wallet');
+      const accts = data.accounts || [];
+      setBankAccounts(accts);
+      setWallet(Number(data.balance));
+      if (accts.length === 0) {
+        setPayAccountId(null);
+      } else if (accts.length === 1) {
+        setPayMode('single');
+        setPayAccountId(accts[0].id);
+      } else {
+        setPayMode('single');
+        const best = [...accts].sort((a, b) => Number(b.balance) - Number(a.balance))[0];
+        setPayAccountId(best?.id ?? null);
+      }
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not load bank accounts'));
+    }
     setDistributeOpen(true);
   };
 
@@ -106,8 +126,11 @@ export default function IpoDetailPage() {
   const splitTotal = splitDebits.reduce((s, d) => s + d.amount, 0);
 
   const selectedPayAccount = bankAccounts.find((a) => a.id === payAccountId);
-  const insufficientWallet = totalNeeded > wallet;
-  const missingPayAccount = payMode === 'single' && bankAccounts.length > 1 && !payAccountId;
+  const hasBankAccounts = bankAccounts.length > 0;
+  const insufficientWallet = hasBankAccounts && payMode === 'single' && !selectedPayAccount
+    ? false
+    : totalNeeded > wallet;
+  const missingPayAccount = payMode === 'single' && hasBankAccounts && !payAccountId;
   const insufficientSingle =
     payMode === 'single' && selectedPayAccount && totalNeeded > Number(selectedPayAccount.balance);
   const insufficientSplit =
@@ -115,7 +138,12 @@ export default function IpoDetailPage() {
       const acc = bankAccounts.find((a) => a.id === d.bankAccountId);
       return !acc || d.amount > Number(acc.balance);
     }));
-  const insufficient = insufficientWallet || insufficientSingle || insufficientSplit || missingPayAccount;
+  const insufficient = !hasBankAccounts || insufficientSingle || insufficientSplit;
+  const bankStepValid =
+    hasBankAccounts &&
+    (payMode === 'split'
+      ? splitDebits.length > 0 && splitTotal === totalNeeded && !insufficientSplit
+      : payAccountId != null && !insufficientSingle);
   const missingReceiveAccount = bankAccounts.length > 1 && !receiveAccountId;
 
   const onCloseIpo = async () => {
@@ -177,24 +205,38 @@ export default function IpoDetailPage() {
       message.warning('Select at least one member');
       return;
     }
-    if (payMode === 'single' && bankAccounts.length > 1 && !payAccountId) {
-      message.warning('Select which bank account to pay from');
+    if (!bankAccounts.length) {
+      message.warning('Add a bank account under Wallet before distributing');
       return;
     }
-    if (payMode === 'split' && splitTotal !== totalNeeded) {
-      message.warning('Split amounts must equal the total required');
-      return;
+    if (payMode === 'single') {
+      if (!payAccountId) {
+        message.warning('Select which bank account to pay from');
+        return;
+      }
+      if (insufficientSingle) {
+        message.warning('Selected account does not have enough balance');
+        return;
+      }
+    } else if (payMode === 'split') {
+      if (splitTotal !== totalNeeded) {
+        message.warning('Split amounts must equal the total required');
+        return;
+      }
+      if (insufficientSplit) {
+        message.warning('One or more accounts do not have enough balance');
+        return;
+      }
     }
     setDistributing(true);
     try {
       const body = {
         memberIds: selectedIds,
-        markReceived,
         markGiven,
       };
       if (payMode === 'split' && splitDebits.length) {
         body.accountDebits = splitDebits;
-      } else if (payAccountId) {
+      } else {
         body.bankAccountId = payAccountId;
       }
       await client.post(`/ipos/${id}/distribute`, body);
@@ -453,6 +495,11 @@ export default function IpoDetailPage() {
             <Button icon={<SaveOutlined />} onClick={onSaveBulk} disabled={!Object.keys(editedRows).length}>
               Save Changes
             </Button>
+            {applications.length > 0 && (
+              <Button icon={<SearchOutlined />} onClick={() => setAllotmentCheckOpen(true)}>
+                Check allotment (PAN)
+              </Button>
+            )}
             <Button icon={<PercentageOutlined />} onClick={onPreviewProfitShare} loading={profitLoading}>
               Distribute pending P&L
             </Button>
@@ -769,82 +816,163 @@ export default function IpoDetailPage() {
         {step === 1 && (
           <>
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <label><Switch checked={markReceived} onChange={setMarkReceived} /> Mark Received now</label>
-              <label><Switch checked={markGiven} onChange={setMarkGiven} /> Mark Given now</label>
               <div>
-                <Typography.Text strong>Pay from bank account(s)</Typography.Text>
-                <Select
-                  style={{ width: '100%', marginTop: 8 }}
-                  value={payMode}
-                  onChange={setPayMode}
-                  options={[
-                    { value: 'single', label: 'One account' },
-                    { value: 'split', label: 'Split across multiple accounts' },
-                  ]}
-                />
+                <label>
+                  <Switch checked={markGiven} onChange={setMarkGiven} /> Mark as applied (Given)
+                </label>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 0 24px' }}>
+                  Use Receive in the applications table later when IPO funds are returned to your wallet.
+                </Typography.Paragraph>
               </div>
-              {payMode === 'single' ? (
-                <>
-                  <Select
-                    style={{ width: '100%' }}
-                    placeholder="Select bank account"
-                    value={payAccountId}
-                    onChange={setPayAccountId}
-                    options={bankAccounts.map((a) => ({
-                      value: a.id,
-                      label: `${a.label} — ${formatCurrency(a.balance)} available`,
-                    }))}
-                  />
-                  {bankAccounts.length > 1 && !payAccountId && (
-                    <Typography.Text type="danger" style={{ display: 'block', marginTop: 4 }}>
+
+              {!hasBankAccounts ? (
+                <Alert
+                  type="error"
+                  showIcon
+                  message="No bank accounts"
+                  description={
+                    <>
+                      Add at least one bank account under{' '}
+                      <Link to="/wallet">Wallet</Link> before distributing IPO funds.
+                    </>
+                  }
+                />
+              ) : (
+                <div className="distribute-bank-section">
+                  <Typography.Text strong>
+                    <BankOutlined style={{ marginRight: 6 }} />
+                    Pay from bank account
+                  </Typography.Text>
+                  <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                    Total needed: {formatCurrency(totalNeeded)} · Team wallet total: {formatCurrency(wallet)}
+                  </Typography.Paragraph>
+
+                  {bankAccounts.length > 1 && (
+                    <Select
+                      style={{ width: '100%', marginBottom: 12 }}
+                      value={payMode}
+                      onChange={(v) => {
+                        setPayMode(v);
+                        if (v === 'split') setPaySplits({});
+                      }}
+                      options={[
+                        { value: 'single', label: 'Pay from one account' },
+                        { value: 'split', label: 'Split across multiple accounts' },
+                      ]}
+                    />
+                  )}
+
+                  {payMode === 'single' ? (
+                    <div className="distribute-bank-options">
+                      {bankAccounts.map((a) => {
+                        const canAfford = Number(a.balance) >= totalNeeded;
+                        return (
+                          <div
+                            key={a.id}
+                            className={`distribute-bank-option${payAccountId === a.id ? ' distribute-bank-option--selected' : ''}${!canAfford ? ' distribute-bank-option--disabled' : ''}`}
+                            onClick={() => canAfford && setPayAccountId(a.id)}
+                            onKeyDown={(e) => {
+                              if (canAfford && (e.key === 'Enter' || e.key === ' ')) {
+                                e.preventDefault();
+                                setPayAccountId(a.id);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={canAfford ? 0 : -1}
+                          >
+                            <div className="distribute-bank-option-main">
+                              <span className="distribute-bank-option-label">{a.label}</span>
+                              {a.bank_name && (
+                                <span className="distribute-bank-option-sub">{a.bank_name}</span>
+                              )}
+                            </div>
+                            <div className="distribute-bank-option-balance">
+                              <span className={canAfford ? '' : 'amount-negative'}>
+                                {formatCurrency(a.balance)} available
+                              </span>
+                              {!canAfford && (
+                                <Typography.Text type="danger" style={{ fontSize: 11, display: 'block' }}>
+                                  Need {formatCurrency(totalNeeded)}
+                                </Typography.Text>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div>
+                      {bankAccounts.map((a) => (
+                        <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                          <span style={{ flex: 1 }}>
+                            <strong>{a.label}</strong>
+                            <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                              ({formatCurrency(a.balance)} available)
+                            </Typography.Text>
+                          </span>
+                          <InputNumber
+                            min={0}
+                            max={a.balance}
+                            style={{ width: 140 }}
+                            placeholder="₹0"
+                            value={paySplits[a.id]}
+                            onChange={(v) => setPaySplits((prev) => ({ ...prev, [a.id]: v }))}
+                          />
+                        </div>
+                      ))}
+                      <Typography.Text type={splitTotal === totalNeeded ? undefined : 'danger'}>
+                        Split total: {formatCurrency(splitTotal)} / {formatCurrency(totalNeeded)}
+                      </Typography.Text>
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => {
+                          let remaining = totalNeeded;
+                          const next = {};
+                          const sorted = [...bankAccounts].sort((a, b) => b.balance - a.balance);
+                          for (const acc of sorted) {
+                            if (remaining <= 0) break;
+                            const use = Math.min(remaining, Number(acc.balance));
+                            if (use > 0) {
+                              next[acc.id] = use;
+                              remaining -= use;
+                            }
+                          }
+                          setPaySplits(next);
+                        }}
+                      >
+                        Auto-fill from available balances
+                      </Button>
+                    </div>
+                  )}
+
+                  {missingPayAccount && (
+                    <Typography.Text type="danger" style={{ display: 'block', marginTop: 8 }}>
                       Select an account to pay from
                     </Typography.Text>
                   )}
-                </>
-              ) : (
-                <div>
-                  {bankAccounts.map((a) => (
-                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                      <span style={{ flex: 1 }}>{a.label} ({formatCurrency(a.balance)})</span>
-                      <InputNumber
-                        min={0}
-                        max={a.balance}
-                        style={{ width: 140 }}
-                        placeholder="₹0"
-                        value={paySplits[a.id]}
-                        onChange={(v) => setPaySplits((prev) => ({ ...prev, [a.id]: v }))}
-                      />
-                    </div>
-                  ))}
-                  <Typography.Text type={splitTotal === totalNeeded ? undefined : 'danger'}>
-                    Split total: {formatCurrency(splitTotal)} / {formatCurrency(totalNeeded)}
-                  </Typography.Text>
-                  <Button
-                    type="link"
-                    size="small"
-                    onClick={() => {
-                      let remaining = totalNeeded;
-                      const next = {};
-                      const sorted = [...bankAccounts].sort((a, b) => b.balance - a.balance);
-                      for (const acc of sorted) {
-                        if (remaining <= 0) break;
-                        const use = Math.min(remaining, Number(acc.balance));
-                        if (use > 0) {
-                          next[acc.id] = use;
-                          remaining -= use;
-                        }
-                      }
-                      setPaySplits(next);
-                    }}
-                  >
-                    Auto-fill from available balances
-                  </Button>
+                  {insufficientSingle && selectedPayAccount && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={`${selectedPayAccount.label} does not have enough balance`}
+                      description={`Available ${formatCurrency(selectedPayAccount.balance)}, need ${formatCurrency(totalNeeded)}`}
+                    />
+                  )}
                 </div>
               )}
             </Space>
             <div style={{ marginTop: 16 }}>
               <Button onClick={() => setStep(0)}>Back</Button>
-              <Button type="primary" style={{ marginLeft: 8 }} onClick={() => setStep(2)}>Next</Button>
+              <Button
+                type="primary"
+                style={{ marginLeft: 8 }}
+                disabled={!bankStepValid}
+                onClick={() => setStep(2)}
+              >
+                Next
+              </Button>
             </div>
           </>
         )}
@@ -854,32 +982,50 @@ export default function IpoDetailPage() {
             <p>Members: <strong>{selectedIds.length}</strong></p>
             <p>Lot amount: <strong>{formatCurrency(ipo?.lot_amount)}</strong></p>
             <p>Total required: <strong>{formatCurrency(totalNeeded)}</strong></p>
-            <p>Total wallet: <strong>{formatCurrency(wallet)}</strong></p>
-            {payMode === 'single' && selectedPayAccount && (
-              <p>Pay from: <strong>{selectedPayAccount.label}</strong> ({formatCurrency(selectedPayAccount.balance)} available)</p>
-            )}
-            {payMode === 'split' && splitDebits.length > 0 && (
-              <ul style={{ margin: '8px 0', paddingLeft: 20 }}>
-                {splitDebits.map((d) => {
-                  const acc = bankAccounts.find((a) => a.id === d.bankAccountId);
-                  return (
-                    <li key={d.bankAccountId}>{acc?.label}: {formatCurrency(d.amount)}</li>
-                  );
-                })}
-              </ul>
-            )}
+            {payMode === 'single' && selectedPayAccount ? (
+              <Alert
+                type="info"
+                showIcon
+                icon={<BankOutlined />}
+                style={{ marginBottom: 12 }}
+                message={`Pay from: ${selectedPayAccount.label}`}
+                description={`${formatCurrency(totalNeeded)} will be debited from this account (${formatCurrency(selectedPayAccount.balance)} available)`}
+              />
+            ) : payMode === 'split' && splitDebits.length > 0 ? (
+              <Alert
+                type="info"
+                showIcon
+                icon={<BankOutlined />}
+                style={{ marginBottom: 12 }}
+                message="Pay from multiple accounts"
+                description={
+                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                    {splitDebits.map((d) => {
+                      const acc = bankAccounts.find((a) => a.id === d.bankAccountId);
+                      return (
+                        <li key={d.bankAccountId}>
+                          {acc?.label}: {formatCurrency(d.amount)}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                }
+              />
+            ) : null}
             {insufficient && (
               <Alert
                 type="error"
-                message="Insufficient funds"
+                message="Cannot distribute"
                 description={
-                  missingPayAccount
+                  !hasBankAccounts
+                    ? 'Add bank accounts under Wallet first.'
+                    : missingPayAccount
                     ? 'Select which bank account to pay from.'
                     : insufficientSplit
                     ? 'Adjust split amounts so they match the total and each account has enough balance.'
                     : insufficientSingle
                       ? `${selectedPayAccount?.label} does not have enough for ${formatCurrency(totalNeeded)}.`
-                      : `Need ${formatCurrency(totalNeeded)} but only ${formatCurrency(wallet)} total in wallet. Add funds from a Fund Provider first.`
+                      : 'Check bank balances and try again.'
                 }
                 showIcon
               />
@@ -887,6 +1033,16 @@ export default function IpoDetailPage() {
           </>
         )}
       </Modal>
+
+      <AllotmentCheckModal
+        ipoId={Number(id)}
+        open={allotmentCheckOpen}
+        onClose={() => setAllotmentCheckOpen(false)}
+        onApplyStatus={(appId, status) => {
+          updateRow(appId, 'allotmentStatus', status);
+          if (status === 'NOT_ALLOTED') updateRow(appId, 'profitLoss', null);
+        }}
+      />
     </div>
   );
 }

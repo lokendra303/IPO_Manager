@@ -9,6 +9,7 @@ import { distributeIpo } from '../services/distributeService.js';
 import { creditWallet } from '../services/walletService.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
+import { VALID_REGISTRARS } from '../utils/allotmentCheck.js';
 
 
 
@@ -48,7 +49,7 @@ router.post('/', async (req, res, next) => {
 
   try {
 
-    const { name, lotAmount, status, openDate } = req.body;
+    const { name, lotAmount, status, openDate, registrar } = req.body;
 
     if (!name?.trim()) throw new AppError('IPO name is required');
 
@@ -60,13 +61,17 @@ router.post('/', async (req, res, next) => {
 
     }
 
+    if (registrar && !VALID_REGISTRARS.includes(registrar)) {
+      throw new AppError('Invalid registrar');
+    }
+
 
 
     const [result] = await pool.query(
 
-      `INSERT INTO ipos (tenant_id, name, lot_amount, status, open_date) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO ipos (tenant_id, name, lot_amount, status, open_date, registrar) VALUES (?, ?, ?, ?, ?, ?)`,
 
-      [req.tenantId, name.trim(), lot, status || 'OPEN', openDate || null]
+      [req.tenantId, name.trim(), lot, status || 'OPEN', openDate || null, registrar || null]
 
     );
 
@@ -118,7 +123,7 @@ router.patch('/:id', async (req, res, next) => {
 
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
-    const { name, lotAmount, status, openDate } = req.body;
+    const { name, lotAmount, status, openDate, registrar } = req.body;
 
     const [existing] = await pool.query(
 
@@ -170,6 +175,14 @@ router.patch('/:id', async (req, res, next) => {
 
       values.push(openDate || null);
 
+    }
+
+    if (registrar !== undefined) {
+      if (registrar && !VALID_REGISTRARS.includes(registrar)) {
+        throw new AppError('Invalid registrar');
+      }
+      fields.push('registrar = ?');
+      values.push(registrar || null);
     }
 
     if (!fields.length) throw new AppError('No fields to update');
@@ -292,7 +305,7 @@ router.post('/:id/distribute', async (req, res, next) => {
 
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
-    const { memberIds, amounts, markReceived, markGiven, bankAccountId, accountDebits } = req.body;
+    const { memberIds, amounts, markGiven, bankAccountId, accountDebits } = req.body;
 
     if (!memberIds?.length) throw new AppError('Select at least one member');
 
@@ -309,8 +322,6 @@ router.post('/:id/distribute', async (req, res, next) => {
         memberIds,
 
         amounts,
-
-        markReceived: markReceived !== false,
 
         markGiven: markGiven !== false,
 

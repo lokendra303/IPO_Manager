@@ -344,6 +344,15 @@ async function applyAuditLogV10(conn) {
   }
 }
 
+async function applyIpoRegistrarV11(conn) {
+  if (!(await columnExists(conn, 'ipos', 'registrar'))) {
+    await conn.query(
+      `ALTER TABLE ipos ADD COLUMN registrar VARCHAR(32) DEFAULT NULL`
+    );
+    console.log('Added ipos.registrar');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -367,6 +376,7 @@ async function migrate() {
   await applyMemberGroupsV8(conn);
   await applyIssueResolutionNotesV9(conn);
   await applyAuditLogV10(conn);
+  await applyIpoRegistrarV11(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

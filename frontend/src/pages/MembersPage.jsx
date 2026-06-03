@@ -14,6 +14,8 @@ import {
   Segmented,
   Typography,
   Popconfirm,
+  Alert,
+  Result,
 } from 'antd';
 import { PlusOutlined, EditOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -29,6 +31,7 @@ export default function MembersPage() {
   const [members, setMembers] = useState([]);
   const [memberGroups, setMemberGroups] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -39,10 +42,23 @@ export default function MembersPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([client.get('/members'), client.get('/member-groups')])
-      .then(([m, g]) => {
-        setMembers(m.data);
-        setMemberGroups(g.data);
+    setLoadError(null);
+    Promise.allSettled([client.get('/members'), client.get('/member-groups')])
+      .then(([membersRes, groupsRes]) => {
+        if (membersRes.status === 'fulfilled') {
+          setMembers(Array.isArray(membersRes.value.data) ? membersRes.value.data : []);
+        } else {
+          setMembers([]);
+          setLoadError(getErrorMessage(membersRes.reason, 'Could not load members'));
+        }
+        if (groupsRes.status === 'fulfilled') {
+          setMemberGroups(Array.isArray(groupsRes.value.data) ? groupsRes.value.data : []);
+        } else {
+          setMemberGroups([]);
+          if (membersRes.status === 'fulfilled') {
+            message.warning('Sub-groups could not be loaded — members list is still available');
+          }
+        }
       })
       .finally(() => setLoading(false));
   };
@@ -201,6 +217,24 @@ export default function MembersPage() {
     },
   ];
 
+  if (loadError && !loading && !uniqueMembers.length) {
+    return (
+      <div>
+        <PageHeader title="Team Members" />
+        <Result
+          status="error"
+          title="Could not load members"
+          subTitle={loadError}
+          extra={
+            <Button type="primary" onClick={load}>
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -217,6 +251,21 @@ export default function MembersPage() {
           </Space>
         }
       />
+      {loadError && (
+        <Alert
+          type="warning"
+          showIcon
+          closable
+          style={{ marginBottom: 16 }}
+          message="Some data could not be refreshed"
+          description={loadError}
+          action={
+            <Button size="small" onClick={load}>
+              Retry
+            </Button>
+          }
+        />
+      )}
       <ContentCard
         title={`Members (${filteredMembers.length}${statusFilter !== 'ALL' ? ` of ${uniqueMembers.length}` : ''})`}
       >

@@ -23,9 +23,50 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 20px 20px 16px;
+  padding: 16px 12px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.app-sider-logo-text-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-sider.ant-layout-sider-collapsed .app-sider-logo-text-wrap {
+  display: none;
+}
+
+.app-sider.ant-layout-sider-collapsed .app-sider-logo {
+  justify-content: center;
+  padding: 16px 8px;
+}
+
+.app-sider-collapse-btn {
+  flex-shrink: 0;
+  color: #94a3b8 !important;
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+
+.app-sider-collapse-btn:hover {
+  color: #f8fafc !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.app-sider.ant-layout-sider-collapsed .app-sider-collapse-btn {
+  display: none;
+}
+
+.app-sider-backdrop {
+  display: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
 .app-sider-logo-icon {
@@ -53,6 +94,125 @@ body {
   color: #64748b;
   font-size: 11px;
   font-weight: 400;
+}
+
+.app-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-sider-menu {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.app-sider-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.app-sider-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+/* Hide Ant Design’s default sider trigger — it overlaps main content */
+.app-sider .ant-layout-sider-trigger {
+  display: none !important;
+}
+
+.app-menu-toggle {
+  display: inline-flex !important;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0 !important;
+  margin-right: 12px;
+  font-size: 18px !important;
+  color: #0f766e !important;
+  border: 1px solid #99f6e4;
+  border-radius: 10px;
+  background: #f0fdfa !important;
+  box-shadow: 0 1px 2px rgba(13, 148, 136, 0.12);
+}
+
+.app-menu-toggle:hover {
+  background: #ccfbf1 !important;
+  border-color: #5eead4;
+  color: #0d9488 !important;
+}
+
+.app-menu-toggle--collapsed {
+  background: #ffffff !important;
+  border-color: #e2e8f0;
+  color: #0f172a !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.app-menu-toggle--collapsed:hover {
+  background: #f8fafc !important;
+  border-color: #cbd5e1;
+}
+
+.app-header-team-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+@media (max-width: 991px) {
+  .app-layout-nav-open .app-sider-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    background: rgba(15, 23, 42, 0.45);
+  }
+
+  .app-layout-nav-open .app-sider {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 200;
+    height: 100vh !important;
+    box-shadow: 4px 0 24px rgba(15, 23, 42, 0.2);
+  }
+
+  .app-sider .app-sider-collapse-btn {
+    display: none;
+  }
+
+  .app-header-left {
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+  }
+}
+
+@media (min-width: 992px) {
+  .app-sider.ant-layout-sider-collapsed .app-sider-menu .ant-menu-item,
+  .app-sider.ant-layout-sider-collapsed .app-sider-menu .ant-menu-submenu-title {
+    padding-inline: calc(50% - 14px) !important;
+  }
+}
+
+.stat-card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 16px;
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.stat-card-link:hover {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+  transform: translateY(-1px);
 }
 
 .app-header {
@@ -93,9 +253,10 @@ body {
 
 .app-header-left {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  flex-direction: row;
+  align-items: center;
   min-width: 0;
+  flex: 1;
 }
 
 .app-header-team-label {
@@ -556,6 +717,82 @@ body {
 
 .pro-table .ant-table-tbody > tr > td {
   font-size: 13px;
+}
+
+.allotment-check-modal .allotment-check-portals {
+  padding: 12px 14px;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  border-radius: 10px;
+}
+
+.allotment-check-modal .allotment-check-registrar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-allotment-banner .ant-alert-description {
+  margin-top: 4px;
+}
+
+.distribute-bank-section {
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.distribute-bank-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.distribute-bank-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.distribute-bank-option:hover:not(.distribute-bank-option--disabled) {
+  border-color: #99f6e4;
+}
+
+.distribute-bank-option--selected {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
+}
+
+.distribute-bank-option--disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #fafafa;
+}
+
+.distribute-bank-option-label {
+  font-weight: 600;
+  color: #0f172a;
+  display: block;
+}
+
+.distribute-bank-option-sub {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.distribute-bank-option-balance {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .summary-mismatch td {

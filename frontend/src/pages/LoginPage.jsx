@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, Form, Input, Button, Tabs, Typography, message } from 'antd';
 import { MailOutlined, LockOutlined, TeamOutlined, IdcardOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/errors';
 
@@ -11,8 +11,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
 
   if (isAuthenticated) {
-    navigate(user?.role === 'member' ? '/portal' : '/');
-    return null;
+    return <Navigate to={user?.role === 'member' ? '/portal' : '/'} replace />;
   }
 
   const onMemberLogin = async (values) => {
@@ -75,24 +74,8 @@ export default function LoginPage() {
           <Typography.Text className="login-card-sub">Sign in as manager or member</Typography.Text>
           <Tabs
             size="large"
+            defaultActiveKey="login"
             items={[
-              {
-                key: 'login',
-                label: 'Manager',
-                children: (
-                  <Form layout="vertical" onFinish={onLogin} size="large">
-                    <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
-                      <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
-                    </Form.Item>
-                    <Form.Item name="password" label="Password" rules={[{ required: true }]}>
-                      <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Password" />
-                    </Form.Item>
-                    <Button type="primary" htmlType="submit" block loading={loading} size="large">
-                      Sign in
-                    </Button>
-                  </Form>
-                ),
-              },
               {
                 key: 'member',
                 label: 'Member',
@@ -117,10 +100,28 @@ export default function LoginPage() {
                       />
                     </Form.Item>
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                      No password needed — use the PAN registered by your manager.
+                      No password — use the PAN your manager added under Members. Opens{' '}
+                      <Typography.Text code>/portal</Typography.Text> after sign-in.
                     </Typography.Text>
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
-                      View my IPOs
+                      Open member portal
+                    </Button>
+                  </Form>
+                ),
+              },
+              {
+                key: 'login',
+                label: 'Manager',
+                children: (
+                  <Form layout="vertical" onFinish={onLogin} size="large">
+                    <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
+                      <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
+                    </Form.Item>
+                    <Form.Item name="password" label="Password" rules={[{ required: true }]}>
+                      <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Password" />
+                    </Form.Item>
+                    <Button type="primary" htmlType="submit" block loading={loading} size="large">
+                      Sign in
                     </Button>
                   </Form>
                 ),

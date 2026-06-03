@@ -6,17 +6,27 @@ import {
   Form,
   Input,
   Row,
+  Space,
   Table,
   Tag,
   Typography,
   message,
+  Result,
 } from 'antd';
 import {
   StockOutlined,
   ClockCircleOutlined,
   RiseOutlined,
   CheckCircleOutlined,
+  LinkOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
+import {
+  getAllotmentPortals,
+  openAllotmentPortal,
+  copyToClipboard,
+  EXCHANGE_PORTALS,
+} from '../utils/allotmentCheck';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
 import PageHeader from '../components/PageHeader';
@@ -36,16 +46,32 @@ export default function MemberPortalPage() {
   const [dashboard, setDashboard] = useState(null);
   const [issues, setIssues] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
-  const load = () =>
-    Promise.all([client.get('/member-portal/dashboard'), client.get('/member-portal/issues')]).then(
-      ([d, i]) => {
-        setDashboard(d.data);
-        setIssues(i.data);
+  const load = () => {
+    setLoadError(null);
+    return Promise.allSettled([
+      client.get('/member-portal/dashboard'),
+      client.get('/member-portal/issues'),
+    ]).then(([dashRes, issuesRes]) => {
+      if (dashRes.status === 'fulfilled') {
+        setDashboard(dashRes.value.data);
+      } else {
+        setDashboard(null);
+        setLoadError(getErrorMessage(dashRes.reason, 'Could not load your portal'));
       }
-    );
+      if (issuesRes.status === 'fulfilled') {
+        setIssues(Array.isArray(issuesRes.value.data) ? issuesRes.value.data : []);
+      } else {
+        setIssues([]);
+        if (dashRes.status === 'fulfilled') {
+          message.warning('Could not load your issues list');
+        }
+      }
+    });
+  };
 
   useEffect(() => {
     load().finally(() => setLoading(false));
@@ -68,8 +94,36 @@ export default function MemberPortalPage() {
 
   if (loading) return <PageLoading />;
 
+  if (loadError && !dashboard) {
+    return (
+      <div>
+        <PageHeader title="Member portal" />
+        <Result
+          status="error"
+          title="Could not load portal"
+          subTitle={loadError}
+          extra={
+            <Button type="primary" onClick={() => { setLoading(true); load().finally(() => setLoading(false)); }}>
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
   const stats = dashboard?.stats ?? {};
   const profit = stats.totalIpoProfit ?? 0;
+  const memberPan = dashboard?.member?.pan;
+  const hasPendingAllotment = (dashboard?.ipoApplications ?? []).some(
+    (a) => a.allotmentStatus === 'PENDING'
+  );
+
+  const copyMyPan = async () => {
+    if (!memberPan) return;
+    const ok = await copyToClipboard(memberPan);
+    message[ok ? 'success' : 'error'](ok ? 'Your PAN copied' : 'Could not copy');
+  };
 
   const ipoCols = [
     { title: 'IPO', dataIndex: 'ipoName' },
@@ -91,6 +145,23 @@ export default function MemberPortalPage() {
           <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
             {formatCurrency(v)}
           </span>
+        ),
+    },
+    {
+      title: 'Check status',
+      key: 'check',
+      render: (_, row) =>
+        row.allotmentStatus === 'PENDING' ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<LinkOutlined />}
+            onClick={() => openAllotmentPortal(EXCHANGE_PORTALS[0].url)}
+          >
+            BSE portal
+          </Button>
+        ) : (
+          '—'
         ),
     },
   ];
@@ -163,6 +234,38 @@ export default function MemberPortalPage() {
       </Row>
 
       <ContentCard title="Your IPO Applications" style={{ marginBottom: 24 }}>
+        {hasPendingAllotment && memberPan && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Check allotment with your PAN"
+            description={
+              <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                <span>
+                  After allotment day, use official BSE/NSE sites: select the IPO name, enter PAN{' '}
+                  <Typography.Text code>{memberPan}</Typography.Text>, then search. Results are not
+                  fetched automatically into this app.
+                </span>
+                <Space wrap>
+                  <Button size="small" icon={<CopyOutlined />} onClick={copyMyPan}>
+                    Copy my PAN
+                  </Button>
+                  {getAllotmentPortals().map((p) => (
+                    <Button
+                      key={p.id}
+                      size="small"
+                      icon={<LinkOutlined />}
+                      onClick={() => openAllotmentPortal(p.url)}
+                    >
+                      {p.name}
+                    </Button>
+                  ))}
+                </Space>
+              </Space>
+            }
+          />
+        )}
         <Table
           rowKey="id"
           columns={ipoCols}

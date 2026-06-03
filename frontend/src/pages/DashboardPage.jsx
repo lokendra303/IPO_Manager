@@ -143,12 +143,14 @@ export default function DashboardPage() {
           />
         </Col>
         <Col xs={24} sm={8}>
-          <StatCard
-            title="Active Members"
-            value={activeMembers}
-            icon={<TeamOutlined />}
-            variant="info"
-          />
+          <Link to="/members" className="stat-card-link">
+            <StatCard
+              title="Active Members"
+              value={activeMembers}
+              icon={<TeamOutlined />}
+              variant="info"
+            />
+          </Link>
         </Col>
       </Row>
       {pendingReturns.length > 0 && (

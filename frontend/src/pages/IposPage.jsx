@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography, Select } from 'antd';
 import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons';
+import { REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
@@ -123,6 +124,9 @@ export default function IposPage() {
           </Form.Item>
           <Form.Item name="lotAmount" label="Lot Amount (₹)" rules={[{ required: true }]}>
             <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="registrar" label="Allotment registrar (optional)">
+            <Select allowClear placeholder="KFintech, Link Intime, etc." options={REGISTRAR_OPTIONS} />
           </Form.Item>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             New IPOs start as OPEN. Close from the IPO page when finished.

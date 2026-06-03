@@ -1,6 +1,6 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { debitWallet, debitWalletFromAccounts, ensureWallet } from './walletService.js';
-import { assertAccountDebits } from './bankAccountService.js';
+import { assertAccountDebits, requireBankAccountId } from './bankAccountService.js';
 import { dedupeIds, parsePositiveInt, parseAmount } from '../utils/validate.js';
 
 export async function distributeIpo(conn, {
@@ -8,7 +8,6 @@ export async function distributeIpo(conn, {
   ipoId,
   memberIds,
   amounts,
-  markReceived,
   markGiven,
   userId,
   bankAccountId,
@@ -64,7 +63,19 @@ export async function distributeIpo(conn, {
 
   await ensureWallet(conn, tenantId);
 
-  if (accountDebits?.length) {
+  if (!accountDebits?.length) {
+    const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
+    const [accRows] = await conn.query(
+      'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
+      [resolvedAccountId, tenantId]
+    );
+    if (!accRows.length) throw new AppError('Bank account not found', 404);
+    if (Number(accRows[0].balance) < total) {
+      throw new AppError(
+        `Insufficient balance in ${accRows[0].label}. Need ₹${total}, available ₹${accRows[0].balance}`
+      );
+    }
+  } else {
     await assertAccountDebits(conn, tenantId, accountDebits, total);
     for (const d of accountDebits) {
       const [accRows] = await conn.query(
@@ -75,23 +86,6 @@ export async function distributeIpo(conn, {
       if (Number(accRows[0].balance) < Number(d.amount)) {
         throw new AppError(
           `Insufficient balance in ${accRows[0].label}. Need ₹${d.amount}, available ₹${accRows[0].balance}`
-        );
-      }
-    }
-  } else {
-    const wallet = await ensureWallet(conn, tenantId);
-    if (wallet.balance < total) {
-      throw new AppError(`Insufficient wallet balance. Need ₹${total}, available ₹${wallet.balance}`);
-    }
-    if (bankAccountId) {
-      const [accRows] = await conn.query(
-        'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
-        [bankAccountId, tenantId]
-      );
-      if (!accRows.length) throw new AppError('Bank account not found', 404);
-      if (Number(accRows[0].balance) < total) {
-        throw new AppError(
-          `Insufficient balance in ${accRows[0].label}. Need ₹${total}, available ₹${accRows[0].balance}`
         );
       }
     }
@@ -112,8 +106,8 @@ export async function distributeIpo(conn, {
         memberId,
         tenantId,
         amount,
-        markReceived ? now : null,
-        markReceived ? 'Received' : null,
+        null,
+        null,
         markGiven ? now : null,
         markGiven ? 'Given' : null,
       ]
@@ -143,10 +137,11 @@ export async function distributeIpo(conn, {
       userId,
     });
   } else {
+    const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
     await debitWallet(conn, {
       tenantId,
       amount: total,
-      bankAccountId,
+      bankAccountId: resolvedAccountId,
       type: 'DISTRIBUTE_OUT',
       refType: 'ipo',
       refId: ipoIdNum,
