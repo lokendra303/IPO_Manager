@@ -1,0 +1,149 @@
+CREATE TABLE IF NOT EXISTS tenants (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  role ENUM('owner', 'super_admin') NOT NULL DEFAULT 'owner',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS members (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  status ENUM('ACTIVE', 'INACTIVE') NOT NULL DEFAULT 'ACTIVE',
+  pan VARCHAR(10) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  relationship_note VARCHAR(100) DEFAULT NULL,
+  bulk_group_label VARCHAR(100) DEFAULT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  fund_provider_id INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_members_tenant (tenant_id),
+  INDEX idx_members_provider (fund_provider_id)
+);
+
+CREATE TABLE IF NOT EXISTS fund_providers (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  contact_info JSON DEFAULT NULL,
+  default_account_label VARCHAR(100) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_providers_tenant (tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS manager_bank_accounts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  label VARCHAR(100) NOT NULL,
+  bank_name VARCHAR(100) DEFAULT NULL,
+  account_number VARCHAR(50) DEFAULT NULL,
+  is_default TINYINT(1) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_bank_accounts_tenant (tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS owner_wallets (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL UNIQUE,
+  balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS provider_transactions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  fund_provider_id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  txn_date DATETIME NOT NULL,
+  account_label VARCHAR(100) DEFAULT NULL,
+  notes TEXT DEFAULT NULL,
+  provider_profit DECIMAL(15, 2) DEFAULT NULL,
+  created_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_provider_txn_provider (fund_provider_id)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  type ENUM('PROVIDER_IN', 'DISTRIBUTE_OUT', 'RETURN_IN', 'ADJUSTMENT', 'PROVIDER_OUT', 'TRANSFER_OUT', 'TRANSFER_IN') NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  balance_after DECIMAL(15, 2) NOT NULL,
+  ref_type VARCHAR(50) DEFAULT NULL,
+  ref_id INT DEFAULT NULL,
+  txn_date DATETIME NOT NULL,
+  notes TEXT DEFAULT NULL,
+  created_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_wallet_txn_tenant (tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS ipos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  lot_amount DECIMAL(15, 2) NOT NULL,
+  status ENUM('OPEN', 'CLOSED') NOT NULL DEFAULT 'OPEN',
+  open_date DATE DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_ipos_tenant (tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS ipo_applications (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ipo_id INT NOT NULL,
+  member_id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  date_received DATETIME DEFAULT NULL,
+  trns_received VARCHAR(20) DEFAULT NULL,
+  date_given DATETIME DEFAULT NULL,
+  trns_given VARCHAR(20) DEFAULT NULL,
+  allotment_status ENUM('PENDING', 'ALLOTED', 'NOT_ALLOTED') NOT NULL DEFAULT 'PENDING',
+  profit_loss DECIMAL(15, 2) DEFAULT NULL,
+  remarks TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_ipo_member (ipo_id, member_id),
+  INDEX idx_apps_ipo (ipo_id)
+);
+
+CREATE TABLE IF NOT EXISTS member_ledger_entries (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  member_id INT NOT NULL,
+  tenant_id INT NOT NULL,
+  type ENUM('GIVEN', 'RECEIVED', 'BONUS') NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  txn_date DATETIME NOT NULL,
+  ipo_application_id INT DEFAULT NULL,
+  notes TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (ipo_application_id) REFERENCES ipo_applications(id) ON DELETE SET NULL,
+  INDEX idx_ledger_member (member_id)
+);

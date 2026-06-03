@@ -1,0 +1,112 @@
+import { useEffect, useState } from 'react';
+import { Col, Row, Table, Tag, Button } from 'antd';
+import {
+  WalletOutlined,
+  RiseOutlined,
+  TeamOutlined,
+  ArrowRightOutlined,
+} from '@ant-design/icons';
+import { Link } from 'react-router-dom';
+import client from '../api/client';
+import { formatCurrency } from '../utils/format';
+import PageHeader from '../components/PageHeader';
+import StatCard from '../components/StatCard';
+import ContentCard from '../components/ContentCard';
+import PageLoading from '../components/PageLoading';
+import { tableDefaults } from '../utils/table';
+
+const typeColors = {
+  PROVIDER_IN: 'success',
+  DISTRIBUTE_OUT: 'warning',
+  RETURN_IN: 'processing',
+  PROVIDER_OUT: 'error',
+  ADJUSTMENT: 'default',
+};
+
+export default function DashboardPage() {
+  const [wallet, setWallet] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [txns, setTxns] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      client.get('/wallet'),
+      client.get('/summary'),
+      client.get('/wallet/transactions'),
+    ])
+      .then(([w, s, t]) => {
+        setWallet(w.data);
+        setSummary(s.data);
+        setTxns(t.data.slice(0, 8));
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <PageLoading />;
+
+  const profit = summary?.totals?.totalIpoProfit ?? 0;
+  const activeMembers = summary?.rows?.filter((r) => r.status === 'ACTIVE').length ?? 0;
+
+  const cols = [
+    { title: 'Date', dataIndex: 'txn_date', render: (v) => new Date(v).toLocaleString('en-IN') },
+    { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={typeColors[t]}>{t.replace(/_/g, ' ')}</Tag> },
+    {
+      title: 'Amount',
+      dataIndex: 'amount',
+      render: (v) => (
+        <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>{formatCurrency(v)}</span>
+      ),
+    },
+    { title: 'Balance', dataIndex: 'balance_after', render: (v) => formatCurrency(v) },
+    { title: 'Notes', dataIndex: 'notes', ellipsis: true },
+  ];
+
+  return (
+    <div>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Overview of your wallet, team, and recent activity"
+      />
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={8}>
+          <StatCard
+            title="Wallet Balance"
+            value={formatCurrency(wallet?.balance ?? 0)}
+            icon={<WalletOutlined />}
+            variant="primary"
+          />
+        </Col>
+        <Col xs={24} sm={8}>
+          <StatCard
+            title="Total IPO Profit"
+            value={formatCurrency(profit)}
+            icon={<RiseOutlined />}
+            variant={profit >= 0 ? 'success' : 'danger'}
+            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+          />
+        </Col>
+        <Col xs={24} sm={8}>
+          <StatCard
+            title="Active Members"
+            value={activeMembers}
+            icon={<TeamOutlined />}
+            variant="info"
+          />
+        </Col>
+      </Row>
+      <ContentCard
+        title="Recent Wallet Transactions"
+        extra={
+          <Link to="/wallet">
+            <Button type="link" icon={<ArrowRightOutlined />}>
+              View all
+            </Button>
+          </Link>
+        }
+      >
+        <Table rowKey="id" columns={cols} dataSource={txns} pagination={false} {...tableDefaults} />
+      </ContentCard>
+    </div>
+  );
+}

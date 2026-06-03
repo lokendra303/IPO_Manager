@@ -1,0 +1,2 @@
+-- Optional: run once if migrating existing DB for duplicate PAN protection at DB level
+-- ALTER TABLE members ADD UNIQUE KEY uk_tenant_pan (tenant_id, pan);

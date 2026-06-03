@@ -1,0 +1,360 @@
+import { Router } from 'express';
+
+import { pool } from '../db/pool.js';
+
+import { AppError } from '../middleware/errorHandler.js';
+
+import { getMemberDetail, assertUniquePan } from '../services/memberDetailService.js';
+
+import { parsePositiveInt } from '../utils/validate.js';
+
+
+
+const router = Router();
+
+
+
+const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/i;
+
+
+
+function normalizePan(pan) {
+
+  const p = String(pan).toUpperCase().trim();
+
+  if (!PAN_REGEX.test(p)) throw new AppError('Invalid PAN format (e.g. ABCDE1234F)');
+
+  return p;
+
+}
+
+
+
+router.get('/', async (req, res, next) => {
+
+  try {
+
+    const [rows] = await pool.query(
+
+      `SELECT m.*,
+              fp.name AS fund_provider_name,
+              mps.id AS share_rule_id,
+              mps.fund_provider_id AS share_fund_provider_id,
+              mps.provider_percent AS share_profit_provider_percent,
+              mps.manager_percent AS share_profit_manager_percent,
+              mps.loss_provider_percent AS share_loss_provider_percent,
+              mps.loss_manager_percent AS share_loss_manager_percent,
+              fp2.name AS share_provider_name
+       FROM members m
+       LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
+       LEFT JOIN member_profit_shares mps ON mps.member_id = m.id AND mps.tenant_id = m.tenant_id
+       LEFT JOIN fund_providers fp2 ON fp2.id = mps.fund_provider_id
+       WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`,
+
+      [req.tenantId]
+
+    );
+
+    res.json(rows);
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+router.get('/:id/detail', async (req, res, next) => {
+
+  try {
+
+    const detail = await getMemberDetail(pool, req.tenantId, req.params.id);
+
+    if (!detail) throw new AppError('Member not found', 404);
+
+    res.json(detail);
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+router.post('/', async (req, res, next) => {
+
+  try {
+
+    const { pan, displayName, status, relationshipNote, bulkGroupLabel, sortOrder, fundProviderId } = req.body;
+
+    if (!pan || !displayName?.trim()) throw new AppError('PAN and display name are required');
+
+    const normalizedPan = normalizePan(pan);
+
+    await assertUniquePan(pool, req.tenantId, normalizedPan);
+
+    let providerId = null;
+    if (fundProviderId) {
+      const pid = parsePositiveInt(fundProviderId, 'fund provider id');
+      const [fp] = await pool.query(
+        'SELECT id FROM fund_providers WHERE id = ? AND tenant_id = ?',
+        [pid, req.tenantId]
+      );
+      if (!fp.length) throw new AppError('Fund provider not found', 404);
+      providerId = pid;
+    }
+
+    const [result] = await pool.query(
+
+      `INSERT INTO members (tenant_id, pan, display_name, status, relationship_note, bulk_group_label, sort_order, fund_provider_id)
+
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+
+      [
+
+        req.tenantId,
+
+        normalizedPan,
+
+        displayName.trim(),
+
+        status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
+
+        relationshipNote?.trim() || null,
+
+        bulkGroupLabel?.trim() || null,
+
+        Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+
+        providerId,
+
+      ]
+
+    );
+
+    const [rows] = await pool.query('SELECT * FROM members WHERE id = ?', [result.insertId]);
+
+    res.status(201).json(rows[0]);
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+router.patch('/:id', async (req, res, next) => {
+
+  try {
+
+    const id = parsePositiveInt(req.params.id, 'member id');
+
+    const [existing] = await pool.query(
+
+      'SELECT * FROM members WHERE id = ? AND tenant_id = ?',
+
+      [id, req.tenantId]
+
+    );
+
+    if (!existing.length) throw new AppError('Member not found', 404);
+
+
+
+    const fields = [];
+
+    const values = [];
+
+    const map = {
+
+      pan: 'pan',
+
+      displayName: 'display_name',
+
+      status: 'status',
+
+      relationshipNote: 'relationship_note',
+
+      bulkGroupLabel: 'bulk_group_label',
+
+      sortOrder: 'sort_order',
+
+      fundProviderId: 'fund_provider_id',
+
+    };
+
+
+
+    for (const [key, col] of Object.entries(map)) {
+
+      if (req.body[key] === undefined) continue;
+
+      if (key === 'pan') {
+
+        const p = normalizePan(req.body[key]);
+
+        await assertUniquePan(pool, req.tenantId, p, id);
+
+        fields.push(`${col} = ?`);
+
+        values.push(p);
+
+      } else if (key === 'displayName') {
+
+        if (!req.body[key]?.trim()) throw new AppError('Display name cannot be empty');
+
+        fields.push(`${col} = ?`);
+
+        values.push(req.body[key].trim());
+
+      } else if (key === 'status') {
+
+        if (!['ACTIVE', 'INACTIVE'].includes(req.body[key])) {
+
+          throw new AppError('Status must be ACTIVE or INACTIVE');
+
+        }
+
+        fields.push(`${col} = ?`);
+
+        values.push(req.body[key]);
+
+      } else if (key === 'sortOrder') {
+
+        fields.push(`${col} = ?`);
+
+        values.push(Number.isFinite(Number(req.body[key])) ? Number(req.body[key]) : 0);
+
+      } else if (key === 'fundProviderId') {
+
+        if (req.body[key] === null || req.body[key] === '') {
+
+          fields.push(`${col} = ?`);
+
+          values.push(null);
+
+        } else {
+
+          const pid = parsePositiveInt(req.body[key], 'fund provider id');
+
+          const [fp] = await pool.query(
+
+            'SELECT id FROM fund_providers WHERE id = ? AND tenant_id = ?',
+
+            [pid, req.tenantId]
+
+          );
+
+          if (!fp.length) throw new AppError('Fund provider not found', 404);
+
+          fields.push(`${col} = ?`);
+
+          values.push(pid);
+
+        }
+
+      } else {
+
+        fields.push(`${col} = ?`);
+
+        values.push(req.body[key]?.trim?.() ?? req.body[key] ?? null);
+
+      }
+
+    }
+
+
+
+    if (!fields.length) throw new AppError('No fields to update');
+
+    values.push(id, req.tenantId);
+
+    await pool.query(
+
+      `UPDATE members SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`,
+
+      values
+
+    );
+
+    const [rows] = await pool.query('SELECT * FROM members WHERE id = ?', [id]);
+
+    res.json(rows[0]);
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+router.delete('/:id', async (req, res, next) => {
+
+  try {
+
+    const id = parsePositiveInt(req.params.id, 'member id');
+
+    const [existing] = await pool.query(
+
+      'SELECT id FROM members WHERE id = ? AND tenant_id = ?',
+
+      [id, req.tenantId]
+
+    );
+
+    if (!existing.length) throw new AppError('Member not found', 404);
+
+
+
+    const [apps] = await pool.query(
+
+      'SELECT COUNT(*) as cnt FROM ipo_applications WHERE member_id = ? AND tenant_id = ?',
+
+      [id, req.tenantId]
+
+    );
+
+    if (Number(apps[0].cnt) > 0) {
+
+      throw new AppError(
+
+        'Cannot delete member with IPO history. Set status to INACTIVE instead.',
+
+        409
+
+      );
+
+    }
+
+
+
+    await pool.query('DELETE FROM member_ledger_entries WHERE member_id = ? AND tenant_id = ?', [id, req.tenantId]);
+
+    await pool.query('DELETE FROM members WHERE id = ? AND tenant_id = ?', [id, req.tenantId]);
+
+    res.json({ success: true });
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+export default router;
+
