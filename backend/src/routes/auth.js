@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { normalizeEmail } from '../utils/validate.js';
+import { normalizeEmail, normalizePan } from '../utils/validate.js';
 
 const router = Router();
 
@@ -95,11 +95,74 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+router.post('/member-login', async (req, res, next) => {
+  try {
+    const pan = normalizePan(req.body.pan);
+
+    const [rows] = await pool.query(
+      `SELECT m.id, m.tenant_id, m.display_name, m.pan, m.status, t.name AS tenant_name
+       FROM members m
+       JOIN tenants t ON t.id = m.tenant_id
+       WHERE UPPER(m.pan) = ? AND m.status = 'ACTIVE'`,
+      [pan]
+    );
+
+    if (!rows.length) throw new AppError('No active member found with this PAN', 401);
+    if (rows.length > 1) {
+      throw new AppError('This PAN is registered with multiple teams. Contact your manager.', 401);
+    }
+
+    const member = rows[0];
+    const token = jwt.sign(
+      { memberId: member.id, tenantId: member.tenant_id, role: 'member' },
+      process.env.JWT_SECRET || 'dev-secret',
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: member.id,
+        memberId: member.id,
+        displayName: member.display_name,
+        pan: member.pan,
+        tenantId: member.tenant_id,
+        tenantName: member.tenant_name,
+        role: 'member',
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/me', async (req, res, next) => {
   try {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw new AppError('Unauthorized', 401);
     const payload = jwt.verify(header.slice(7), process.env.JWT_SECRET || 'dev-secret');
+
+    if (payload.role === 'member') {
+      const [rows] = await pool.query(
+        `SELECT m.id, m.display_name, m.pan, m.tenant_id, m.status, t.name AS tenant_name
+         FROM members m
+         JOIN tenants t ON t.id = m.tenant_id
+         WHERE m.id = ? AND m.tenant_id = ?`,
+        [payload.memberId, payload.tenantId]
+      );
+      if (!rows.length) throw new AppError('Member not found', 404);
+      const m = rows[0];
+      if (m.status !== 'ACTIVE') throw new AppError('Member account is inactive', 403);
+      return res.json({
+        id: m.id,
+        memberId: m.id,
+        displayName: m.display_name,
+        pan: m.pan,
+        tenantId: m.tenant_id,
+        tenantName: m.tenant_name,
+        role: 'member',
+      });
+    }
 
     const [rows] = await pool.query(
       `SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name

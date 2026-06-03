@@ -53,3 +53,11 @@ export function dedupeIds(ids) {
   const parsed = ids.map((id) => parsePositiveInt(id, 'member id'));
   return [...new Set(parsed)];
 }
+
+const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/i;
+
+export function normalizePan(pan) {
+  const p = String(pan).toUpperCase().trim();
+  if (!PAN_REGEX.test(p)) throw new AppError('Invalid PAN format (e.g. ABCDE1234F)');
+  return p;
+}

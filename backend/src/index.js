@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
-import { authMiddleware, tenantScope } from './middleware/auth.js';
+import { authMiddleware, tenantScope, requireMember, managerOnly } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/auth.js';
 import membersRoutes from './routes/members.js';
@@ -14,6 +14,8 @@ import applicationsRoutes from './routes/applications.js';
 import summaryRoutes from './routes/summary.js';
 import settingsRoutes from './routes/settings.js';
 import profitSharesRoutes from './routes/profitShares.js';
+import memberPortalRoutes from './routes/memberPortal.js';
+import memberIssuesRoutes from './routes/memberIssues.js';
 
 dotenv.config();
 
@@ -34,6 +36,8 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authLimiter, authRoutes);
 
 app.use('/api', authMiddleware, tenantScope);
+app.use('/api/member-portal', requireMember, memberPortalRoutes);
+app.use('/api', managerOnly);
 app.use('/api/members', membersRoutes);
 app.use('/api/fund-providers', fundProvidersRoutes);
 app.use('/api/wallet', walletRoutes);
@@ -43,6 +47,7 @@ app.use('/api/ipo-applications', applicationsRoutes);
 app.use('/api/summary', summaryRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/profit-shares', profitSharesRoutes);
+app.use('/api/member-issues', memberIssuesRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

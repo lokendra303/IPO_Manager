@@ -271,6 +271,14 @@ async function applyBankTransfersV6(conn) {
   }
 }
 
+async function applyMemberIssuesV7(conn) {
+  if (!(await tableExists(conn, 'member_issues'))) {
+    const sql = fs.readFileSync(path.join(__dirname, 'schema-member-issues.sql'), 'utf8');
+    await conn.query(sql);
+    console.log('Created member_issues');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -290,6 +298,7 @@ async function migrate() {
   await applyMemberMultiRulesV4(conn);
   await applyBankAccountsV5(conn);
   await applyBankTransfersV6(conn);
+  await applyMemberIssuesV7(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

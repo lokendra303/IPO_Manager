@@ -657,21 +657,23 @@ export default function IpoDetailPage() {
                 />
               </div>
               {payMode === 'single' ? (
-                <Select
-                  style={{ width: '100%' }}
-                  placeholder="Select bank account"
-                  value={payAccountId}
-                  onChange={setPayAccountId}
-                  options={bankAccounts.map((a) => ({
-                    value: a.id,
-                    label: `${a.label} — ${formatCurrency(a.balance)} available`,
-                  }))}
-                />
-                {bankAccounts.length > 1 && !payAccountId && (
-                  <Typography.Text type="danger" style={{ display: 'block', marginTop: 4 }}>
-                    Select an account to pay from
-                  </Typography.Text>
-                )}
+                <>
+                  <Select
+                    style={{ width: '100%' }}
+                    placeholder="Select bank account"
+                    value={payAccountId}
+                    onChange={setPayAccountId}
+                    options={bankAccounts.map((a) => ({
+                      value: a.id,
+                      label: `${a.label} — ${formatCurrency(a.balance)} available`,
+                    }))}
+                  />
+                  {bankAccounts.length > 1 && !payAccountId && (
+                    <Typography.Text type="danger" style={{ display: 'block', marginTop: 4 }}>
+                      Select an account to pay from
+                    </Typography.Text>
+                  )}
+                </>
               ) : (
                 <div>
                   {bankAccounts.map((a) => (

@@ -38,6 +38,14 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  const memberLogin = async (pan) => {
+    const { data } = await client.post('/auth/member-login', { pan });
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    setUser(data.user);
+    return data;
+  };
+
   const register = async (email, password, tenantName) => {
     const { data } = await client.post('/auth/register', { email, password, tenantName });
     localStorage.setItem('token', data.token);
@@ -63,9 +71,24 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  const isMember = user?.role === 'member';
+  const isManager = user && user.role !== 'member';
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, register, logout, setSessionUser, refreshUser, isAuthenticated: !!user }}
+      value={{
+        user,
+        loading,
+        login,
+        memberLogin,
+        register,
+        logout,
+        setSessionUser,
+        refreshUser,
+        isAuthenticated: !!user,
+        isMember,
+        isManager,
+      }}
     >
       {children}
     </AuthContext.Provider>

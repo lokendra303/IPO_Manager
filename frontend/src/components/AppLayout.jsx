@@ -1,4 +1,5 @@
-import { Layout, Menu, Typography, Button, Avatar, Tooltip } from 'antd';
+import { useEffect, useState } from 'react';
+import { Layout, Menu, Typography, Button, Avatar, Tooltip, Badge } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -10,27 +11,49 @@ import {
   UserOutlined,
   SettingOutlined,
   PercentageOutlined,
+  BellOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import client from '../api/client';
 
 const { Header, Sider, Content } = Layout;
-
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
-  { key: '/members', icon: <TeamOutlined />, label: <Link to="/members">Members</Link> },
-  { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
-  { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
-  { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
-  { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
-  { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
-  { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
-];
 
 export default function AppLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const [openIssueCount, setOpenIssueCount] = useState(0);
+
+  useEffect(() => {
+    client
+      .get('/member-issues/count')
+      .then((r) => setOpenIssueCount(r.data.openCount ?? 0))
+      .catch(() => setOpenIssueCount(0));
+  }, [location.pathname]);
+
+  const menuItems = [
+    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">Dashboard</Link> },
+    {
+      key: '/notifications',
+      icon: <BellOutlined />,
+      label: (
+        <Link to="/notifications" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Notifications</span>
+          {openIssueCount > 0 && (
+            <Badge count={openIssueCount} size="small" style={{ marginLeft: 8 }} />
+          )}
+        </Link>
+      ),
+    },
+    { key: '/members', icon: <TeamOutlined />, label: <Link to="/members">Members</Link> },
+    { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
+    { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
+    { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
+    { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
+    { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
+    { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
+  ];
 
   const selectedKey =
     menuItems.find((m) => m.key !== '/' && location.pathname.startsWith(m.key))?.key ||

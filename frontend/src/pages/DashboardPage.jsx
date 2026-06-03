@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Col, Row, Table, Tag, Button } from 'antd';
+import { Alert, Col, Row, Table, Tag, Button } from 'antd';
 import {
   WalletOutlined,
   RiseOutlined,
   TeamOutlined,
   ArrowRightOutlined,
+  BellOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
@@ -27,6 +28,7 @@ export default function DashboardPage() {
   const [wallet, setWallet] = useState(null);
   const [summary, setSummary] = useState(null);
   const [txns, setTxns] = useState([]);
+  const [openIssueCount, setOpenIssueCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,11 +36,13 @@ export default function DashboardPage() {
       client.get('/wallet'),
       client.get('/summary'),
       client.get('/wallet/transactions'),
+      client.get('/member-issues/count'),
     ])
-      .then(([w, s, t]) => {
+      .then(([w, s, t, issues]) => {
         setWallet(w.data);
         setSummary(s.data);
         setTxns(t.data.slice(0, 8));
+        setOpenIssueCount(issues.data.openCount ?? 0);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -68,6 +72,22 @@ export default function DashboardPage() {
         title="Dashboard"
         subtitle="Overview of your wallet, team, and recent activity"
       />
+      {openIssueCount > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<BellOutlined />}
+          message={`${openIssueCount} open member issue${openIssueCount === 1 ? '' : 's'} need attention`}
+          action={
+            <Link to="/notifications">
+              <Button size="small" type="primary">
+                View notifications
+              </Button>
+            </Link>
+          }
+          style={{ marginBottom: 24 }}
+        />
+      )}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
           <StatCard
