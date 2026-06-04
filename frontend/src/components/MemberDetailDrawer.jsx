@@ -19,6 +19,7 @@ import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import NoteCell from './NoteCell';
 import { copyToClipboard } from '../utils/allotmentCheck';
+import { categoryTagColor, getLotAmountForCategory } from '../utils/ipoCategories';
 
 function CopyableValue({ value, label, children }) {
   if (!value) return '—';
@@ -82,8 +83,22 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
     { title: 'IPO', dataIndex: 'ipo_name', render: (v, r) => (
       <Link to={`/ipos/${r.ipo_id}`} onClick={onClose}>{v}</Link>
     )},
-    { title: 'Lot', dataIndex: 'lot_amount', render: formatCurrency },
+    {
+      title: 'Lot',
+      render: (_, r) => formatCurrency(
+        getLotAmountForCategory(
+          { lot_amount_rii: r.lot_amount_rii, lot_amount_hni: r.lot_amount_hni, lot_amount: r.lot_amount },
+          r.investor_category
+        )
+      ),
+    },
     { title: 'Amount', dataIndex: 'amount', render: formatCurrency },
+    {
+      title: 'Category',
+      dataIndex: 'investor_category',
+      width: 72,
+      render: (v) => (v ? <Tag color={categoryTagColor(v)}>{v}</Tag> : '—'),
+    },
     { title: 'Received', dataIndex: 'trns_received', render: (v) => v ? <Tag color="green">{v}</Tag> : '—' },
     { title: 'Given', dataIndex: 'trns_given', render: (v) => v ? <Tag color="blue">{v}</Tag> : '—' },
     {

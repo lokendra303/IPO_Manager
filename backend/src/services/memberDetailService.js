@@ -62,8 +62,9 @@ export async function getMemberDetail(pool, tenantId, memberId) {
 
   const [applications] = await pool.query(
     `SELECT a.id, a.amount, a.date_received, a.trns_received, a.date_given, a.trns_given,
-            a.allotment_status, a.profit_loss, a.remarks, a.created_at,
-            i.id as ipo_id, i.name as ipo_name, i.lot_amount, i.status as ipo_status
+            a.allotment_status, a.investor_category, a.profit_loss, a.remarks, a.created_at,
+            i.id as ipo_id, i.name as ipo_name, i.lot_amount_rii, i.lot_amount_hni, i.lot_amount,
+            i.status as ipo_status
      FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
      WHERE a.member_id = ? AND a.tenant_id = ?

@@ -1151,6 +1151,36 @@ body {
   min-height: 320px;
 }
 
+/* Members list toolbar */
+.members-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.members-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+  min-width: 200px;
+}
+
+/* Member add/edit modal */
+.member-form-modal .ant-modal-body {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+.member-form-modal .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.member-form-modal .ant-form-item-extra {
+  min-height: auto;
+  line-height: 1.35;
+}
+
 /* Drawer */
 .member-drawer .ant-drawer-header {
   border-bottom: 1px solid #e2e8f0;

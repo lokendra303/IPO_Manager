@@ -143,6 +143,15 @@ router.post('/', async (req, res, next) => {
       groupId = gid;
     }
 
+    let resolvedSortOrder = Number(sortOrder);
+    if (!Number.isFinite(resolvedSortOrder)) {
+      const [maxRow] = await pool.query(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM members WHERE tenant_id = ?',
+        [req.tenantId]
+      );
+      resolvedSortOrder = maxRow[0].next_order;
+    }
+
     const [result] = await pool.query(
 
       `INSERT INTO members (tenant_id, pan, display_name, email, upi, status, relationship_note, bulk_group_label, sort_order, fund_provider_id, member_group_id)
@@ -167,7 +176,7 @@ router.post('/', async (req, res, next) => {
 
         bulkGroupLabel?.trim() || null,
 
-        Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+        resolvedSortOrder,
 
         providerId,
 

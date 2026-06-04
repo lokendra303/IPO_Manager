@@ -395,6 +395,117 @@ async function applyMemberContactV13(conn) {
   }
 }
 
+async function applyIpoCategoriesV14(conn) {
+  if (await tableExists(conn, 'ipos')) {
+    if (!(await columnExists(conn, 'ipos', 'ipo_segment'))) {
+      await conn.query(
+        `ALTER TABLE ipos ADD COLUMN ipo_segment ENUM('SME', 'MAINBOARD') NOT NULL DEFAULT 'MAINBOARD'`
+      );
+      console.log('Added ipos.ipo_segment');
+    }
+    if (!(await columnExists(conn, 'ipos', 'allowed_categories'))) {
+      await conn.query(
+        `ALTER TABLE ipos ADD COLUMN allowed_categories JSON NOT NULL DEFAULT ('["RII","HNI"]')`
+      );
+      console.log('Added ipos.allowed_categories');
+    }
+  }
+  if (await tableExists(conn, 'ipo_applications')) {
+    if (!(await columnExists(conn, 'ipo_applications', 'investor_category'))) {
+      await conn.query(
+        `ALTER TABLE ipo_applications
+         ADD COLUMN investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII' AFTER allotment_status`
+      );
+      console.log('Added ipo_applications.investor_category');
+    }
+  }
+}
+
+async function applyRemoveCmrV15(conn) {
+  if (await tableExists(conn, 'ipo_applications')) {
+    if (await columnExists(conn, 'ipo_applications', 'investor_category')) {
+      await conn.query(
+        `UPDATE ipo_applications SET investor_category = 'RII' WHERE investor_category = 'CMR'`
+      );
+      await conn.query(
+        `ALTER TABLE ipo_applications
+         MODIFY COLUMN investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII'`
+      );
+      console.log('Removed CMR from ipo_applications.investor_category');
+    }
+  }
+  if (await tableExists(conn, 'ipos') && await columnExists(conn, 'ipos', 'allowed_categories')) {
+    const [rows] = await conn.query('SELECT id, allowed_categories FROM ipos');
+    for (const row of rows) {
+      let cats = row.allowed_categories;
+      if (typeof cats === 'string') {
+        try {
+          cats = JSON.parse(cats);
+        } catch {
+          cats = [];
+        }
+      }
+      if (!Array.isArray(cats)) continue;
+      const filtered = cats.filter((c) => String(c).toUpperCase() !== 'CMR');
+      if (filtered.length !== cats.length || filtered.length < 2) {
+        const next = filtered.length >= 2 ? filtered : ['RII', 'HNI'];
+        await conn.query('UPDATE ipos SET allowed_categories = ? WHERE id = ?', [
+          JSON.stringify([...new Set(next.map((c) => String(c).toUpperCase()))]),
+          row.id,
+        ]);
+      }
+    }
+    console.log('Stripped CMR from ipos.allowed_categories');
+  }
+}
+
+async function applyIpoLotByCategoryV16(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+  if (!(await columnExists(conn, 'ipos', 'lot_amount_rii'))) {
+    await conn.query(
+      'ALTER TABLE ipos ADD COLUMN lot_amount_rii DECIMAL(15, 2) NULL AFTER lot_amount'
+    );
+    console.log('Added ipos.lot_amount_rii');
+  }
+  if (!(await columnExists(conn, 'ipos', 'lot_amount_hni'))) {
+    await conn.query(
+      'ALTER TABLE ipos ADD COLUMN lot_amount_hni DECIMAL(15, 2) NULL AFTER lot_amount_rii'
+    );
+    console.log('Added ipos.lot_amount_hni');
+  }
+  await conn.query(
+    `UPDATE ipos
+     SET lot_amount_rii = COALESCE(lot_amount_rii, lot_amount),
+         lot_amount_hni = COALESCE(lot_amount_hni, lot_amount)
+     WHERE lot_amount IS NOT NULL`
+  );
+  const [riiCol] = await conn.query(
+    `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipos' AND COLUMN_NAME = 'lot_amount_rii'`
+  );
+  if (riiCol[0]?.IS_NULLABLE === 'YES') {
+    await conn.query(
+      'ALTER TABLE ipos MODIFY lot_amount_rii DECIMAL(15, 2) NOT NULL'
+    );
+    await conn.query(
+      'ALTER TABLE ipos MODIFY lot_amount_hni DECIMAL(15, 2) NOT NULL'
+    );
+    console.log('Set ipos lot_amount_rii / lot_amount_hni NOT NULL');
+  }
+}
+
+async function applyOptionalHniV17(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+  const [hniCol] = await conn.query(
+    `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipos' AND COLUMN_NAME = 'lot_amount_hni'`
+  );
+  if (hniCol[0]?.IS_NULLABLE === 'NO') {
+    await conn.query('ALTER TABLE ipos MODIFY lot_amount_hni DECIMAL(15, 2) NULL');
+    console.log('Made ipos.lot_amount_hni nullable');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -421,6 +532,10 @@ async function migrate() {
   await applyIpoRegistrarV11(conn);
   await applyMemberShareIpoV12(conn);
   await applyMemberContactV13(conn);
+  await applyIpoCategoriesV14(conn);
+  await applyRemoveCmrV15(conn);
+  await applyIpoLotByCategoryV16(conn);
+  await applyOptionalHniV17(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

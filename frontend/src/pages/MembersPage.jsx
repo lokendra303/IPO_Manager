@@ -16,6 +16,8 @@ import {
   Popconfirm,
   Alert,
   Result,
+  Row,
+  Col,
 } from 'antd';
 import { PlusOutlined, EditOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -26,6 +28,26 @@ import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import { tableDefaults } from '../utils/table';
 
+function memberMatchesSearch(member, query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = [
+    member.display_name,
+    member.pan,
+    member.email,
+    member.upi,
+    member.relationship_note,
+    member.member_group_name,
+    member.fund_provider_name,
+    member.share_provider_name,
+    member.status,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(needle);
+}
+
 export default function MembersPage() {
   const navigate = useNavigate();
   const [members, setMembers] = useState([]);
@@ -33,6 +55,7 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [detailMemberId, setDetailMemberId] = useState(null);
@@ -73,13 +96,23 @@ export default function MembersPage() {
     return [...map.values()];
   }, [members]);
 
-  const filteredMembers = useMemo(() => {
+  const statusFilteredMembers = useMemo(() => {
     if (statusFilter === 'ALL') return uniqueMembers;
     return uniqueMembers.filter((m) => m.status === statusFilter);
   }, [uniqueMembers, statusFilter]);
 
+  const filteredMembers = useMemo(() => {
+    if (!search.trim()) return statusFilteredMembers;
+    return statusFilteredMembers.filter((m) => memberMatchesSearch(m, search));
+  }, [statusFilteredMembers, search]);
+
   const activeCount = uniqueMembers.filter((m) => m.status === 'ACTIVE').length;
   const inactiveCount = uniqueMembers.filter((m) => m.status === 'INACTIVE').length;
+
+  const nextSortOrder = useMemo(() => {
+    if (!uniqueMembers.length) return 0;
+    return uniqueMembers.reduce((max, m) => Math.max(max, Number(m.sort_order) || 0), -1) + 1;
+  }, [uniqueMembers]);
 
   const openDetail = (record) => {
     setDetailMemberId(record.id);
@@ -89,7 +122,7 @@ export default function MembersPage() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ status: 'ACTIVE' });
+    form.setFieldsValue({ status: 'ACTIVE', sortOrder: nextSortOrder });
     setModalOpen(true);
   };
 
@@ -114,11 +147,14 @@ export default function MembersPage() {
       if (editing) {
         await client.patch(`/members/${editing.id}`, values);
         message.success('Member updated');
+        setModalOpen(false);
       } else {
         await client.post('/members', values);
         message.success('Member added');
+        const usedOrder = Number.isFinite(Number(values.sortOrder)) ? Number(values.sortOrder) : nextSortOrder;
+        form.resetFields();
+        form.setFieldsValue({ status: 'ACTIVE', sortOrder: usedOrder + 1 });
       }
-      setModalOpen(false);
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Save failed'));
@@ -269,9 +305,24 @@ export default function MembersPage() {
         />
       )}
       <ContentCard
-        title={`Members (${filteredMembers.length}${statusFilter !== 'ALL' ? ` of ${uniqueMembers.length}` : ''})`}
+        title={`Members (${filteredMembers.length}${
+          statusFilter !== 'ALL' || search.trim()
+            ? ` of ${
+                search.trim() && statusFilter !== 'ALL'
+                  ? statusFilteredMembers.length
+                  : uniqueMembers.length
+              }`
+            : ''
+        })`}
       >
-        <Space wrap style={{ marginBottom: 16 }}>
+        <div className="members-toolbar">
+          <Input.Search
+            className="members-search"
+            placeholder="Search name, PAN, email, UPI, group…"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <Segmented
             value={statusFilter}
             onChange={setStatusFilter}
@@ -281,7 +332,7 @@ export default function MembersPage() {
               { label: `Inactive (${inactiveCount})`, value: 'INACTIVE' },
             ]}
           />
-        </Space>
+        </div>
         <Table
           rowKey="id"
           loading={loading}
@@ -308,75 +359,100 @@ export default function MembersPage() {
         onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
         destroyOnClose
+        width={760}
+        className="member-form-modal"
+        styles={{ body: { maxHeight: 'none', overflow: 'visible', paddingTop: 8 } }}
       >
         <Form form={form} layout="vertical" onFinish={onSave}>
-          <Form.Item name="displayName" label="Name" rules={[{ required: true }]}>
-            <Input placeholder="Rahul (ME)" />
-          </Form.Item>
-          <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
-            <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
-          </Form.Item>
-          <Form.Item
-            name="email"
-            label="Email"
-            rules={[
-              {
-                validator: (_, value) => {
-                  const v = value?.trim();
-                  if (!v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return Promise.resolve();
-                  return Promise.reject(new Error('Enter a valid email'));
-                },
-              },
-            ]}
-          >
-            <Input type="email" placeholder="member@example.com" allowClear />
-          </Form.Item>
-          <Form.Item
-            name="upi"
-            label="UPI ID"
-            extra="e.g. name@paytm or 9876543210@ybl"
-            rules={[
-              {
-                validator: (_, value) => {
-                  const v = value?.trim();
-                  if (!v || /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z0-9]{2,64}$/i.test(v)) return Promise.resolve();
-                  return Promise.reject(new Error('Enter a valid UPI ID (name@bank)'));
-                },
-              },
-            ]}
-          >
-            <Input placeholder="name@paytm" allowClear style={{ textTransform: 'lowercase' }} />
-          </Form.Item>
-          <Form.Item
-            name="status"
-            label="Status"
-            rules={[{ required: true }]}
-            extra={
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Active — included in IPO distribute and member PAN login. Inactive — hidden from new IPOs and login blocked; all history kept.
-              </Typography.Text>
-            }
-          >
-            <Select
-              options={[
-                { value: 'ACTIVE', label: 'Active' },
-                { value: 'INACTIVE', label: 'Inactive' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="memberGroupId" label="Sub-Group">
-            <Select
-              allowClear
-              placeholder="None — or pick e.g. Rinku"
-              options={memberGroups.map((g) => ({ value: g.id, label: g.name }))}
-            />
-          </Form.Item>
-          <Form.Item name="relationshipNote" label="Relationship Note">
-            <Input placeholder="MOTHER, BROTHER, etc." />
-          </Form.Item>
-          <Form.Item name="sortOrder" label="Sort Order">
-            <Input type="number" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="displayName" label="Name" rules={[{ required: true }]}>
+                <Input placeholder="Rahul (ME)" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
+                <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="email"
+                label="Email"
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const v = value?.trim();
+                      if (!v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return Promise.resolve();
+                      return Promise.reject(new Error('Enter a valid email'));
+                    },
+                  },
+                ]}
+              >
+                <Input type="email" placeholder="member@example.com" allowClear />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="upi"
+                label="UPI ID"
+                extra="e.g. name@paytm or 9876543210@ybl"
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const v = value?.trim();
+                      if (!v || /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z0-9]{2,64}$/i.test(v)) return Promise.resolve();
+                      return Promise.reject(new Error('Enter a valid UPI ID (name@bank)'));
+                    },
+                  },
+                ]}
+              >
+                <Input placeholder="name@paytm" allowClear style={{ textTransform: 'lowercase' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="status"
+                label="Status"
+                rules={[{ required: true }]}
+                extra={
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    Active: IPO distribute + login. Inactive: hidden from new IPOs; history kept.
+                  </Typography.Text>
+                }
+              >
+                <Select
+                  options={[
+                    { value: 'ACTIVE', label: 'Active' },
+                    { value: 'INACTIVE', label: 'Inactive' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="memberGroupId" label="Sub-Group">
+                <Select
+                  allowClear
+                  placeholder="None — or pick e.g. Rinku"
+                  options={memberGroups.map((g) => ({ value: g.id, label: g.name }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="relationshipNote" label="Relationship Note">
+                <Input placeholder="MOTHER, BROTHER, etc." />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="sortOrder"
+                label="Sort Order"
+                extra={!editing ? 'Auto-increments for each new member (list order).' : undefined}
+              >
+                <Input type="number" min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
     </div>

@@ -3,6 +3,7 @@ import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsePositiveInt, parseOptionalAmount, validateAllotmentStatus } from '../utils/validate.js';
 import { tryAutoDistributeApplication } from '../services/profitShareService.js';
+import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 
 const router = Router();
 
@@ -23,7 +24,10 @@ router.patch('/bulk', async (req, res, next) => {
         const appId = parsePositiveInt(u.id, 'application id');
 
         const [existing] = await conn.query(
-          'SELECT * FROM ipo_applications WHERE id = ? AND tenant_id = ?',
+          `SELECT a.*, i.allowed_categories
+           FROM ipo_applications a
+           JOIN ipos i ON i.id = a.ipo_id
+           WHERE a.id = ? AND a.tenant_id = ?`,
           [appId, req.tenantId]
         );
         if (!existing.length) {
@@ -79,6 +83,10 @@ router.patch('/bulk', async (req, res, next) => {
         if (u.trnsGiven !== undefined) {
           fields.push('trns_given = ?');
           values.push(u.trnsGiven || null);
+        }
+        if (u.investorCategory !== undefined) {
+          fields.push('investor_category = ?');
+          values.push(normalizeInvestorCategory(u.investorCategory, row.allowed_categories));
         }
 
         if (!fields.length) continue;

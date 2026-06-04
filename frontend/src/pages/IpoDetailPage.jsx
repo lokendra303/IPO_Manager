@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert,
+  Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert, Form,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
@@ -9,6 +9,15 @@ import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
 import { formatCurrency, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import {
+  categoryOptionsForIpo,
+  parseAllowedCategories,
+  categoryTagColor,
+  INVESTOR_CATEGORY_LABELS,
+  getLotAmountForCategory,
+  ipoAllowsHni,
+  ipoHasHniLot,
+} from '../utils/ipoCategories';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
@@ -40,6 +49,10 @@ export default function IpoDetailPage() {
   const [profitPreview, setProfitPreview] = useState([]);
   const [profitLoading, setProfitLoading] = useState(false);
   const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
+  const [distributeInvestorCategory, setDistributeInvestorCategory] = useState('RII');
+  const [hniModalOpen, setHniModalOpen] = useState(false);
+  const [hniSaving, setHniSaving] = useState(false);
+  const [hniForm] = Form.useForm();
 
   const load = async () => {
     setLoading(true);
@@ -92,9 +105,44 @@ export default function IpoDetailPage() {
     );
   };
 
+  const ipoCategoryOptions = categoryOptionsForIpo(ipo);
+  const allowedCategoryTags = parseAllowedCategories(ipo);
+
+  const openHniSetup = () => {
+    hniForm.setFieldsValue({
+      enableHni: ipoAllowsHni(ipo),
+      lotAmountHni: ipo?.lot_amount_hni ?? undefined,
+    });
+    setHniModalOpen(true);
+  };
+
+  const onSaveHniConfig = async (values) => {
+    setHniSaving(true);
+    try {
+      const allowedCategories = values.enableHni ? ['RII', 'HNI'] : ['RII'];
+      const body = { allowedCategories };
+      if (values.enableHni && values.lotAmountHni != null && values.lotAmountHni !== '') {
+        body.lotAmountHni = values.lotAmountHni;
+      }
+      const { data } = await client.patch(`/ipos/${id}`, body);
+      setIpo(data);
+      message.success(values.enableHni ? 'HNI settings updated' : 'HNI disabled for this IPO');
+      setHniModalOpen(false);
+      if (distributeInvestorCategory === 'HNI' && !ipoHasHniLot(data)) {
+        setDistributeInvestorCategory('RII');
+      }
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not save HNI settings'));
+    } finally {
+      setHniSaving(false);
+    }
+  };
+
   const openDistribute = async () => {
     setSelectedIds([]);
     setStep(0);
+    const defaultCat = ipoCategoryOptions.some((o) => o.value === 'RII') ? 'RII' : ipoCategoryOptions[0]?.value || 'RII';
+    setDistributeInvestorCategory(defaultCat);
     setDistributeMode(memberGroups.length ? 'groups' : 'individual');
     setPaySplits({});
     try {
@@ -118,7 +166,9 @@ export default function IpoDetailPage() {
     setDistributeOpen(true);
   };
 
-  const totalNeeded = selectedIds.length * Number(ipo?.lot_amount || 0);
+  const lotForSelectedCategory = getLotAmountForCategory(ipo, distributeInvestorCategory);
+  const hniLotMissing = distributeInvestorCategory === 'HNI' && lotForSelectedCategory == null;
+  const totalNeeded = selectedIds.length * (lotForSelectedCategory ?? 0);
 
   const splitDebits = Object.entries(paySplits)
     .map(([bankAccountId, amount]) => ({ bankAccountId: Number(bankAccountId), amount: Number(amount) || 0 }))
@@ -233,6 +283,7 @@ export default function IpoDetailPage() {
       const body = {
         memberIds: selectedIds,
         markGiven,
+        investorCategory: distributeInvestorCategory,
       };
       if (payMode === 'split' && splitDebits.length) {
         body.accountDebits = splitDebits;
@@ -259,6 +310,7 @@ export default function IpoDetailPage() {
       if (vals.profitLoss !== undefined) update.profitLoss = vals.profitLoss;
       if (vals.remarks !== undefined) update.remarks = vals.remarks;
       if (vals.amount !== undefined) update.amount = vals.amount;
+      if (vals.investorCategory !== undefined) update.investorCategory = vals.investorCategory;
       return update;
     }).filter((u) => Object.keys(u).length > 1);
 
@@ -346,6 +398,21 @@ export default function IpoDetailPage() {
   const columns = [
     { title: 'Member', dataIndex: 'display_name' },
     { title: 'PAN', dataIndex: 'pan' },
+    {
+      title: 'Category',
+      dataIndex: 'investor_category',
+      width: 110,
+      render: (v, r) => (
+        <Select
+          size="small"
+          style={{ width: 100 }}
+          disabled={isClosed}
+          value={getRowVal(r, 'investorCategory', 'investor_category') || 'RII'}
+          onChange={(val) => updateRow(r.id, 'investorCategory', val)}
+          options={categoryOptionsForIpo(ipo)}
+        />
+      ),
+    },
     {
       title: 'Amount',
       dataIndex: 'amount',
@@ -471,10 +538,36 @@ export default function IpoDetailPage() {
             <Tag color={isClosed ? 'error' : 'success'}>{isClosed ? 'CLOSED' : 'OPEN'}</Tag>
           </Space>
         }
-        subtitle={`Lot size ${formatCurrency(ipo?.lot_amount)} · Total wallet ${formatCurrency(wallet)}`}
+        subtitle={
+          <>
+            RII lot {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}
+            {ipoAllowsHni(ipo) && (
+              <>
+                {' '}
+                · HNI lot{' '}
+                {ipoHasHniLot(ipo)
+                  ? formatCurrency(getLotAmountForCategory(ipo, 'HNI'))
+                  : 'not set'}
+              </>
+            )}
+            {' '}
+            · Wallet {formatCurrency(wallet)}
+            {ipo?.ipo_segment && (
+              <> · <Tag>{ipo.ipo_segment === 'SME' ? 'SME IPO' : 'Mainboard IPO'}</Tag></>
+            )}
+            {allowedCategoryTags.map((c) => (
+              <Tag key={c} color={categoryTagColor(c)} style={{ marginLeft: 4 }}>{c}</Tag>
+            ))}
+          </>
+        }
         extra={
           <Space wrap>
             <Link to="/ipos"><Button icon={<ArrowLeftOutlined />}>Back</Button></Link>
+            {!isClosed && (
+              <Button onClick={openHniSetup}>
+                {ipoAllowsHni(ipo) ? 'HNI settings' : 'Set up HNI'}
+              </Button>
+            )}
             <Tooltip
               title={
                 isClosed
@@ -527,6 +620,35 @@ export default function IpoDetailPage() {
           </Space>
         }
       />
+
+      {!isClosed && !ipoAllowsHni(ipo) && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="HNI is optional for this IPO"
+          description="Retail (RII) is always available. Enable HNI and set its lot amount when you need high net-worth applications."
+          action={
+            <Button size="small" type="primary" onClick={openHniSetup}>
+              Set up HNI
+            </Button>
+          }
+        />
+      )}
+      {!isClosed && ipoAllowsHni(ipo) && !ipoHasHniLot(ipo) && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="HNI enabled — lot amount not set"
+          description="Members cannot be distributed as HNI until you enter the HNI lot amount."
+          action={
+            <Button size="small" type="primary" onClick={openHniSetup}>
+              Set HNI lot
+            </Button>
+          }
+        />
+      )}
 
       <Alert
         type="info"
@@ -682,14 +804,14 @@ export default function IpoDetailPage() {
         onCancel={() => { setDistributeOpen(false); setStep(0); }}
         footer={step < 2 ? undefined : [
           <Button key="back" onClick={() => setStep(step - 1)}>Back</Button>,
-          <Button key="go" type="primary" disabled={insufficient || distributing} loading={distributing} onClick={onDistribute}>
+          <Button key="go" type="primary" disabled={insufficient || distributing || hniLotMissing} loading={distributing} onClick={onDistribute}>
             Confirm Distribution
           </Button>,
         ]}
         width={720}
         destroyOnClose
       >
-        <Steps current={step} items={[{ title: 'Members' }, { title: 'Options' }, { title: 'Confirm' }]} style={{ marginBottom: 24 }} />
+        <Steps current={step} items={[{ title: 'Members' }, { title: 'Category & pay' }, { title: 'Confirm' }]} style={{ marginBottom: 24 }} />
 
         {step === 0 && (
           <>
@@ -736,7 +858,7 @@ export default function IpoDetailPage() {
                             <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
                               {selectedInGroup.length}/{group.members.length} selected
                               {selectedInGroup.length > 0 &&
-                                ` · ${formatCurrency(selectedInGroup.length * Number(ipo?.lot_amount || 0))}`}
+                                ` · ${formatCurrency(selectedInGroup.length * lotForSelectedCategory)}`}
                               {!groupAvailable.length && ' · all already applied'}
                             </Typography.Text>
                           </Checkbox>
@@ -798,7 +920,7 @@ export default function IpoDetailPage() {
                   message={
                     <>
                       Total: <strong>{selectedIds.length}</strong> member(s) ×{' '}
-                      <strong>{formatCurrency(ipo?.lot_amount)}</strong> ={' '}
+                      <strong>{formatCurrency(lotForSelectedCategory)}</strong> ({distributeInvestorCategory}) ={' '}
                       <strong>{formatCurrency(totalNeeded)}</strong>
                     </>
                   }
@@ -816,6 +938,29 @@ export default function IpoDetailPage() {
         {step === 1 && (
           <>
             <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              <div>
+                <Typography.Text strong>Application category</Typography.Text>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+                  Applies to all {selectedIds.length} selected member(s). Default is RII (
+                  {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}).
+                  {ipoHasHniLot(ipo) && (
+                    <> HNI lot is {formatCurrency(getLotAmountForCategory(ipo, 'HNI'))}.</>
+                  )}
+                  {ipoAllowsHni(ipo) && !ipoHasHniLot(ipo) && (
+                    <> Set HNI lot on the IPO page to distribute as HNI.</>
+                  )}
+                </Typography.Paragraph>
+                <Select
+                  style={{ width: '100%', maxWidth: 400 }}
+                  value={distributeInvestorCategory}
+                  onChange={setDistributeInvestorCategory}
+                  options={ipoCategoryOptions.map((o) => ({
+                    value: o.value,
+                    label: INVESTOR_CATEGORY_LABELS[o.value] || o.label,
+                  }))}
+                />
+              </div>
+
               <div>
                 <label>
                   <Switch checked={markGiven} onChange={setMarkGiven} /> Mark as applied (Given)
@@ -980,7 +1125,17 @@ export default function IpoDetailPage() {
         {step === 2 && (
           <>
             <p>Members: <strong>{selectedIds.length}</strong></p>
-            <p>Lot amount: <strong>{formatCurrency(ipo?.lot_amount)}</strong></p>
+            <p>
+              Application category:{' '}
+              <Tag color={categoryTagColor(distributeInvestorCategory)}>{distributeInvestorCategory}</Tag>
+              <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                {INVESTOR_CATEGORY_LABELS[distributeInvestorCategory]}
+              </Typography.Text>
+            </p>
+            <p>
+              Lot amount ({distributeInvestorCategory}):{' '}
+              <strong>{formatCurrency(lotForSelectedCategory)}</strong>
+            </p>
             <p>Total required: <strong>{formatCurrency(totalNeeded)}</strong></p>
             {payMode === 'single' && selectedPayAccount ? (
               <Alert
@@ -1032,6 +1187,34 @@ export default function IpoDetailPage() {
             )}
           </>
         )}
+      </Modal>
+
+      <Modal
+        title="HNI settings"
+        open={hniModalOpen}
+        onCancel={() => setHniModalOpen(false)}
+        onOk={() => hniForm.submit()}
+        confirmLoading={hniSaving}
+        destroyOnClose
+      >
+        <Form form={hniForm} layout="vertical" onFinish={onSaveHniConfig}>
+          <Form.Item name="enableHni" valuePropName="checked">
+            <Checkbox>Enable HNI applications for this IPO</Checkbox>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.enableHni !== cur.enableHni}>
+            {({ getFieldValue }) =>
+              getFieldValue('enableHni') ? (
+                <Form.Item
+                  name="lotAmountHni"
+                  label="HNI lot amount (₹)"
+                  extra="Required before you can distribute funds as HNI."
+                >
+                  <InputNumber min={1} style={{ width: '100%' }} placeholder="HNI application amount" />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+        </Form>
       </Modal>
 
       <AllotmentCheckModal

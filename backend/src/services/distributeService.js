@@ -1,7 +1,23 @@
 import { AppError } from '../middleware/errorHandler.js';
+import {
+  DEFAULT_INVESTOR_CATEGORY,
+  normalizeInvestorCategory,
+  parseAllowedCategories,
+  resolveLotAmountRaw,
+} from '../constants/ipoCategories.js';
 import { debitWallet, debitWalletFromAccounts, ensureWallet } from './walletService.js';
 import { assertAccountDebits, requireBankAccountId } from './bankAccountService.js';
 import { dedupeIds, parsePositiveInt, parseAmount } from '../utils/validate.js';
+
+function resolveMemberInvestorCategories(memberIds, { investorCategory, memberCategories }, allowed) {
+  const map = new Map();
+  for (const memberId of memberIds) {
+    const override = memberCategories?.[memberId] ?? memberCategories?.[String(memberId)];
+    const raw = override ?? investorCategory ?? DEFAULT_INVESTOR_CATEGORY;
+    map.set(memberId, normalizeInvestorCategory(raw, allowed));
+  }
+  return map;
+}
 
 export async function distributeIpo(conn, {
   tenantId,
@@ -12,6 +28,8 @@ export async function distributeIpo(conn, {
   userId,
   bankAccountId,
   accountDebits,
+  investorCategory,
+  memberCategories,
 }) {
   const ipoIdNum = parsePositiveInt(ipoId, 'IPO id');
   const uniqueMemberIds = dedupeIds(memberIds);
@@ -51,12 +69,32 @@ export async function distributeIpo(conn, {
     throw new AppError('Some members already have applications for this IPO');
   }
 
-  const lotAmount = parseAmount(ipo.lot_amount, { allowZero: false, fieldName: 'lot amount' });
+  const allowedCategories = parseAllowedCategories(ipo.allowed_categories);
+  const categoryByMember = resolveMemberInvestorCategories(uniqueMemberIds, {
+    investorCategory,
+    memberCategories,
+  }, allowedCategories);
+
   const now = new Date();
   let total = 0;
   const applicationAmounts = uniqueMemberIds.map((id, i) => {
+    const cat = categoryByMember.get(id);
+    const lotRaw = resolveLotAmountRaw(ipo, cat);
+    if (lotRaw == null || lotRaw === '') {
+      throw new AppError(
+        cat === 'HNI'
+          ? 'Set HNI lot amount on this IPO before distributing as HNI'
+          : 'RII lot amount is not set for this IPO'
+      );
+    }
+    const defaultLot = parseAmount(lotRaw, {
+      allowZero: false,
+      fieldName: `${cat} lot amount`,
+    });
     const raw = amounts?.[i] ?? amounts?.[id];
-    const amt = raw !== undefined && raw !== null ? parseAmount(raw, { fieldName: 'application amount' }) : lotAmount;
+    const amt = raw !== undefined && raw !== null
+      ? parseAmount(raw, { fieldName: 'application amount' })
+      : defaultLot;
     total += amt;
     return amt;
   });
@@ -97,10 +135,12 @@ export async function distributeIpo(conn, {
     const memberId = uniqueMemberIds[i];
     const amount = applicationAmounts[i];
 
+    const investorCat = categoryByMember.get(memberId);
+
     const [appResult] = await conn.query(
       `INSERT INTO ipo_applications
-       (ipo_id, member_id, tenant_id, amount, date_received, trns_received, date_given, trns_given, allotment_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+       (ipo_id, member_id, tenant_id, amount, date_received, trns_received, date_given, trns_given, allotment_status, investor_category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
       [
         ipoIdNum,
         memberId,
@@ -110,6 +150,7 @@ export async function distributeIpo(conn, {
         null,
         markGiven ? now : null,
         markGiven ? 'Given' : null,
+        investorCat,
       ]
     );
     const appId = appResult.insertId;

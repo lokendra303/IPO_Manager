@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography, Select } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography, Select, Checkbox } from 'antd';
+import {
+  IPO_SEGMENT_OPTIONS,
+  parseAllowedCategories,
+  categoryTagColor,
+  getLotAmountForCategory,
+} from '../utils/ipoCategories';
 import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons';
 import { REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
@@ -26,7 +32,18 @@ export default function IposPage() {
 
   const onCreate = async (values) => {
     try {
-      const { data } = await client.post('/ipos', values);
+      const allowedCategories = values.enableHni ? ['RII', 'HNI'] : ['RII'];
+      const payload = {
+        name: values.name,
+        ipoSegment: values.ipoSegment,
+        lotAmountRii: values.lotAmountRii,
+        registrar: values.registrar,
+        allowedCategories,
+      };
+      if (values.enableHni && values.lotAmountHni != null && values.lotAmountHni !== '') {
+        payload.lotAmountHni = values.lotAmountHni;
+      }
+      const { data } = await client.post('/ipos', payload);
       message.success('IPO created');
       setModalOpen(false);
       form.resetFields();
@@ -38,7 +55,43 @@ export default function IposPage() {
 
   const columns = [
     { title: 'IPO Name', dataIndex: 'name', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'Lot Amount', dataIndex: 'lot_amount', render: (v) => formatCurrency(v) },
+    {
+      title: 'Segment',
+      dataIndex: 'ipo_segment',
+      width: 120,
+      render: (v) => <Tag>{v === 'SME' ? 'SME' : 'Mainboard'}</Tag>,
+    },
+    {
+      title: 'Categories',
+      dataIndex: 'allowed_categories',
+      render: (v, r) => {
+        const cats = parseAllowedCategories(r);
+        return (
+          <Space size={[4, 4]} wrap>
+            {cats.map((c) => (
+              <Tag key={c} color={categoryTagColor(c)}>{c}</Tag>
+            ))}
+          </Space>
+        );
+      },
+    },
+    {
+      title: 'Lot amounts',
+      key: 'lots',
+      render: (_, r) => (
+        <Space direction="vertical" size={0} style={{ fontSize: 13 }}>
+          <span>RII: {formatCurrency(getLotAmountForCategory(r, 'RII'))}</span>
+          {parseAllowedCategories(r).includes('HNI') && (
+            <span>
+              HNI:{' '}
+              {r.lot_amount_hni != null
+                ? formatCurrency(getLotAmountForCategory(r, 'HNI'))
+                : 'Not set'}
+            </span>
+          )}
+        </Space>
+      ),
+    },
     {
       title: 'Status',
       dataIndex: 'status',
@@ -101,7 +154,18 @@ export default function IposPage() {
         title="IPOs"
         subtitle="Create IPOs, distribute funds to members, and track allotments"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setModalOpen(true); }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              form.resetFields();
+              form.setFieldsValue({
+                ipoSegment: 'MAINBOARD',
+                enableHni: false,
+              });
+              setModalOpen(true);
+            }}
+          >
             New IPO
           </Button>
         }
@@ -117,13 +181,32 @@ export default function IposPage() {
         />
       </ContentCard>
 
-      <Modal title="Create IPO" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} destroyOnClose>
+      <Modal title="Create IPO" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} destroyOnClose width={560}>
         <Form form={form} layout="vertical" onFinish={onCreate}>
           <Form.Item name="name" label="IPO Name" rules={[{ required: true }]}>
             <Input prefix={<StockOutlined style={{ color: '#94a3b8' }} />} placeholder="Orkla India" />
           </Form.Item>
-          <Form.Item name="lotAmount" label="Lot Amount (₹)" rules={[{ required: true }]}>
-            <InputNumber min={1} style={{ width: '100%' }} />
+          <Form.Item name="ipoSegment" label="IPO segment" rules={[{ required: true }]}>
+            <Select options={IPO_SEGMENT_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="lotAmountRii" label="RII lot amount (₹)" rules={[{ required: true }]}>
+            <InputNumber min={1} style={{ width: '100%' }} placeholder="Retail application" />
+          </Form.Item>
+          <Form.Item name="enableHni" valuePropName="checked" extra="You can turn on HNI later from the IPO page if needed.">
+            <Checkbox>Enable HNI applications (optional)</Checkbox>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.enableHni !== cur.enableHni}>
+            {({ getFieldValue }) =>
+              getFieldValue('enableHni') ? (
+                <Form.Item
+                  name="lotAmountHni"
+                  label="HNI lot amount (₹)"
+                  extra="Optional now — set or update anytime from the IPO detail page."
+                >
+                  <InputNumber min={1} style={{ width: '100%' }} placeholder="Leave blank to set later" />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           <Form.Item name="registrar" label="Allotment registrar (optional)">
             <Select allowClear placeholder="KFintech, Link Intime, etc." options={REGISTRAR_OPTIONS} />

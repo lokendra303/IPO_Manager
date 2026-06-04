@@ -28,6 +28,7 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       ipoStatus: app.ipo_status,
       amount: Number(app.amount),
       allotmentStatus: app.allotment_status,
+      investorCategory: app.investor_category,
       profitLoss: app.profit_loss != null ? Number(app.profit_loss) : null,
       dateGiven: app.date_given,
       dateReceived: app.date_received,

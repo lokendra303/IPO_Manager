@@ -10,6 +10,12 @@ import { creditWallet } from '../services/walletService.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { VALID_REGISTRARS } from '../utils/allotmentCheck.js';
+import {
+  IPO_SEGMENTS,
+  ipoAllowsHni,
+  serializeAllowedCategories,
+  validateAllowedCategories,
+} from '../constants/ipoCategories.js';
 
 
 
@@ -49,11 +55,21 @@ router.post('/', async (req, res, next) => {
 
   try {
 
-    const { name, lotAmount, status, openDate, registrar } = req.body;
+    const {
+      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, registrar, ipoSegment, allowedCategories,
+    } = req.body;
 
     if (!name?.trim()) throw new AppError('IPO name is required');
 
-    const lot = parseAmount(lotAmount, { fieldName: 'lot amount' });
+    const lotRii = parseAmount(
+      lotAmountRii ?? lotAmount,
+      { fieldName: 'RII lot amount' }
+    );
+    const allowed = validateAllowedCategories(allowedCategories);
+    let lotHni = null;
+    if (allowed.includes('HNI') && lotAmountHni != null && lotAmountHni !== '') {
+      lotHni = parseAmount(lotAmountHni, { fieldName: 'HNI lot amount' });
+    }
 
     if (!['OPEN', 'CLOSED'].includes(status || 'OPEN') && status) {
 
@@ -65,13 +81,23 @@ router.post('/', async (req, res, next) => {
       throw new AppError('Invalid registrar');
     }
 
+    const segment = (ipoSegment || 'MAINBOARD').toUpperCase();
+    if (!IPO_SEGMENTS.includes(segment)) {
+      throw new AppError('IPO segment must be SME or MAINBOARD');
+    }
+    const categoriesJson = serializeAllowedCategories(allowedCategories);
+
 
 
     const [result] = await pool.query(
 
-      `INSERT INTO ipos (tenant_id, name, lot_amount, status, open_date, registrar) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ipos (tenant_id, name, lot_amount_rii, lot_amount_hni, lot_amount, status, open_date, registrar, ipo_segment, allowed_categories)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
-      [req.tenantId, name.trim(), lot, status || 'OPEN', openDate || null, registrar || null]
+      [
+        req.tenantId, name.trim(), lotRii, lotHni, lotRii, status || 'OPEN', openDate || null,
+        registrar || null, segment, categoriesJson,
+      ]
 
     );
 
@@ -123,7 +149,9 @@ router.patch('/:id', async (req, res, next) => {
 
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
-    const { name, lotAmount, status, openDate, registrar } = req.body;
+    const {
+      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, registrar, ipoSegment, allowedCategories,
+    } = req.body;
 
     const [existing] = await pool.query(
 
@@ -151,12 +179,28 @@ router.patch('/:id', async (req, res, next) => {
 
     }
 
-    if (lotAmount !== undefined) {
+    if (lotAmountRii !== undefined || lotAmountHni !== undefined || lotAmount !== undefined) {
       if (existing[0].status === 'CLOSED') {
         throw new AppError('Cannot change lot amount on a closed IPO. Reopen it first.');
       }
-      fields.push('lot_amount = ?');
-      values.push(parseAmount(lotAmount, { fieldName: 'lot amount' }));
+      const nextRii = lotAmountRii !== undefined
+        ? parseAmount(lotAmountRii, { fieldName: 'RII lot amount' })
+        : lotAmount !== undefined
+          ? parseAmount(lotAmount, { fieldName: 'lot amount' })
+          : null;
+      const nextHni = lotAmountHni !== undefined
+        ? parseAmount(lotAmountHni, { fieldName: 'HNI lot amount' })
+        : lotAmount !== undefined
+          ? parseAmount(lotAmount, { fieldName: 'lot amount' })
+          : null;
+      if (nextRii !== null) {
+        fields.push('lot_amount_rii = ?', 'lot_amount = ?');
+        values.push(nextRii, nextRii);
+      }
+      if (nextHni !== null) {
+        fields.push('lot_amount_hni = ?');
+        values.push(nextHni);
+      }
     }
 
     if (status !== undefined) {
@@ -183,6 +227,23 @@ router.patch('/:id', async (req, res, next) => {
       }
       fields.push('registrar = ?');
       values.push(registrar || null);
+    }
+
+    if (ipoSegment !== undefined) {
+      const segment = String(ipoSegment).toUpperCase();
+      if (!IPO_SEGMENTS.includes(segment)) throw new AppError('IPO segment must be SME or MAINBOARD');
+      fields.push('ipo_segment = ?');
+      values.push(segment);
+    }
+
+    if (allowedCategories !== undefined) {
+      const allowed = validateAllowedCategories(allowedCategories);
+      fields.push('allowed_categories = ?');
+      values.push(serializeAllowedCategories(allowedCategories));
+      if (!allowed.includes('HNI')) {
+        fields.push('lot_amount_hni = ?');
+        values.push(null);
+      }
     }
 
     if (!fields.length) throw new AppError('No fields to update');
@@ -305,7 +366,9 @@ router.post('/:id/distribute', async (req, res, next) => {
 
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
-    const { memberIds, amounts, markGiven, bankAccountId, accountDebits } = req.body;
+    const {
+      memberIds, amounts, markGiven, bankAccountId, accountDebits, investorCategory, memberCategories,
+    } = req.body;
 
     if (!memberIds?.length) throw new AppError('Select at least one member');
 
@@ -328,6 +391,10 @@ router.post('/:id/distribute', async (req, res, next) => {
         bankAccountId,
 
         accountDebits,
+
+        investorCategory,
+
+        memberCategories,
 
         userId: req.user.userId,
 
