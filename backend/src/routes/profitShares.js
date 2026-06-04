@@ -228,9 +228,10 @@ router.put('/providers/:providerId', async (req, res, next) => {
 router.get('/members', async (req, res, next) => {
   try {
     const [members] = await pool.query(
-      `SELECT m.id, m.display_name, m.pan, m.status,
+      `SELECT m.id, m.display_name, m.pan, m.status, fp.name AS member_fund_provider_name,
               (SELECT COUNT(*) FROM member_profit_shares mps WHERE mps.member_id = m.id) AS rule_count
        FROM members m
+       LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
        WHERE m.tenant_id = ?
        ORDER BY m.sort_order, m.id`,
       [req.tenantId]
@@ -258,6 +259,7 @@ router.get('/members', async (req, res, next) => {
             hasIpoSpecificRules: rules.some((r) => r.ipoId),
             rules,
             effectiveProviderName: providerNames.join(', ') || null,
+            memberFundProviderName: m.member_fund_provider_name || null,
             effectiveProfitProviderPercent: profitP,
             effectiveProfitManagerPercent: profitM,
             effectiveLossProviderPercent: lossP,

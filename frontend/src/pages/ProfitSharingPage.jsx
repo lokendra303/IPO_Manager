@@ -693,16 +693,25 @@ export default function ProfitSharingPage() {
     {
       title: 'Member',
       dataIndex: 'displayName',
-      width: 130,
+      width: 160,
       fixed: 'left',
-      render: (v) => <span style={{ fontWeight: 500 }}>{v}</span>,
+      render: (v, r) => (
+        <div>
+          <span style={{ fontWeight: 500 }}>{v}</span>
+          {r.effectiveProviderName && (
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+              Fund provider: {r.effectiveProviderName}
+            </div>
+          )}
+          {!r.effectiveProviderName && r.memberFundProviderName && (
+            <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
+              Default on profile: {r.memberFundProviderName}
+            </div>
+          )}
+        </div>
+      ),
     },
     { title: 'PAN', dataIndex: 'pan', width: 108 },
-    {
-      title: 'Provider',
-      width: 110,
-      render: (_, r) => r.effectiveProviderName || <Tag color="error">Not set</Tag>,
-    },
     {
       title: 'Rules',
       width: 88,
@@ -1029,6 +1038,13 @@ export default function ProfitSharingPage() {
             label: `Share rules (${members.length})`,
             children: (
               <>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="Fund provider is part of each share rule"
+                  description="This is who gets the provider % when IPO profit/loss is split — not who receives IPO distribute money (see Sub-groups for bulk pay to owner). Pick a rule from the list; the provider is inside that rule."
+                />
                 {!templateRuleOptions.length && (
                   <Alert
                     type="warning"
