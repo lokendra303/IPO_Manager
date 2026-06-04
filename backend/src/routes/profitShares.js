@@ -12,6 +12,10 @@ import {
   getProfitTotalsReport,
   calculateMultiRuleSplit,
   validateMemberRulesSet,
+  addMemberShareRule,
+  applyBulkMemberShareRules,
+  resolveRulesForIpo,
+  resolveOptionalIpoId,
 } from '../services/profitShareService.js';
 
 const router = Router();
@@ -128,11 +132,13 @@ router.get('/members', async (req, res, next) => {
       const withRules = await Promise.all(
         members.map(async (m) => {
           const { rules, hasRules } = await getMemberShareRules(conn, req.tenantId, m.id);
-          const profitP = rules.reduce((s, r) => s + r.profitProviderPercent, 0);
-          const profitM = rules.reduce((s, r) => s + r.profitManagerPercent, 0);
-          const lossP = rules.reduce((s, r) => s + r.lossProviderPercent, 0);
-          const lossM = rules.reduce((s, r) => s + r.lossManagerPercent, 0);
-          const providerNames = [...new Set(rules.map((r) => r.providerName).filter(Boolean))];
+          const globalRules = rules.filter((r) => !r.ipoId);
+          const summaryRules = globalRules.length ? globalRules : rules;
+          const profitP = summaryRules.reduce((s, r) => s + r.profitProviderPercent, 0);
+          const profitM = summaryRules.reduce((s, r) => s + r.profitManagerPercent, 0);
+          const lossP = summaryRules.reduce((s, r) => s + r.lossProviderPercent, 0);
+          const lossM = summaryRules.reduce((s, r) => s + r.lossManagerPercent, 0);
+          const providerNames = [...new Set(summaryRules.map((r) => r.providerName).filter(Boolean))];
           return {
             memberId: m.id,
             displayName: m.display_name,
@@ -140,6 +146,7 @@ router.get('/members', async (req, res, next) => {
             status: m.status,
             ruleCount: rules.length,
             hasShareRule: hasRules,
+            hasIpoSpecificRules: rules.some((r) => r.ipoId),
             rules,
             effectiveProviderName: providerNames.join(', ') || null,
             effectiveProfitProviderPercent: profitP,
@@ -212,55 +219,49 @@ router.get('/members/:memberId/rules', async (req, res, next) => {
   }
 });
 
+/** Apply one share rule definition to many members at once */
+router.post('/members/bulk-rules', async (req, res, next) => {
+  try {
+    const { memberIds, fundProviderId, ruleName, sortOrder } = req.body;
+    if (!Array.isArray(memberIds) || !memberIds.length) {
+      throw new AppError('Select at least one member', 400);
+    }
+    if (!fundProviderId) throw new AppError('Fund provider is required');
+
+    const percents = parseSharePercents(req.body);
+    const conn = await pool.getConnection();
+    try {
+      const result = await applyBulkMemberShareRules(conn, req.tenantId, memberIds, {
+        ruleName,
+        sortOrder,
+        fundProviderId,
+        ...percents,
+      });
+      res.status(result.appliedCount ? 201 : 400).json(result);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/members/:memberId/rules', async (req, res, next) => {
   try {
     const memberId = parsePositiveInt(req.params.memberId, 'member id');
     const { fundProviderId, ruleName, sortOrder } = req.body;
     const percents = parseSharePercents(req.body);
-
-    const [member] = await pool.query(
-      'SELECT id FROM members WHERE id = ? AND tenant_id = ?',
-      [memberId, req.tenantId]
-    );
-    if (!member.length) throw new AppError('Member not found', 404);
     if (!fundProviderId) throw new AppError('Fund provider is required');
-
-    const { providerId } = await (async () => {
-      const pid = parsePositiveInt(fundProviderId, 'fund provider id');
-      const [fp] = await pool.query(
-        'SELECT id FROM fund_providers WHERE id = ? AND tenant_id = ?',
-        [pid, req.tenantId]
-      );
-      if (!fp.length) throw new AppError('Fund provider not found', 404);
-      return { providerId: pid };
-    })();
-
-    validateProfitLossPercents(percents);
-
-    const [result] = await pool.query(
-      `INSERT INTO member_profit_shares
-       (tenant_id, member_id, rule_name, sort_order, fund_provider_id,
-        provider_percent, manager_percent, loss_provider_percent, loss_manager_percent)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        req.tenantId,
-        memberId,
-        ruleName?.trim() || 'New rule',
-        Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
-        providerId,
-        percents.profitProviderPercent,
-        percents.profitManagerPercent,
-        percents.lossProviderPercent,
-        percents.lossManagerPercent,
-      ]
-    );
 
     const conn = await pool.getConnection();
     try {
-      const { rules } = await getMemberShareRules(conn, req.tenantId, memberId);
-      validateMemberRulesSet(rules);
-      const created = rules.find((r) => r.id === result.insertId);
-      res.status(201).json(created || { id: result.insertId });
+      const { rule } = await addMemberShareRule(conn, req.tenantId, memberId, {
+        ruleName,
+        sortOrder,
+        fundProviderId,
+        ...percents,
+      });
+      res.status(201).json(rule);
     } finally {
       conn.release();
     }
@@ -273,7 +274,7 @@ router.put('/members/:memberId/rules/:ruleId', async (req, res, next) => {
   try {
     const memberId = parsePositiveInt(req.params.memberId, 'member id');
     const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
-    const { fundProviderId, ruleName, sortOrder } = req.body;
+    const { fundProviderId, ruleName, sortOrder, ipoId } = req.body;
     const percents = parseSharePercents(req.body);
 
     const [existing] = await pool.query(
@@ -281,6 +282,16 @@ router.put('/members/:memberId/rules/:ruleId', async (req, res, next) => {
       [ruleId, memberId, req.tenantId]
     );
     if (!existing.length) throw new AppError('Share rule not found', 404);
+
+    const connForIpo = await pool.getConnection();
+    let resolvedIpoId;
+    try {
+      if ('ipoId' in req.body) {
+        resolvedIpoId = await resolveOptionalIpoId(connForIpo, req.tenantId, ipoId);
+      }
+    } finally {
+      connForIpo.release();
+    }
 
     const fields = [];
     const values = [];
@@ -301,6 +312,10 @@ router.put('/members/:memberId/rules/:ruleId', async (req, res, next) => {
       if (!fp.length) throw new AppError('Fund provider not found', 404);
       fields.push('fund_provider_id = ?');
       values.push(pid);
+    }
+    if ('ipoId' in req.body) {
+      fields.push('ipo_id = ?');
+      values.push(resolvedIpoId);
     }
     if (req.body.profitProviderPercent !== undefined || req.body.providerPercent !== undefined) {
       fields.push('provider_percent = ?');
@@ -408,7 +423,7 @@ router.post('/preview', async (req, res, next) => {
     const conn = await pool.getConnection();
     try {
       let query = `
-        SELECT a.id, a.member_id, a.profit_loss, m.display_name, i.name as ipo_name
+        SELECT a.id, a.member_id, a.ipo_id, a.profit_loss, m.display_name, i.name as ipo_name
         FROM ipo_applications a
         JOIN members m ON m.id = a.member_id
         JOIN ipos i ON i.id = a.ipo_id
@@ -428,11 +443,13 @@ router.post('/preview', async (req, res, next) => {
 
       const previews = [];
       for (const app of apps) {
-        const { rules, hasRules } = await getMemberShareRules(conn, req.tenantId, app.member_id);
+        const { rules: allRules } = await getMemberShareRules(conn, req.tenantId, app.member_id);
+        const rules = resolveRulesForIpo(allRules, app.ipo_id);
         const gross = Number(app.profit_loss);
         let configWarning = null;
-        if (!hasRules || !rules.length) {
-          configWarning = 'Add at least one share rule for this member under Profit Sharing';
+        if (!rules.length) {
+          const ipoHint = app.ipo_name ? ` for ${app.ipo_name}` : '';
+          configWarning = `Add share rule for this member${ipoHint} under Profit Sharing`;
         }
         let split;
         try {
@@ -455,7 +472,7 @@ router.post('/preview', async (req, res, next) => {
           grossProfitLoss: gross,
           pnlType: split.pnlType,
           ruleCount: rules.length,
-          ruleSource: hasRules ? 'member' : 'none',
+          ruleSource: rules.length ? 'member' : 'none',
           ruleLines: split.lines,
           providerAmount: split.totalProvider,
           managerAmount: split.totalManager,

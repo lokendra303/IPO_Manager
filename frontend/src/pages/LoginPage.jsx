@@ -1,9 +1,21 @@
 import { useState } from 'react';
-import { Card, Form, Input, Button, Tabs, Typography, message } from 'antd';
-import { MailOutlined, LockOutlined, TeamOutlined, IdcardOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Button, Tabs, Typography, message, Modal } from 'antd';
+import { MailOutlined, LockOutlined, TeamOutlined, IdcardOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getErrorMessage } from '../utils/errors';
+import { getAuthErrorModal } from '../utils/errors';
+
+function showAuthErrorModal(err, context) {
+  const { title, content } = getAuthErrorModal(err, context);
+  Modal.error({
+    title,
+    content,
+    okText: 'OK',
+    centered: true,
+    icon: <CloseCircleOutlined style={{ color: '#dc2626' }} />,
+    className: 'auth-error-modal',
+  });
+}
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -21,7 +33,7 @@ export default function LoginPage() {
       message.success('Welcome!');
       navigate('/portal');
     } catch (err) {
-      message.error(getErrorMessage(err, 'Login failed'));
+      showAuthErrorModal(err, 'member');
     } finally {
       setLoading(false);
     }
@@ -34,7 +46,7 @@ export default function LoginPage() {
       message.success('Welcome back!');
       navigate('/');
     } catch (err) {
-      message.error(getErrorMessage(err, 'Login failed'));
+      showAuthErrorModal(err, 'manager');
     } finally {
       setLoading(false);
     }
@@ -47,7 +59,7 @@ export default function LoginPage() {
       message.success('Account created!');
       navigate('/');
     } catch (err) {
-      message.error(getErrorMessage(err, 'Registration failed'));
+      showAuthErrorModal(err, 'register');
     } finally {
       setLoading(false);
     }

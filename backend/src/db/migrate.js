@@ -353,6 +353,48 @@ async function applyIpoRegistrarV11(conn) {
   }
 }
 
+async function applyMemberShareIpoV12(conn) {
+  if (!(await tableExists(conn, 'member_profit_shares'))) return;
+  if (!(await columnExists(conn, 'member_profit_shares', 'ipo_id'))) {
+    await conn.query(
+      `ALTER TABLE member_profit_shares
+       ADD COLUMN ipo_id INT DEFAULT NULL AFTER member_id`
+    );
+    console.log('Added member_profit_shares.ipo_id');
+  }
+  if (!(await indexExists(conn, 'member_profit_shares', 'idx_member_profit_shares_ipo'))) {
+    await conn.query(
+      'ALTER TABLE member_profit_shares ADD INDEX idx_member_profit_shares_ipo (member_id, ipo_id, tenant_id)'
+    );
+    console.log('Added idx_member_profit_shares_ipo');
+  }
+  const [fkRows] = await conn.query(
+    `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_profit_shares'
+     AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = 'member_profit_shares_ipo_fk'`
+  );
+  if (!fkRows.length) {
+    await conn.query(
+      `ALTER TABLE member_profit_shares
+       ADD CONSTRAINT member_profit_shares_ipo_fk
+       FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE`
+    );
+    console.log('Added member_profit_shares IPO foreign key');
+  }
+}
+
+async function applyMemberContactV13(conn) {
+  if (!(await tableExists(conn, 'members'))) return;
+  if (!(await columnExists(conn, 'members', 'email'))) {
+    await conn.query('ALTER TABLE members ADD COLUMN email VARCHAR(255) DEFAULT NULL AFTER display_name');
+    console.log('Added members.email');
+  }
+  if (!(await columnExists(conn, 'members', 'upi'))) {
+    await conn.query('ALTER TABLE members ADD COLUMN upi VARCHAR(255) DEFAULT NULL AFTER email');
+    console.log('Added members.upi');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -377,6 +419,8 @@ async function migrate() {
   await applyIssueResolutionNotesV9(conn);
   await applyAuditLogV10(conn);
   await applyIpoRegistrarV11(conn);
+  await applyMemberShareIpoV12(conn);
+  await applyMemberContactV13(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

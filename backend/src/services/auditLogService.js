@@ -45,6 +45,8 @@ const RULES = [
     summary: (req, path) => {
       const parts = [];
       if (req.body?.displayName) parts.push(`name → ${req.body.displayName}`);
+      if (req.body?.email !== undefined) parts.push('email updated');
+      if (req.body?.upi !== undefined) parts.push('UPI updated');
       if (req.body?.status) parts.push(`status → ${req.body.status}`);
       if (req.body?.memberGroupId !== undefined) parts.push('sub-group updated');
       return parts.length ? `Updated member #${idFromPath(path)}: ${parts.join(', ')}` : `Updated member #${idFromPath(path)}`;
@@ -188,6 +190,17 @@ const RULES = [
     action: 'BANK_TRANSFER',
     entityType: 'bank_account',
     summary: (req) => `Transferred ₹${req.body?.amount ?? '?'} between bank accounts`,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/profit-shares\/members\/bulk-rules$/,
+    action: 'PROFIT_SHARE_BULK_RULES',
+    entityType: 'profit_share',
+    summary: (req) => {
+      const count = Array.isArray(req.body?.memberIds) ? req.body.memberIds.length : 0;
+      const name = req.body?.ruleName?.trim() || 'share rule';
+      return `Applied "${name}" to ${count} member(s)`;
+    },
   },
   {
     method: 'POST',

@@ -197,6 +197,57 @@ export default function MemberPortalPage() {
         subtitle="Your IPO applications and profit summary"
       />
 
+      {(dashboard?.member?.email || dashboard?.member?.upi || dashboard?.member?.pan) && (
+        <ContentCard title="Your profile" style={{ marginBottom: 24 }}>
+          <Space direction="vertical" size={8}>
+            {dashboard.member.pan && (
+              <Space>
+                <span>PAN: <Typography.Text code>{dashboard.member.pan}</Typography.Text></span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={copyMyPan}
+                  aria-label="Copy PAN"
+                />
+              </Space>
+            )}
+            {dashboard.member.email && (
+              <Space>
+                <span>
+                  Email: <a href={`mailto:${dashboard.member.email}`}>{dashboard.member.email}</a>
+                </span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(dashboard.member.email);
+                    message[ok ? 'success' : 'error'](ok ? 'Email copied' : 'Could not copy');
+                  }}
+                  aria-label="Copy email"
+                />
+              </Space>
+            )}
+            {dashboard.member.upi && (
+              <Space>
+                <span>UPI: <Typography.Text code>{dashboard.member.upi}</Typography.Text></span>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(dashboard.member.upi);
+                    message[ok ? 'success' : 'error'](ok ? 'UPI copied' : 'Could not copy');
+                  }}
+                  aria-label="Copy UPI"
+                />
+              </Space>
+            )}
+          </Space>
+        </ContentCard>
+      )}
+
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard

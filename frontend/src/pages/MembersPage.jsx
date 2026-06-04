@@ -99,6 +99,8 @@ export default function MembersPage() {
     form.setFieldsValue({
       pan: record.pan,
       displayName: record.display_name,
+      email: record.email || undefined,
+      upi: record.upi || undefined,
       status: record.status,
       relationshipNote: record.relationship_note,
       memberGroupId: record.member_group_id ?? undefined,
@@ -313,6 +315,37 @@ export default function MembersPage() {
           </Form.Item>
           <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
             <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
+          </Form.Item>
+          <Form.Item
+            name="email"
+            label="Email"
+            rules={[
+              {
+                validator: (_, value) => {
+                  const v = value?.trim();
+                  if (!v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return Promise.resolve();
+                  return Promise.reject(new Error('Enter a valid email'));
+                },
+              },
+            ]}
+          >
+            <Input type="email" placeholder="member@example.com" allowClear />
+          </Form.Item>
+          <Form.Item
+            name="upi"
+            label="UPI ID"
+            extra="e.g. name@paytm or 9876543210@ybl"
+            rules={[
+              {
+                validator: (_, value) => {
+                  const v = value?.trim();
+                  if (!v || /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z0-9]{2,64}$/i.test(v)) return Promise.resolve();
+                  return Promise.reject(new Error('Enter a valid UPI ID (name@bank)'));
+                },
+              },
+            ]}
+          >
+            <Input placeholder="name@paytm" allowClear style={{ textTransform: 'lowercase' }} />
           </Form.Item>
           <Form.Item
             name="status"

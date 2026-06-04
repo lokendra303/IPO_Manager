@@ -11,6 +11,8 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       id: member.id,
       displayName: member.display_name,
       pan: member.pan,
+      email: member.email ?? null,
+      upi: member.upi ?? null,
       status: member.status,
     },
     stats: {

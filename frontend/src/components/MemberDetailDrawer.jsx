@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Drawer, Spin, Row, Col, Table, Tag, Tabs, Descriptions, Empty, Alert,
+  Drawer, Spin, Row, Col, Table, Tag, Tabs, Descriptions, Empty, Alert, Button, Space, message,
 } from 'antd';
 import {
   ArrowDownOutlined,
@@ -9,6 +9,7 @@ import {
   CloseCircleOutlined,
   FundOutlined,
   ClockCircleOutlined,
+  CopyOutlined,
 } from '@ant-design/icons';
 import StatCard from './StatCard';
 import { Link } from 'react-router-dom';
@@ -16,6 +17,31 @@ import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import NoteCell from './NoteCell';
+import { copyToClipboard } from '../utils/allotmentCheck';
+
+function CopyableValue({ value, label, children }) {
+  if (!value) return '—';
+  const onCopy = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const ok = await copyToClipboard(String(value));
+    message[ok ? 'success' : 'error'](ok ? `${label} copied` : 'Could not copy');
+  };
+  return (
+    <Space size={4} align="center">
+      {children ?? <span>{value}</span>}
+      <Button
+        type="text"
+        size="small"
+        icon={<CopyOutlined />}
+        onClick={onCopy}
+        aria-label={`Copy ${label}`}
+        style={{ color: '#64748b' }}
+      />
+    </Space>
+  );
+}
 
 const allotmentColors = {
   ALLOTED: 'green',
@@ -87,7 +113,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
     },
     { title: 'Amount', dataIndex: 'amount', render: formatCurrency },
     { title: 'IPO', dataIndex: 'ipo_name', render: (v) => v || '—' },
-    { title: 'Notes', dataIndex: 'notes', ellipsis: true },
+    { title: 'Notes', dataIndex: 'notes', render: (v) => <NoteCell value={v} /> },
   ];
 
   return (
@@ -115,7 +141,19 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
             />
           )}
           <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="PAN">{m.pan}</Descriptions.Item>
+            <Descriptions.Item label="PAN">
+              <CopyableValue value={m.pan} label="PAN" />
+            </Descriptions.Item>
+            <Descriptions.Item label="Email">
+              <CopyableValue value={m.email} label="Email">
+                <a href={`mailto:${m.email}`}>{m.email}</a>
+              </CopyableValue>
+            </Descriptions.Item>
+            <Descriptions.Item label="UPI ID">
+              <CopyableValue value={m.upi} label="UPI ID">
+                <span style={{ fontFamily: 'monospace' }}>{m.upi}</span>
+              </CopyableValue>
+            </Descriptions.Item>
             <Descriptions.Item label="Status">
               <Tag color={m.status === 'ACTIVE' ? 'green' : 'default'}>
                 {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
@@ -129,6 +167,10 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
                   {(data.profitShare.rules || []).map((rule) => (
                     <div key={rule.id} style={{ marginBottom: 4 }}>
                       <Tag color="blue">{rule.ruleName}</Tag>
+                      {' '}
+                      <Tag color={rule.ipoId ? 'purple' : 'default'}>
+                        {rule.ipoId ? (rule.ipoName || 'IPO') : 'All IPOs'}
+                      </Tag>
                       {' '}{rule.providerName}
                       {' · '}Profit: {rule.profitProviderPercent}% / {rule.profitManagerPercent}%
                       {' · '}Loss: {rule.lossProviderPercent}% / {rule.lossManagerPercent}%

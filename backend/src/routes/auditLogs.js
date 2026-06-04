@@ -26,6 +26,7 @@ const ACTION_LABELS = {
   BANK_TRANSFER: 'Bank transfer',
   PROFIT_SHARE_PREVIEW: 'Profit share preview',
   PROFIT_SHARE_DISTRIBUTE: 'Profit share',
+  PROFIT_SHARE_BULK_RULES: 'Bulk share rules',
   MEMBER_ISSUE_CREATE: 'Issue raised',
   MEMBER_ISSUE_UPDATE: 'Issue updated',
   SETTINGS_TEAM: 'Team settings',

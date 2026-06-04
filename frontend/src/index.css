@@ -715,6 +715,53 @@ body {
   letter-spacing: 0.04em;
 }
 
+.table-note-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.amount-with-words {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.amount-with-words__figure {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.amount-with-words__text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #64748b;
+  font-style: italic;
+  max-width: 420px;
+}
+
+.amount-with-words--compact .amount-with-words__figure {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.amount-with-words--compact .amount-with-words__text {
+  font-size: 11px;
+  max-width: 280px;
+}
+
+.stat-card .amount-with-words__figure {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.stat-card .amount-with-words__text {
+  font-size: 11px;
+  margin-top: 4px;
+  max-width: 100%;
+}
+
 .pro-table .ant-table-tbody > tr > td {
   font-size: 13px;
 }
@@ -1085,6 +1132,15 @@ body {
   display: block;
   margin-bottom: 28px;
   color: #64748b;
+}
+
+.auth-error-modal .ant-modal-confirm-content {
+  color: #475569;
+  line-height: 1.6;
+}
+
+.auth-error-modal .ant-modal-confirm-title {
+  font-weight: 600;
 }
 
 /* Loading */

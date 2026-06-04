@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Table, Tag, Row, Col, Button, Modal, Form, Input, message, Space, Select, InputNumber, DatePicker,
 } from 'antd';
-import { WalletOutlined, PlusOutlined, BankOutlined, SwapOutlined } from '@ant-design/icons';
+import { WalletOutlined, PlusOutlined, BankOutlined, SwapOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
@@ -11,6 +11,7 @@ import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
+import NoteCell from '../components/NoteCell';
 import { tableDefaults } from '../utils/table';
 
 const typeColors = {
@@ -29,6 +30,8 @@ export default function WalletPage() {
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [accountModal, setAccountModal] = useState(false);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [savingAccount, setSavingAccount] = useState(false);
   const [transferModal, setTransferModal] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [form] = Form.useForm();
@@ -38,10 +41,14 @@ export default function WalletPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([client.get('/wallet'), client.get('/wallet/transactions')])
-      .then(([w, t]) => {
+    Promise.all([
+      client.get('/wallet'),
+      client.get('/bank-accounts'),
+      client.get('/wallet/transactions'),
+    ])
+      .then(([w, accts, t]) => {
         setBalance(w.data.balance);
-        setAccounts(w.data.accounts || []);
+        setAccounts(accts.data.accounts || []);
         setTxns(t.data);
       })
       .finally(() => setLoading(false));
@@ -49,19 +56,48 @@ export default function WalletPage() {
 
   useEffect(load, []);
 
+  const openAddAccount = () => {
+    setEditingAccount(null);
+    form.resetFields();
+    setAccountModal(true);
+  };
+
+  const openEditAccount = (record, e) => {
+    e?.stopPropagation();
+    setEditingAccount(record);
+    form.setFieldsValue({
+      label: record.label,
+      bankName: record.bank_name || undefined,
+      accountNumber: record.account_number || undefined,
+      isActive: record.is_active,
+    });
+    setAccountModal(true);
+  };
+
   const onSaveAccount = async (values) => {
+    setSavingAccount(true);
     try {
-      await client.post('/bank-accounts', {
+      const body = {
         label: values.label,
         bankName: values.bankName,
         accountNumber: values.accountNumber,
-      });
-      message.success('Bank account added');
+      };
+      if (editingAccount) {
+        body.isActive = values.isActive;
+        await client.patch(`/bank-accounts/${editingAccount.id}`, body);
+        message.success('Bank details updated');
+      } else {
+        await client.post('/bank-accounts', body);
+        message.success('Bank account added');
+      }
       setAccountModal(false);
+      setEditingAccount(null);
       form.resetFields();
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
+    } finally {
+      setSavingAccount(false);
     }
   };
 
@@ -123,7 +159,7 @@ export default function WalletPage() {
       title: 'Reference',
       render: (_, r) => (r.ref_type === 'bank_transfer' ? `Transfer #${r.ref_id}` : r.ref_type ? `${r.ref_type} #${r.ref_id}` : '—'),
     },
-    { title: 'Notes', dataIndex: 'notes', ellipsis: true },
+    { title: 'Notes', dataIndex: 'notes', render: (v) => <NoteCell value={v} /> },
   ];
 
   const accountCols = [
@@ -131,7 +167,10 @@ export default function WalletPage() {
       title: 'Account',
       render: (_, r) => (
         <Space direction="vertical" size={0}>
-          <span style={{ fontWeight: 500 }}>{r.label}</span>
+          <Space>
+            <span style={{ fontWeight: 500 }}>{r.label}</span>
+            {!r.is_active && <Tag>Inactive</Tag>}
+          </Space>
           {(r.bank_name || r.account_number) && (
             <span style={{ fontSize: 12, color: '#888' }}>
               {[r.bank_name, r.account_number].filter(Boolean).join(' · ')}
@@ -144,6 +183,15 @@ export default function WalletPage() {
       title: 'Balance',
       dataIndex: 'balance',
       render: (v) => formatCurrency(v),
+    },
+    {
+      title: '',
+      width: 90,
+      render: (_, r) => (
+        <Button size="small" icon={<EditOutlined />} onClick={(e) => openEditAccount(r, e)}>
+          Edit
+        </Button>
+      ),
     },
   ];
 
@@ -161,7 +209,7 @@ export default function WalletPage() {
             >
               Transfer Between Accounts
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setAccountModal(true); }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openAddAccount}>
               Add Bank Account
             </Button>
           </Space>
@@ -190,9 +238,10 @@ export default function WalletPage() {
         <Table
           rowKey="id"
           columns={accountCols}
-          dataSource={activeAccounts}
+          dataSource={accounts}
           pagination={false}
           size="middle"
+          locale={{ emptyText: 'No bank accounts — add one to distribute IPO funds' }}
         />
       </ContentCard>
 
@@ -201,22 +250,42 @@ export default function WalletPage() {
       </ContentCard>
 
       <Modal
-        title="Add Bank Account"
+        title={editingAccount ? 'Edit bank details' : 'Add Bank Account'}
         open={accountModal}
-        onCancel={() => setAccountModal(false)}
+        onCancel={() => { setAccountModal(false); setEditingAccount(null); }}
         onOk={() => form.submit()}
+        confirmLoading={savingAccount}
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={onSaveAccount}>
           <Form.Item name="label" label="Label" rules={[{ required: true }]}>
             <Input placeholder="HDFC Main, SBI Team, KVB" />
           </Form.Item>
-          <Form.Item name="bankName" label="Bank name (optional)">
-            <Input placeholder="HDFC Bank" />
+          <Form.Item name="bankName" label="Bank name">
+            <Input placeholder="HDFC Bank" allowClear />
           </Form.Item>
-          <Form.Item name="accountNumber" label="Account number (optional)">
-            <Input placeholder="XXXX1234" />
+          <Form.Item name="accountNumber" label="Account number">
+            <Input placeholder="XXXX1234" allowClear />
           </Form.Item>
+          {editingAccount && (
+            <>
+              <Form.Item label="Current balance">
+                <Input value={formatCurrency(editingAccount.balance)} disabled />
+              </Form.Item>
+              <Form.Item
+                name="isActive"
+                label="Status"
+                extra="Inactive accounts are hidden from IPO pay/distribute but keep their balance and history."
+              >
+                <Select
+                  options={[
+                    { value: true, label: 'Active' },
+                    { value: false, label: 'Inactive' },
+                  ]}
+                />
+              </Form.Item>
+            </>
+          )}
         </Form>
       </Modal>
 

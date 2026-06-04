@@ -28,6 +28,24 @@ function normalizePan(pan) {
 
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const UPI_REGEX = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z0-9]{2,64}$/;
+
+function normalizeEmail(email) {
+  if (email == null || email === '') return null;
+  const e = String(email).trim().toLowerCase();
+  if (!EMAIL_REGEX.test(e)) throw new AppError('Invalid email address');
+  return e;
+}
+
+function normalizeUpi(upi) {
+  if (upi == null || upi === '') return null;
+  const u = String(upi).trim().toLowerCase();
+  if (!UPI_REGEX.test(u)) throw new AppError('Invalid UPI ID (e.g. name@paytm or 9876543210@ybl)');
+  return u;
+}
+
 
 
 router.get('/', async (req, res, next) => {
@@ -93,7 +111,9 @@ router.post('/', async (req, res, next) => {
 
   try {
 
-    const { pan, displayName, status, relationshipNote, bulkGroupLabel, sortOrder, fundProviderId, memberGroupId } = req.body;
+    const {
+      pan, displayName, email, upi, status, relationshipNote, bulkGroupLabel, sortOrder, fundProviderId, memberGroupId,
+    } = req.body;
 
     if (!pan || !displayName?.trim()) throw new AppError('PAN and display name are required');
 
@@ -125,9 +145,9 @@ router.post('/', async (req, res, next) => {
 
     const [result] = await pool.query(
 
-      `INSERT INTO members (tenant_id, pan, display_name, status, relationship_note, bulk_group_label, sort_order, fund_provider_id, member_group_id)
+      `INSERT INTO members (tenant_id, pan, display_name, email, upi, status, relationship_note, bulk_group_label, sort_order, fund_provider_id, member_group_id)
 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
       [
 
@@ -136,6 +156,10 @@ router.post('/', async (req, res, next) => {
         normalizedPan,
 
         displayName.trim(),
+
+        normalizeEmail(email),
+
+        normalizeUpi(upi),
 
         status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
 
@@ -195,6 +219,10 @@ router.patch('/:id', async (req, res, next) => {
 
       displayName: 'display_name',
 
+      email: 'email',
+
+      upi: 'upi',
+
       status: 'status',
 
       relationshipNote: 'relationship_note',
@@ -232,6 +260,18 @@ router.patch('/:id', async (req, res, next) => {
         fields.push(`${col} = ?`);
 
         values.push(req.body[key].trim());
+
+      } else if (key === 'email') {
+
+        fields.push(`${col} = ?`);
+
+        values.push(normalizeEmail(req.body[key]));
+
+      } else if (key === 'upi') {
+
+        fields.push(`${col} = ?`);
+
+        values.push(normalizeUpi(req.body[key]));
 
       } else if (key === 'status') {
 

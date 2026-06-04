@@ -5,7 +5,7 @@ import {
 } from 'antd';
 import {
   PercentageOutlined, SaveOutlined, EditOutlined, ReloadOutlined, WarningOutlined, PlusOutlined, DeleteOutlined,
-  TeamOutlined, BankOutlined, UserOutlined,
+  TeamOutlined, BankOutlined, UserOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
 import { formatCurrency, pnlClassName } from '../utils/format';
@@ -24,6 +24,13 @@ function KeepsTag({ provider, manager }) {
       Member keeps: {Math.max(0, 100 - p - m)}%
     </Tag>
   );
+}
+
+function IpoScopeTag({ rule }) {
+  if (rule?.ipoId) {
+    return <Tag color="purple">{rule.ipoName || `IPO #${rule.ipoId}`}</Tag>;
+  }
+  return <Tag>All IPOs</Tag>;
 }
 
 function SharePercentForm({ form, prefix }) {
@@ -58,29 +65,35 @@ export default function ProfitSharingPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fundProviders, setFundProviders] = useState([]);
+  const [ipos, setIpos] = useState([]);
   const [members, setMembers] = useState([]);
   const [report, setReport] = useState(null);
   const [pnlTotals, setPnlTotals] = useState(null);
   const [totalsView, setTotalsView] = useState('member');
-  const [editMember, setEditMember] = useState(null);
+  const [manageMember, setManageMember] = useState(null);
   const [memberRules, setMemberRules] = useState([]);
   const [rulesLoading, setRulesLoading] = useState(false);
-  const [ruleEdit, setRuleEdit] = useState(null);
+  const [ruleFormOpen, setRuleFormOpen] = useState(false);
+  const [ruleFormContext, setRuleFormContext] = useState(null);
   const [ruleForm] = Form.useForm();
+  const [ruleSaving, setRuleSaving] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState([]);
 
   const renderAmt = (v) => <span className={pnlClassName(v)}>{formatCurrency(v)}</span>;
 
   const load = async () => {
     setLoading(true);
     try {
-      const [memRes, fpRes, repRes, totalsRes] = await Promise.all([
+      const [memRes, fpRes, ipoRes, repRes, totalsRes] = await Promise.all([
         client.get('/profit-shares/members'),
         client.get('/fund-providers'),
+        client.get('/ipos'),
         client.get('/profit-shares/report'),
         client.get('/profit-shares/totals'),
       ]);
       setMembers(memRes.data);
       setFundProviders(fpRes.data);
+      setIpos(ipoRes.data);
       setReport(repRes.data);
       setPnlTotals(totalsRes.data);
       return memRes.data;
@@ -95,11 +108,12 @@ export default function ProfitSharingPage() {
     const editId = location.state?.editMemberId;
     if (!editId || !members.length) return;
     const m = members.find((x) => x.memberId === editId);
-    if (m) openEditMember(m);
+    if (m) openManageMember(m);
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.state?.editMemberId, members]);
 
   const providerOptions = fundProviders.map((p) => ({ value: p.id, label: p.name }));
+  const ipoOptions = ipos.map((i) => ({ value: i.id, label: i.name }));
 
   const loadMemberRules = async (memberId) => {
     setRulesLoading(true);
@@ -112,67 +126,145 @@ export default function ProfitSharingPage() {
     }
   };
 
-  const openEditMember = async (m) => {
-    setEditMember(m);
-    setRuleEdit(null);
+  const openManageMember = async (m) => {
+    setManageMember(m);
     await loadMemberRules(m.memberId);
   };
 
-  const combinedPercents = () => {
-    const profitP = memberRules.reduce((s, r) => s + Number(r.profitProviderPercent), 0);
-    const profitM = memberRules.reduce((s, r) => s + Number(r.profitManagerPercent), 0);
-    const lossP = memberRules.reduce((s, r) => s + Number(r.lossProviderPercent), 0);
-    const lossM = memberRules.reduce((s, r) => s + Number(r.lossManagerPercent), 0);
-    return { profitP, profitM, lossP, lossM };
-  };
-
-  const openAddRule = () => {
-    setRuleEdit({ isNew: true });
-    ruleForm.setFieldsValue({
-      ruleName: `Rule ${memberRules.length + 1}`,
-      fundProviderId: undefined,
-      profitProviderPercent: 0,
-      profitManagerPercent: 0,
-      lossProviderPercent: 0,
-      lossManagerPercent: 0,
+  const rulesByScope = (rules) => {
+    const groups = new Map();
+    for (const r of rules) {
+      const key = r.ipoId ?? 'global';
+      if (!groups.has(key)) {
+        groups.set(key, { label: r.ipoId ? (r.ipoName || `IPO #${r.ipoId}`) : 'All IPOs', rules: [] });
+      }
+      groups.get(key).rules.push(r);
+    }
+    return [...groups.values()].map((g) => {
+      const profitP = g.rules.reduce((s, r) => s + Number(r.profitProviderPercent), 0);
+      const profitM = g.rules.reduce((s, r) => s + Number(r.profitManagerPercent), 0);
+      const lossP = g.rules.reduce((s, r) => s + Number(r.lossProviderPercent), 0);
+      const lossM = g.rules.reduce((s, r) => s + Number(r.lossManagerPercent), 0);
+      return { ...g, profitP, profitM, lossP, lossM };
     });
   };
 
-  const openEditRule = (rule) => {
-    setRuleEdit({ isNew: false, id: rule.id });
+  const defaultRuleFormValues = (nextIndex = 1) => ({
+    ruleName: `Rule ${nextIndex}`,
+    ipoId: undefined,
+    fundProviderId: undefined,
+    profitProviderPercent: 0,
+    profitManagerPercent: 0,
+    lossProviderPercent: 0,
+    lossManagerPercent: 0,
+  });
+
+  /** Open the rule form for one or many members (create) */
+  const openAddRuleForm = (memberIds, label, nextRuleIndex = 1) => {
+    if (!memberIds.length) return;
+    setRuleFormContext({ mode: 'create', memberIds, label });
+    ruleForm.setFieldsValue(defaultRuleFormValues(nextRuleIndex));
+    setRuleFormOpen(true);
+  };
+
+  const openAddRuleForMember = (m) => {
+    openAddRuleForm([m.memberId], m.displayName, (m.ruleCount || 0) + 1);
+  };
+
+  const openAddRuleForSelected = () => {
+    const selected = members.filter((m) => selectedMemberIds.includes(m.memberId));
+    const label = selected.length === 1
+      ? selected[0].displayName
+      : `${selected.length} members`;
+    openAddRuleForm(selectedMemberIds, label, 1);
+  };
+
+  const openEditRuleForm = (rule) => {
+    if (!manageMember) return;
+    setRuleFormContext({
+      mode: 'edit',
+      memberIds: [manageMember.memberId],
+      label: manageMember.displayName,
+      ruleId: rule.id,
+    });
     ruleForm.setFieldsValue({
       ruleName: rule.ruleName,
+      ipoId: rule.ipoId ?? undefined,
       fundProviderId: rule.fundProviderId,
       profitProviderPercent: rule.profitProviderPercent,
       profitManagerPercent: rule.profitManagerPercent,
       lossProviderPercent: rule.lossProviderPercent,
       lossManagerPercent: rule.lossManagerPercent,
     });
+    setRuleFormOpen(true);
+  };
+
+  const onRuleProviderChange = async (providerId) => {
+    if (!providerId) return;
+    try {
+      const { data } = await client.get(`/profit-shares/providers/${providerId}/template`);
+      ruleForm.setFieldsValue({
+        profitProviderPercent: data.profitProviderPercent,
+        profitManagerPercent: data.profitManagerPercent,
+        lossProviderPercent: data.lossProviderPercent,
+        lossManagerPercent: data.lossManagerPercent,
+      });
+    } catch {
+      /* no provider template */
+    }
   };
 
   const onSaveRule = async (values) => {
-    if (!editMember) return;
+    if (!ruleFormContext) return;
+    setRuleSaving(true);
     try {
-      if (ruleEdit?.isNew) {
-        await client.post(`/profit-shares/members/${editMember.memberId}/rules`, values);
+      if (ruleFormContext.mode === 'edit') {
+        const memberId = ruleFormContext.memberIds[0];
+        await client.put(`/profit-shares/members/${memberId}/rules/${ruleFormContext.ruleId}`, values);
+        message.success('Rule updated');
+      } else if (ruleFormContext.memberIds.length === 1) {
+        await client.post(`/profit-shares/members/${ruleFormContext.memberIds[0]}/rules`, values);
         message.success('Rule added');
       } else {
-        await client.put(`/profit-shares/members/${editMember.memberId}/rules/${ruleEdit.id}`, values);
-        message.success('Rule updated');
+        const { data } = await client.post('/profit-shares/members/bulk-rules', {
+          memberIds: ruleFormContext.memberIds,
+          ...values,
+        });
+        const { appliedCount, failedCount, failed } = data;
+        if (appliedCount) message.success(`Rule added to ${appliedCount} member(s)`);
+        if (failedCount) {
+          const detail = failed
+            .slice(0, 3)
+            .map((f) => `${f.displayName || f.memberId}: ${f.error}`)
+            .join('; ');
+          message.warning(
+            `${failedCount} skipped${detail ? ` — ${detail}${failedCount > 3 ? '…' : ''}` : ''}`,
+            8
+          );
+        }
+        if (!appliedCount && failedCount) {
+          message.error('Rule could not be added to any selected member');
+          return;
+        }
+        setSelectedMemberIds([]);
       }
-      setRuleEdit(null);
-      await loadMemberRules(editMember.memberId);
+      setRuleFormOpen(false);
+      setRuleFormContext(null);
+      if (manageMember) await loadMemberRules(manageMember.memberId);
       load();
     } catch (err) {
       message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
     }
   };
 
   const onDeleteRule = async (ruleId) => {
+    if (!manageMember) return;
     try {
-      await client.delete(`/profit-shares/members/${editMember.memberId}/rules/${ruleId}`);
+      await client.delete(`/profit-shares/members/${manageMember.memberId}/rules/${ruleId}`);
       message.success('Rule removed');
-      await loadMemberRules(editMember.memberId);
+      await loadMemberRules(manageMember.memberId);
       load();
     } catch (err) {
       message.error(getErrorMessage(err));
@@ -180,10 +272,11 @@ export default function ProfitSharingPage() {
   };
 
   const onClearMemberRules = async () => {
+    if (!manageMember) return;
     try {
-      await client.delete(`/profit-shares/members/${editMember.memberId}`);
+      await client.delete(`/profit-shares/members/${manageMember.memberId}`);
       message.success('All share rules removed');
-      setEditMember(null);
+      setManageMember(null);
       setMemberRules([]);
       load();
     } catch (err) {
@@ -208,13 +301,16 @@ export default function ProfitSharingPage() {
     {
       title: 'Rules',
       dataIndex: 'ruleCount',
-      width: 90,
+      width: 120,
       render: (n, r) => (
-        n > 0 ? <Tag color="success">{n} rule{n > 1 ? 's' : ''}</Tag> : <Tag color="warning">Required</Tag>
+        <Space direction="vertical" size={2}>
+          {n > 0 ? <Tag color="success">{n} rule{n > 1 ? 's' : ''}</Tag> : <Tag color="warning">Required</Tag>}
+          {r.hasIpoSpecificRules && <Tag color="purple" style={{ margin: 0 }}>IPO-specific</Tag>}
+        </Space>
       ),
     },
     {
-      title: 'On profit',
+      title: 'On profit (default)',
       render: (_, r) => (r.hasShareRule ? pctPair(r.effectiveProfitProviderPercent, r.effectiveProfitManagerPercent) : '—'),
     },
     {
@@ -222,11 +318,23 @@ export default function ProfitSharingPage() {
       render: (_, r) => (r.hasShareRule ? pctPair(r.effectiveLossProviderPercent, r.effectiveLossManagerPercent) : '—'),
     },
     {
-      title: '',
+      title: 'Actions',
+      width: 200,
+      fixed: 'right',
       render: (_, r) => (
-        <Button size="small" type="primary" icon={<EditOutlined />} onClick={() => openEditMember(r)}>
-          Edit
-        </Button>
+        <Space size="small">
+          <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openAddRuleForMember(r)}>
+            Add rule
+          </Button>
+          <Button
+            size="small"
+            icon={<UnorderedListOutlined />}
+            onClick={() => openManageMember(r)}
+            disabled={!r.ruleCount}
+          >
+            Manage
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -301,7 +409,7 @@ export default function ProfitSharingPage() {
     <div>
       <PageHeader
         title="Profit Sharing"
-        subtitle="Each member can have multiple share rules (e.g. different fund providers). Combined % across all rules must not exceed 100% on profit or on loss."
+        subtitle="Rules can apply to all IPOs or a specific IPO. IPO-specific rules override defaults for that IPO. Combined % per scope must not exceed 100%."
         extra={
           <Button icon={<ReloadOutlined />} onClick={load}>
             Refresh
@@ -422,8 +530,39 @@ export default function ProfitSharingPage() {
             key: 'members',
             label: `Share rules (${members.length})`,
             children: (
-              <ContentCard title="Member share rules">
-                <Table rowKey="memberId" columns={memberCols} dataSource={members} scroll={{ x: 1000 }} {...tableDefaults} />
+              <ContentCard
+                title="Member share rules"
+                extra={
+                  <Space wrap>
+                    {selectedMemberIds.length > 0 ? (
+                      <>
+                        <span style={{ color: '#64748b' }}>{selectedMemberIds.length} selected</span>
+                        <Button type="link" size="small" onClick={() => setSelectedMemberIds([])}>
+                          Clear selection
+                        </Button>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={openAddRuleForSelected}>
+                          Add rule to selected
+                        </Button>
+                      </>
+                    ) : (
+                      <span style={{ color: '#94a3b8', fontSize: 13 }}>
+                        Tip: select rows to add the same rule to multiple members
+                      </span>
+                    )}
+                  </Space>
+                }
+              >
+                <Table
+                  rowKey="memberId"
+                  columns={memberCols}
+                  dataSource={members}
+                  scroll={{ x: 1100 }}
+                  rowSelection={{
+                    selectedRowKeys: selectedMemberIds,
+                    onChange: setSelectedMemberIds,
+                  }}
+                  {...tableDefaults}
+                />
               </ContentCard>
             ),
           },
@@ -468,34 +607,57 @@ export default function ProfitSharingPage() {
       />
 
       <Modal
-        title={`Share rules — ${editMember?.displayName}`}
-        open={!!editMember}
-        onCancel={() => { setEditMember(null); setRuleEdit(null); }}
-        footer={null}
+        title={`Rules — ${manageMember?.displayName}`}
+        open={!!manageMember}
+        onCancel={() => setManageMember(null)}
         destroyOnClose
         width={720}
+        footer={
+          memberRules.length > 0 ? (
+            <Popconfirm title="Remove all rules for this member?" onConfirm={onClearMemberRules}>
+              <Button danger>Clear all rules</Button>
+            </Popconfirm>
+          ) : null
+        }
       >
-        {(() => {
-          const { profitP, profitM, lossP, lossM } = combinedPercents();
-          return (
-            <div style={{ marginBottom: 12 }}>
-              <Space wrap>
-                <KeepsTag provider={profitP} manager={profitM} />
-                <Tag color={profitP + profitM > 100 ? 'error' : 'default'}>Profit total: {profitP + profitM}%</Tag>
-                <Tag color={lossP + lossM > 100 ? 'error' : 'default'}>Loss total: {lossP + lossM}%</Tag>
+        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <Space direction="vertical" size="small">
+            {rulesByScope(memberRules).map((scope) => (
+              <Space key={scope.label} wrap>
+                <Tag color={scope.label === 'All IPOs' ? 'default' : 'purple'}>{scope.label}</Tag>
+                <Tag color={scope.profitP + scope.profitM > 100 ? 'error' : 'default'}>
+                  Profit: {scope.profitP + scope.profitM}%
+                </Tag>
+                <Tag color={scope.lossP + scope.lossM > 100 ? 'error' : 'default'}>
+                  Loss: {scope.lossP + scope.lossM}%
+                </Tag>
               </Space>
-            </div>
-          );
-        })()}
+            ))}
+          </Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => openAddRuleForm(
+              [manageMember.memberId],
+              manageMember.displayName,
+              memberRules.length + 1
+            )}
+          >
+            Add another rule
+          </Button>
+        </div>
         <Table
           rowKey="id"
           size="small"
           loading={rulesLoading}
           dataSource={memberRules}
           pagination={false}
-          locale={{ emptyText: 'No rules yet — add one below' }}
           columns={[
             { title: 'Name', dataIndex: 'ruleName' },
+            {
+              title: 'Applies to',
+              render: (_, r) => <IpoScopeTag rule={r} />,
+            },
             { title: 'Fund provider', dataIndex: 'providerName' },
             {
               title: 'On profit',
@@ -510,7 +672,7 @@ export default function ProfitSharingPage() {
               width: 120,
               render: (_, r) => (
                 <Space>
-                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditRule(r)} />
+                  <Button size="small" icon={<EditOutlined />} onClick={() => openEditRuleForm(r)} />
                   <Popconfirm title="Delete this rule?" onConfirm={() => onDeleteRule(r.id)}>
                     <Button size="small" danger icon={<DeleteOutlined />} />
                   </Popconfirm>
@@ -519,39 +681,66 @@ export default function ProfitSharingPage() {
             },
           ]}
         />
-        <Space style={{ marginTop: 16 }}>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openAddRule}>
-            Add rule
-          </Button>
-          {memberRules.length > 0 && (
-            <Popconfirm title="Remove all rules for this member?" onConfirm={onClearMemberRules}>
-              <Button danger>Clear all</Button>
-            </Popconfirm>
-          )}
-        </Space>
       </Modal>
 
       <Modal
-        title={ruleEdit?.isNew ? 'Add share rule' : 'Edit share rule'}
-        open={!!ruleEdit}
-        onCancel={() => setRuleEdit(null)}
+        title={
+          ruleFormContext?.mode === 'edit'
+            ? `Edit rule — ${ruleFormContext?.label}`
+            : ruleFormContext?.memberIds?.length > 1
+              ? `Add rule — ${ruleFormContext?.memberIds?.length} members`
+              : `Add rule — ${ruleFormContext?.label || ''}`
+        }
+        open={ruleFormOpen}
+        onCancel={() => { setRuleFormOpen(false); setRuleFormContext(null); }}
         footer={null}
         destroyOnClose
         width={520}
       >
+        {ruleFormContext?.mode === 'create' && ruleFormContext.memberIds.length > 1 && (
+          <p style={{ marginBottom: 16, color: '#64748b' }}>
+            This rule will be added to each selected member (existing rules are kept).
+          </p>
+        )}
         <Form form={ruleForm} layout="vertical" onFinish={onSaveRule}>
           <Form.Item name="ruleName" label="Rule name" rules={[{ required: true }]}>
-            <Input placeholder="e.g. Provider A share" />
+            <Input placeholder="e.g. Rule 2" />
+          </Form.Item>
+          <Form.Item
+            name="ipoId"
+            label="Applies to IPO"
+            extra="Leave empty for all IPOs. Pick one IPO to use this rule only for that IPO (overrides default rules for that IPO)."
+          >
+            <Select
+              allowClear
+              placeholder="All IPOs (default)"
+              options={ipoOptions}
+            />
           </Form.Item>
           <Form.Item name="fundProviderId" label="Fund provider" rules={[{ required: true }]}>
-            <Select placeholder="Who receives the provider share?" options={providerOptions} />
+            <Select
+              placeholder="Who receives the provider share?"
+              options={providerOptions}
+              onChange={onRuleProviderChange}
+            />
           </Form.Item>
-          <Divider orientation="left" plain>When this member has profit</Divider>
+          <Divider orientation="left" plain>When member has profit</Divider>
           <SharePercentForm form={ruleForm} prefix="profit" />
-          <Divider orientation="left" plain>When this member has loss</Divider>
+          <Divider orientation="left" plain>When member has loss</Divider>
           <SharePercentForm form={ruleForm} prefix="loss" />
-          <Button type="primary" htmlType="submit" icon={<SaveOutlined />} block style={{ marginTop: 8 }}>
-            Save rule
+          <Button
+            type="primary"
+            htmlType="submit"
+            icon={<SaveOutlined />}
+            block
+            loading={ruleSaving}
+            style={{ marginTop: 8 }}
+          >
+            {ruleFormContext?.mode === 'edit'
+              ? 'Save changes'
+              : ruleFormContext?.memberIds?.length > 1
+                ? `Add rule to ${ruleFormContext.memberIds.length} members`
+                : 'Add rule'}
           </Button>
         </Form>
       </Modal>

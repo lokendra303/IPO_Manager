@@ -6,11 +6,13 @@ import {
 import { PlusOutlined, TransactionOutlined, BankOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, amountToWordsInr } from '../utils/format';
+import AmountWithWords from '../components/AmountWithWords';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
+import NoteCell from '../components/NoteCell';
 import { tableDefaults } from '../utils/table';
 
 export default function FundProvidersPage() {
@@ -128,8 +130,16 @@ export default function FundProvidersPage() {
 
   const columns = [
     { title: 'Name', dataIndex: 'name', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'Ledger Balance', dataIndex: 'ledgerBalance', render: (v) => formatCurrency(v) },
-    { title: 'Total Profit', dataIndex: 'totalProfit', render: (v) => (v ? formatCurrency(v) : '—') },
+    {
+      title: 'Ledger Balance',
+      dataIndex: 'ledgerBalance',
+      render: (v) => <AmountWithWords value={v} compact />,
+    },
+    {
+      title: 'Total Profit',
+      dataIndex: 'totalProfit',
+      render: (v) => (v ? <AmountWithWords value={v} compact /> : '—'),
+    },
     {
       title: 'Actions',
       render: (_, r) => (
@@ -158,12 +168,25 @@ export default function FundProvidersPage() {
       title: 'Amount',
       dataIndex: 'amount',
       render: (v) => (
-        <Tag color={v >= 0 ? 'success' : 'error'}>{formatCurrency(v)}</Tag>
+        <div>
+          <Tag color={v >= 0 ? 'success' : 'error'}>{formatCurrency(v)}</Tag>
+          <div className="amount-with-words__text" style={{ marginTop: 4, maxWidth: 260 }}>
+            {amountToWordsInr(v)}
+          </div>
+        </div>
       ),
     },
     { title: 'Bank Account(s)', dataIndex: 'account_label' },
-    { title: 'Profit', dataIndex: 'provider_profit', render: (v) => (v != null ? formatCurrency(v) : '—') },
-    { title: 'Notes', dataIndex: 'notes', ellipsis: true },
+    {
+      title: 'Profit',
+      dataIndex: 'provider_profit',
+      render: (v) => (v != null ? <AmountWithWords value={v} compact /> : '—'),
+    },
+    {
+      title: 'Notes',
+      dataIndex: 'notes',
+      render: (v) => <NoteCell value={v} maxWidth={480} />,
+    },
   ];
 
   return (
@@ -183,7 +206,12 @@ export default function FundProvidersPage() {
           <StatCard title="Providers" value={providers.length} icon={<BankOutlined />} variant="info" />
         </Col>
         <Col xs={24} sm={12} md={8}>
-          <StatCard title="Combined Ledger" value={formatCurrency(totalLedger)} icon={<TransactionOutlined />} variant="primary" />
+          <StatCard
+            title="Combined Ledger"
+            value={<AmountWithWords value={totalLedger} />}
+            icon={<TransactionOutlined />}
+            variant="primary"
+          />
         </Col>
       </Row>
 
@@ -291,8 +319,8 @@ export default function FundProvidersPage() {
         title={selected?.name}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={720}
-        className="member-drawer"
+        width={920}
+        className="member-drawer fund-provider-ledger-drawer"
         extra={(
           <Button type="primary" onClick={() => { setSelected(selected); openTxnModal(); }}>
             Add Transaction
@@ -301,10 +329,23 @@ export default function FundProvidersPage() {
       >
         <Row gutter={16} style={{ marginBottom: 20 }}>
           <Col span={12}>
-            <StatCard title="Ledger Balance" value={formatCurrency(selected?.ledgerBalance)} icon={<BankOutlined />} variant="primary" />
+            <StatCard
+              title="Ledger Balance"
+              value={<AmountWithWords value={selected?.ledgerBalance} />}
+              icon={<BankOutlined />}
+              variant="primary"
+            />
           </Col>
         </Row>
-        <Table rowKey="id" columns={txnCols} dataSource={transactions} size="middle" className="pro-table" pagination={{ pageSize: 15 }} />
+        <Table
+          rowKey="id"
+          columns={txnCols}
+          dataSource={transactions}
+          size="middle"
+          className="pro-table ledger-table"
+          pagination={{ pageSize: 15 }}
+          scroll={{ x: 800 }}
+        />
       </Drawer>
     </div>
   );

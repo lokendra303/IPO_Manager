@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS member_profit_shares (
   id INT AUTO_INCREMENT PRIMARY KEY,
   tenant_id INT NOT NULL,
   member_id INT NOT NULL,
+  ipo_id INT DEFAULT NULL,
   rule_name VARCHAR(100) DEFAULT NULL,
   sort_order INT NOT NULL DEFAULT 0,
   fund_provider_id INT DEFAULT NULL,
@@ -41,8 +42,10 @@ CREATE TABLE IF NOT EXISTS member_profit_shares (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+  FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
   FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE SET NULL,
-  INDEX idx_member_profit_shares_member (member_id, tenant_id)
+  INDEX idx_member_profit_shares_member (member_id, tenant_id),
+  INDEX idx_member_profit_shares_ipo (member_id, ipo_id, tenant_id)
 );
 
 CREATE TABLE IF NOT EXISTS profit_share_distributions (

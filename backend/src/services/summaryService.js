@@ -1,6 +1,6 @@
 export async function getSummary(pool, tenantId) {
   const [members] = await pool.query(
-    `SELECT m.id, m.display_name, m.pan, m.status, m.relationship_note,
+    `SELECT m.id, m.display_name, m.pan, m.email, m.upi, m.status, m.relationship_note,
             mg.name AS member_group_name
      FROM members m
      LEFT JOIN member_groups mg ON mg.id = m.member_group_id
@@ -63,6 +63,8 @@ export async function getSummary(pool, tenantId) {
       memberId: m.id,
       displayName: m.display_name,
       pan: m.pan,
+      email: m.email ?? null,
+      upi: m.upi ?? null,
       status: m.status,
       relationshipNote: m.relationship_note,
       memberGroupName: m.member_group_name,

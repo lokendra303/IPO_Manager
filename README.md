@@ -82,6 +82,7 @@ App runs at `http://localhost:5173` (or your `VITE_PORT`). API calls use `VITE_A
 | GET | `/api/profit-shares/members` | All members with rule list and combined % |
 | GET | `/api/profit-shares/members/:id/rules` | Rules for one member |
 | POST | `/api/profit-shares/members/:id/rules` | Add a share rule (provider + profit/loss %) |
+| POST | `/api/profit-shares/members/bulk-rules` | Apply one rule to many members (`memberIds` + rule fields; optional `ipoId`) |
 | PUT | `/api/profit-shares/members/:id/rules/:ruleId` | Update one rule |
 | DELETE | `/api/profit-shares/members/:id/rules/:ruleId` | Delete one rule |
 | DELETE | `/api/profit-shares/members/:id` | Clear all rules for a member |

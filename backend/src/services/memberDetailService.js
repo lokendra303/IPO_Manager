@@ -16,9 +16,10 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   const member = members[0];
 
   const [shareRows] = await pool.query(
-    `SELECT mps.*, fp.name AS provider_name
+    `SELECT mps.*, fp.name AS provider_name, i.name AS ipo_name
      FROM member_profit_shares mps
      LEFT JOIN fund_providers fp ON fp.id = mps.fund_provider_id
+     LEFT JOIN ipos i ON i.id = mps.ipo_id AND i.tenant_id = mps.tenant_id
      WHERE mps.member_id = ? AND mps.tenant_id = ?`,
     [id, tenantId]
   );
@@ -26,6 +27,8 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     id: row.id,
     ruleName: row.rule_name || `Rule ${row.id}`,
     sortOrder: Number(row.sort_order ?? 0),
+    ipoId: row.ipo_id ?? null,
+    ipoName: row.ipo_name ?? null,
     fundProviderId: row.fund_provider_id,
     providerName: row.provider_name,
     profitProviderPercent: Number(row.provider_percent),
