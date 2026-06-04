@@ -11,8 +11,10 @@ import {
   Tag,
   Checkbox,
   Typography,
+  Select,
+  Descriptions,
 } from 'antd';
-import { PlusOutlined, EditOutlined, TeamOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined } from '@ant-design/icons';
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
@@ -28,6 +30,9 @@ export default function MemberGroupsPage() {
   const [editing, setEditing] = useState(null);
   const [assignGroup, setAssignGroup] = useState(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
+  const [ownerMemberId, setOwnerMemberId] = useState(null);
+  const [viewGroup, setViewGroup] = useState(null);
+  const [viewOwnerId, setViewOwnerId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
@@ -74,9 +79,37 @@ export default function MemberGroupsPage() {
     }
   };
 
+  const openViewInfo = (group) => {
+    setViewGroup(group);
+    setViewOwnerId(group.ownerMemberId ?? null);
+  };
+
+  const onSaveViewOwner = async () => {
+    if (!viewGroup) return;
+    if (!viewOwnerId) {
+      message.warning('Select a group owner from the list');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { data } = await client.patch(`/member-groups/${viewGroup.id}`, {
+        ownerMemberId: viewOwnerId,
+      });
+      message.success('Group owner saved');
+      setViewGroup(data);
+      setViewOwnerId(data.ownerMemberId ?? null);
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not save owner'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openAssignMembers = (group) => {
     setAssignGroup(group);
     setSelectedMemberIds(group.members.map((m) => m.id));
+    setOwnerMemberId(group.ownerMemberId ?? null);
     setMembersModalOpen(true);
   };
 
@@ -84,9 +117,20 @@ export default function MemberGroupsPage() {
     if (!assignGroup) return;
     setSaving(true);
     try {
-      await client.put(`/member-groups/${assignGroup.id}/members`, { memberIds: selectedMemberIds });
-      message.success('Group members updated');
+      await client.put(`/member-groups/${assignGroup.id}/members`, {
+        memberIds: selectedMemberIds,
+        ownerMemberId: ownerMemberId ?? null,
+      });
+      message.success(ownerMemberId ? 'Group members and owner updated' : 'Group members updated');
       setMembersModalOpen(false);
+      if (viewGroup?.id === assignGroup.id) {
+        const { data: refreshed } = await client.get('/member-groups');
+        const updated = refreshed.data.find((g) => g.id === assignGroup.id);
+        if (updated) {
+          setViewGroup(updated);
+          setViewOwnerId(updated.ownerMemberId ?? null);
+        }
+      }
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Update failed'));
@@ -105,6 +149,22 @@ export default function MemberGroupsPage() {
     }
   };
 
+  const getOwnerLabel = (group) => {
+    if (!group) return null;
+    if (group.ownerDisplayName) {
+      return group.ownerPan
+        ? `${group.ownerDisplayName} (${group.ownerPan})`
+        : group.ownerDisplayName;
+    }
+    if (group.ownerMemberId && group.members?.length) {
+      const owner = group.members.find((m) => m.id === group.ownerMemberId);
+      if (owner) {
+        return owner.pan ? `${owner.displayName} (${owner.pan})` : owner.displayName;
+      }
+    }
+    return null;
+  };
+
   const memberOptions = allMembers.reduce((acc, row) => {
     if (acc.some((m) => m.id === row.id)) return acc;
     acc.push({
@@ -119,7 +179,35 @@ export default function MemberGroupsPage() {
   }, []);
 
   const columns = [
-    { title: 'Group', dataIndex: 'name', render: (v) => <strong>{v}</strong> },
+    {
+      title: 'Group',
+      dataIndex: 'name',
+      render: (v, row) => {
+        const ownerLabel = getOwnerLabel(row);
+        return (
+          <div>
+            <strong>{v}</strong>
+            {ownerLabel ? (
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                Owner: <span style={{ color: '#b45309', fontWeight: 500 }}>{ownerLabel}</span>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Owner: not set</div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      title: 'Owner',
+      key: 'owner',
+      render: (_, row) =>
+        row.ownerDisplayName ? (
+          <Tag color="gold">{row.ownerDisplayName}</Tag>
+        ) : (
+          <Typography.Text type="secondary">Not set</Typography.Text>
+        ),
+    },
     {
       title: 'Members',
       dataIndex: 'memberCount',
@@ -139,6 +227,9 @@ export default function MemberGroupsPage() {
       title: 'Actions',
       render: (_, row) => (
         <Space>
+          <Button size="small" icon={<EyeOutlined />} onClick={() => openViewInfo(row)}>
+            View info
+          </Button>
           <Button size="small" onClick={() => openAssignMembers(row)}>
             Manage members
           </Button>
@@ -161,7 +252,7 @@ export default function MemberGroupsPage() {
     <div>
       <PageHeader
         title="Member Sub-Groups"
-        subtitle="Create teams like “Rinku” with members — distribute IPO funds to the whole group or pick members with checkboxes"
+        subtitle="Create teams with a group owner — IPO funds can be paid in one bulk transfer to the owner for all members"
         extra={
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             Add group
@@ -179,6 +270,139 @@ export default function MemberGroupsPage() {
           {...tableDefaults}
         />
       </ContentCard>
+
+      <Modal
+        title={
+          viewGroup ? (
+            <Space direction="vertical" size={0}>
+              <span>Sub-group — {viewGroup.name}</span>
+              {getOwnerLabel(viewGroup) ? (
+                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>
+                  Owner: <Typography.Text style={{ color: '#b45309' }}>{getOwnerLabel(viewGroup)}</Typography.Text>
+                </Typography.Text>
+              ) : (
+                <Typography.Text type="warning" style={{ fontSize: 13, fontWeight: 400 }}>
+                  Owner not set
+                </Typography.Text>
+              )}
+            </Space>
+          ) : (
+            'Sub-group info'
+          )
+        }
+        open={!!viewGroup}
+        onCancel={() => setViewGroup(null)}
+        footer={[
+          <Button key="close" onClick={() => setViewGroup(null)}>Close</Button>,
+          <Button
+            key="manage"
+            type="primary"
+            onClick={() => {
+              const g = viewGroup;
+              setViewGroup(null);
+              openAssignMembers(g);
+            }}
+          >
+            Manage members
+          </Button>,
+        ]}
+        width={560}
+        destroyOnClose
+      >
+        {viewGroup && (() => {
+          const ownerMember = viewGroup.members?.find((m) => m.id === viewGroup.ownerMemberId);
+          const ownerName = viewGroup.ownerDisplayName || ownerMember?.displayName;
+          const ownerPan = viewGroup.ownerPan || ownerMember?.pan;
+          return (
+          <>
+            <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="Group name">{viewGroup.name}</Descriptions.Item>
+              <Descriptions.Item label="Sort order">{viewGroup.sortOrder ?? 0}</Descriptions.Item>
+              <Descriptions.Item label="Members">{viewGroup.memberCount}</Descriptions.Item>
+              <Descriptions.Item label="Group owner">
+                {ownerName && viewOwnerId === viewGroup.ownerMemberId ? (
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text strong style={{ fontSize: 15 }}>{ownerName}</Typography.Text>
+                    {ownerPan && (
+                      <Typography.Text type="secondary">PAN: {ownerPan}</Typography.Text>
+                    )}
+                  </Space>
+                ) : (
+                  <Typography.Text type="warning">Not set — required for bulk IPO pay to owner</Typography.Text>
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+            {!ownerName && viewGroup.members.length > 0 && (
+              <div style={{ marginBottom: 16, padding: 12, background: '#fffbeb', borderRadius: 8, border: '1px solid #fde68a' }}>
+                <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
+                  Set group owner
+                </Typography.Text>
+                <Space wrap>
+                  <Select
+                    style={{ minWidth: 280 }}
+                    placeholder="Choose owner from group members"
+                    value={viewOwnerId}
+                    onChange={setViewOwnerId}
+                    options={viewGroup.members.map((m) => ({
+                      value: m.id,
+                      label: `${m.displayName} (${m.pan})`,
+                    }))}
+                  />
+                  <Button type="primary" loading={saving} onClick={onSaveViewOwner}>
+                    Save owner
+                  </Button>
+                </Space>
+              </div>
+            )}
+            <Typography.Text strong>Members in this group</Typography.Text>
+            {viewGroup.members.length ? (
+              <Table
+                rowKey="id"
+                size="small"
+                pagination={false}
+                style={{ marginTop: 8 }}
+                dataSource={viewGroup.members}
+                columns={[
+                  {
+                    title: 'Name',
+                    dataIndex: 'displayName',
+                    render: (v, m) => (
+                      <Space>
+                        {v}
+                        {m.id === viewGroup.ownerMemberId && <Tag color="gold">Owner</Tag>}
+                      </Space>
+                    ),
+                  },
+                  { title: 'PAN', dataIndex: 'pan' },
+                  {
+                    title: 'Status',
+                    dataIndex: 'status',
+                    width: 90,
+                    render: (s) => (
+                      <Tag color={s === 'ACTIVE' ? 'green' : 'default'}>
+                        {s === 'ACTIVE' ? 'Active' : 'Inactive'}
+                      </Tag>
+                    ),
+                  },
+                ]}
+              />
+            ) : (
+              <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
+                No members assigned yet.
+              </Typography.Paragraph>
+            )}
+            <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
+              On an IPO, use <strong>Bulk to owner</strong>
+              {ownerName ? (
+                <> to pay this group’s lot amount for every member in one transfer to <strong>{ownerName}</strong>.</>
+              ) : (
+                <> to pay this group’s lot amount for every member in one transfer to the owner.</>
+              )}
+            </Typography.Paragraph>
+          </>
+          );
+        })()}
+      </Modal>
 
       <Modal
         title={editing ? 'Edit group' : 'New sub-group'}
@@ -238,6 +462,22 @@ export default function MemberGroupsPage() {
         >
           Select all members
         </Button>
+        <Form.Item
+          label="Group owner"
+          style={{ marginTop: 16, marginBottom: 0 }}
+          extra="Receives bulk IPO payments for the whole group. Must be one of the members above."
+        >
+          <Select
+            allowClear
+            placeholder="Select owner from group members"
+            value={ownerMemberId}
+            onChange={setOwnerMemberId}
+            options={selectedMemberIds.map((mid) => {
+              const m = memberOptions.find((o) => o.id === mid);
+              return m ? { value: m.id, label: `${m.displayName} (${m.pan})` } : null;
+            }).filter(Boolean)}
+          />
+        </Form.Item>
       </Modal>
     </div>
   );

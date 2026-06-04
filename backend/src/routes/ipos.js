@@ -327,6 +327,7 @@ router.get('/:id/applications', async (req, res, next) => {
     const [rows] = await pool.query(
 
       `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
+              pay.display_name AS paid_to_display_name,
               psd.id AS profit_share_distribution_id,
               psd.provider_amount AS share_provider_amount,
               psd.manager_amount AS share_manager_amount,
@@ -337,6 +338,8 @@ router.get('/:id/applications', async (req, res, next) => {
        FROM ipo_applications a
 
        JOIN members m ON m.id = a.member_id
+
+       LEFT JOIN members pay ON pay.id = a.paid_to_member_id
 
        LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
 
@@ -368,9 +371,12 @@ router.post('/:id/distribute', async (req, res, next) => {
 
     const {
       memberIds, amounts, markGiven, bankAccountId, accountDebits, investorCategory, memberCategories,
+      groupBulks,
     } = req.body;
 
-    if (!memberIds?.length) throw new AppError('Select at least one member');
+    if (!memberIds?.length && !groupBulks?.length) {
+      throw new AppError('Select at least one member or sub-group');
+    }
 
 
 
@@ -395,6 +401,8 @@ router.post('/:id/distribute', async (req, res, next) => {
         investorCategory,
 
         memberCategories,
+
+        groupBulks,
 
         userId: req.user.userId,
 

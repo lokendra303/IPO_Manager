@@ -506,6 +506,38 @@ async function applyOptionalHniV17(conn) {
   }
 }
 
+async function applyGroupOwnerV18(conn) {
+  if (await tableExists(conn, 'member_groups')) {
+    if (!(await columnExists(conn, 'member_groups', 'owner_member_id'))) {
+      await conn.query(
+        'ALTER TABLE member_groups ADD COLUMN owner_member_id INT DEFAULT NULL AFTER name'
+      );
+      console.log('Added member_groups.owner_member_id');
+    }
+    const [fkRows] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_groups'
+       AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = 'member_groups_owner_fk'`
+    );
+    if (!fkRows.length && (await columnExists(conn, 'member_groups', 'owner_member_id'))) {
+      await conn.query(
+        `ALTER TABLE member_groups
+         ADD CONSTRAINT member_groups_owner_fk
+         FOREIGN KEY (owner_member_id) REFERENCES members(id) ON DELETE SET NULL`
+      );
+      console.log('Added member_groups_owner_fk');
+    }
+  }
+  if (await tableExists(conn, 'ipo_applications')) {
+    if (!(await columnExists(conn, 'ipo_applications', 'paid_to_member_id'))) {
+      await conn.query(
+        'ALTER TABLE ipo_applications ADD COLUMN paid_to_member_id INT DEFAULT NULL AFTER investor_category'
+      );
+      console.log('Added ipo_applications.paid_to_member_id');
+    }
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -536,6 +568,7 @@ async function migrate() {
   await applyRemoveCmrV15(conn);
   await applyIpoLotByCategoryV16(conn);
   await applyOptionalHniV17(conn);
+  await applyGroupOwnerV18(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

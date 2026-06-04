@@ -50,6 +50,7 @@ export default function IpoDetailPage() {
   const [profitLoading, setProfitLoading] = useState(false);
   const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
   const [distributeInvestorCategory, setDistributeInvestorCategory] = useState('RII');
+  const [selectedGroupBulkIds, setSelectedGroupBulkIds] = useState([]);
   const [hniModalOpen, setHniModalOpen] = useState(false);
   const [hniSaving, setHniSaving] = useState(false);
   const [hniForm] = Form.useForm();
@@ -90,20 +91,45 @@ export default function IpoDetailPage() {
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const isClosed = ipo?.status === 'CLOSED';
 
+  const groupAvailableIds = (group) =>
+    group.members.filter((m) => isMemberAvailable(m.id)).map((m) => m.id);
+
+  const isGroupBulkSelected = (groupId) => selectedGroupBulkIds.includes(groupId);
+
+  const toggleGroupBulk = (group, checked) => {
+    const ids = groupAvailableIds(group);
+    setSelectedGroupBulkIds((prev) => {
+      if (checked) return [...new Set([...prev, group.id])];
+      return prev.filter((id) => id !== group.id);
+    });
+    if (checked) {
+      setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
+    }
+  };
+
   const toggleGroupSelection = (group, checked) => {
-    const ids = group.members.filter((m) => isMemberAvailable(m.id)).map((m) => m.id);
+    if (isGroupBulkSelected(group.id)) return;
+    const ids = groupAvailableIds(group);
     setSelectedIds((prev) => {
       if (checked) return [...new Set([...prev, ...ids])];
       return prev.filter((id) => !ids.includes(id));
     });
   };
 
-  const toggleMemberSelection = (memberId) => {
+  const toggleMemberSelection = (memberId, groupId) => {
     if (!isMemberAvailable(memberId)) return;
+    if (groupId && isGroupBulkSelected(groupId)) return;
     setSelectedIds((prev) =>
       prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
     );
   };
+
+  const bulkMemberCount = selectedGroupBulkIds.reduce((sum, gid) => {
+    const g = memberGroups.find((gr) => gr.id === gid);
+    return sum + (g ? groupAvailableIds(g).length : 0);
+  }, 0);
+
+  const distributeSelectionCount = selectedIds.length + bulkMemberCount;
 
   const ipoCategoryOptions = categoryOptionsForIpo(ipo);
   const allowedCategoryTags = parseAllowedCategories(ipo);
@@ -140,6 +166,7 @@ export default function IpoDetailPage() {
 
   const openDistribute = async () => {
     setSelectedIds([]);
+    setSelectedGroupBulkIds([]);
     setStep(0);
     const defaultCat = ipoCategoryOptions.some((o) => o.value === 'RII') ? 'RII' : ipoCategoryOptions[0]?.value || 'RII';
     setDistributeInvestorCategory(defaultCat);
@@ -168,7 +195,7 @@ export default function IpoDetailPage() {
 
   const lotForSelectedCategory = getLotAmountForCategory(ipo, distributeInvestorCategory);
   const hniLotMissing = distributeInvestorCategory === 'HNI' && lotForSelectedCategory == null;
-  const totalNeeded = selectedIds.length * (lotForSelectedCategory ?? 0);
+  const totalNeeded = distributeSelectionCount * (lotForSelectedCategory ?? 0);
 
   const splitDebits = Object.entries(paySplits)
     .map(([bankAccountId, amount]) => ({ bankAccountId: Number(bankAccountId), amount: Number(amount) || 0 }))
@@ -251,8 +278,8 @@ export default function IpoDetailPage() {
   };
 
   const onDistribute = async () => {
-    if (!selectedIds.length) {
-      message.warning('Select at least one member');
+    if (!distributeSelectionCount) {
+      message.warning('Select at least one member or a sub-group bulk payment');
       return;
     }
     if (!bankAccounts.length) {
@@ -282,6 +309,10 @@ export default function IpoDetailPage() {
     try {
       const body = {
         memberIds: selectedIds,
+        groupBulks: selectedGroupBulkIds.map((groupId) => ({
+          groupId,
+          investorCategory: distributeInvestorCategory,
+        })),
         markGiven,
         investorCategory: distributeInvestorCategory,
       };
@@ -294,6 +325,7 @@ export default function IpoDetailPage() {
       message.success('Funds distributed to team');
       setDistributeOpen(false);
       setSelectedIds([]);
+      setSelectedGroupBulkIds([]);
       setStep(0);
       load();
     } catch (err) {
@@ -398,6 +430,16 @@ export default function IpoDetailPage() {
   const columns = [
     { title: 'Member', dataIndex: 'display_name' },
     { title: 'PAN', dataIndex: 'pan' },
+    {
+      title: 'Payment',
+      width: 130,
+      render: (_, r) => {
+        if (r.paid_to_member_id && r.paid_to_member_id !== r.member_id) {
+          return <Tag color="gold">To {r.paid_to_display_name}</Tag>;
+        }
+        return <Typography.Text type="secondary">Direct</Typography.Text>;
+      },
+    },
     {
       title: 'Category',
       dataIndex: 'investor_category',
@@ -833,10 +875,15 @@ export default function IpoDetailPage() {
                   <Space direction="vertical" style={{ width: '100%' }} size="middle">
                     {memberGroups.map((group) => {
                       const groupAvailable = group.members.filter((m) => isMemberAvailable(m.id));
+                      const bulkSelected = isGroupBulkSelected(group.id);
                       const selectedInGroup = groupAvailable.filter((m) => selectedIds.includes(m.id));
                       const allSelected =
-                        groupAvailable.length > 0 && selectedInGroup.length === groupAvailable.length;
+                        !bulkSelected
+                        && groupAvailable.length > 0
+                        && selectedInGroup.length === groupAvailable.length;
                       const someSelected = selectedInGroup.length > 0 && !allSelected;
+                      const hasOwner = !!group.ownerMemberId;
+                      const bulkTotal = groupAvailable.length * (lotForSelectedCategory ?? 0);
 
                       return (
                         <div
@@ -845,41 +892,72 @@ export default function IpoDetailPage() {
                             border: '1px solid #e2e8f0',
                             borderRadius: 8,
                             padding: 12,
-                            background: selectedInGroup.length ? '#f8fafc' : undefined,
+                            background: bulkSelected || selectedInGroup.length ? '#f8fafc' : undefined,
                           }}
                         >
                           <Checkbox
-                            indeterminate={someSelected}
-                            checked={allSelected}
-                            disabled={!groupAvailable.length}
-                            onChange={(e) => toggleGroupSelection(group, e.target.checked)}
+                            checked={bulkSelected}
+                            disabled={!groupAvailable.length || !hasOwner}
+                            onChange={(e) => toggleGroupBulk(group, e.target.checked)}
                           >
                             <Typography.Text strong>{group.name}</Typography.Text>
                             <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                              {selectedInGroup.length}/{group.members.length} selected
-                              {selectedInGroup.length > 0 &&
-                                ` · ${formatCurrency(selectedInGroup.length * lotForSelectedCategory)}`}
+                              Bulk to owner
+                              {hasOwner ? (
+                                <> — <Tag color="gold">{group.ownerDisplayName}</Tag></>
+                              ) : (
+                                <> — <Link to="/member-groups">set owner</Link></>
+                              )}
+                              {bulkSelected && groupAvailable.length > 0 && (
+                                <> · {groupAvailable.length} members · {formatCurrency(bulkTotal)}</>
+                              )}
                               {!groupAvailable.length && ' · all already applied'}
                             </Typography.Text>
                           </Checkbox>
-                          <div style={{ marginLeft: 24, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {group.members.map((m) => {
-                              const available = isMemberAvailable(m.id);
-                              return (
+                          {!bulkSelected && (
+                            <>
+                              <div style={{ marginLeft: 24, marginTop: 8 }}>
+                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                  Or pay each member individually:
+                                </Typography.Text>
+                              </div>
+                              <div style={{ marginLeft: 24, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                                 <Checkbox
-                                  key={m.id}
-                                  checked={selectedIds.includes(m.id)}
-                                  disabled={!available}
-                                  onChange={() => toggleMemberSelection(m.id)}
+                                  indeterminate={someSelected}
+                                  checked={allSelected}
+                                  disabled={!groupAvailable.length}
+                                  onChange={(e) => toggleGroupSelection(group, e.target.checked)}
                                 >
-                                  {m.displayName} ({m.pan})
-                                  {!available && (
-                                    <Typography.Text type="secondary"> — already applied</Typography.Text>
-                                  )}
+                                  Select all in group
                                 </Checkbox>
-                              );
-                            })}
-                          </div>
+                                {group.members.map((m) => {
+                                  const available = isMemberAvailable(m.id);
+                                  return (
+                                    <Checkbox
+                                      key={m.id}
+                                      checked={selectedIds.includes(m.id)}
+                                      disabled={!available}
+                                      onChange={() => toggleMemberSelection(m.id, group.id)}
+                                    >
+                                      {m.displayName} ({m.pan})
+                                      {m.id === group.ownerMemberId && (
+                                        <Tag color="gold" style={{ marginLeft: 6 }}>Owner</Tag>
+                                      )}
+                                      {!available && (
+                                        <Typography.Text type="secondary"> — already applied</Typography.Text>
+                                      )}
+                                    </Checkbox>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+                          {bulkSelected && (
+                            <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0 24px', fontSize: 12 }}>
+                              One payment to {group.ownerDisplayName} for:{' '}
+                              {groupAvailable.map((m) => m.displayName).join(', ') || '—'}
+                            </Typography.Paragraph>
+                          )}
                         </div>
                       );
                     })}
@@ -919,9 +997,12 @@ export default function IpoDetailPage() {
                   style={{ marginTop: 16 }}
                   message={
                     <>
-                      Total: <strong>{selectedIds.length}</strong> member(s) ×{' '}
+                      Total: <strong>{distributeSelectionCount}</strong> application(s) ×{' '}
                       <strong>{formatCurrency(lotForSelectedCategory)}</strong> ({distributeInvestorCategory}) ={' '}
                       <strong>{formatCurrency(totalNeeded)}</strong>
+                      {selectedGroupBulkIds.length > 0 && (
+                        <span> · {selectedGroupBulkIds.length} group bulk payment(s)</span>
+                      )}
                     </>
                   }
                 />
@@ -930,7 +1011,7 @@ export default function IpoDetailPage() {
               <Alert type="warning" message="All active members already have applications for this IPO" showIcon />
             )}
             <div style={{ marginTop: 16 }}>
-              <Button disabled={!selectedIds.length} type="primary" onClick={() => setStep(1)}>Next</Button>
+              <Button disabled={!distributeSelectionCount} type="primary" onClick={() => setStep(1)}>Next</Button>
             </div>
           </>
         )}
@@ -941,7 +1022,7 @@ export default function IpoDetailPage() {
               <div>
                 <Typography.Text strong>Application category</Typography.Text>
                 <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
-                  Applies to all {selectedIds.length} selected member(s). Default is RII (
+                  Applies to all {distributeSelectionCount} selected application(s). Default is RII (
                   {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}).
                   {ipoHasHniLot(ipo) && (
                     <> HNI lot is {formatCurrency(getLotAmountForCategory(ipo, 'HNI'))}.</>
@@ -1124,7 +1205,10 @@ export default function IpoDetailPage() {
 
         {step === 2 && (
           <>
-            <p>Members: <strong>{selectedIds.length}</strong></p>
+            <p>Applications: <strong>{distributeSelectionCount}</strong></p>
+            {selectedGroupBulkIds.length > 0 && (
+              <p>Group bulk: <strong>{selectedGroupBulkIds.length}</strong> (paid to group owners)</p>
+            )}
             <p>
               Application category:{' '}
               <Tag color={categoryTagColor(distributeInvestorCategory)}>{distributeInvestorCategory}</Tag>
