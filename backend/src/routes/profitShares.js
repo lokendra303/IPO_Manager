@@ -7,6 +7,11 @@ import {
   getMemberShareRule,
   getMemberShareRules,
   getProviderShareRule,
+  listRuleTemplates,
+  getRuleTemplate,
+  createRuleTemplate,
+  updateRuleTemplate,
+  deleteRuleTemplate,
   distributeProfitShares,
   getProfitShareReport,
   getProfitTotalsReport,
@@ -33,6 +38,102 @@ function parseSharePercents(body) {
   };
 }
 
+/** Named share rule templates (Rule list — multiple rules allowed) */
+router.get('/rule-templates', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const rows = await listRuleTemplates(conn, req.tenantId);
+      res.json(rows);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/rule-templates', async (req, res, next) => {
+  try {
+    const percents = parseSharePercents(req.body);
+    validateProfitLossPercents(percents);
+    const conn = await pool.getConnection();
+    try {
+      const created = await createRuleTemplate(conn, req.tenantId, {
+        ruleName: req.body.ruleName,
+        fundProviderId: req.body.fundProviderId,
+        sortOrder: req.body.sortOrder,
+        ...percents,
+      });
+      res.status(201).json(created);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/rule-templates/:templateId', async (req, res, next) => {
+  try {
+    const templateId = parsePositiveInt(req.params.templateId, 'template id');
+    const percents = parseSharePercents(req.body);
+    if (
+      req.body.profitProviderPercent !== undefined
+      || req.body.profitManagerPercent !== undefined
+      || req.body.lossProviderPercent !== undefined
+      || req.body.lossManagerPercent !== undefined
+    ) {
+      validateProfitLossPercents(percents);
+    }
+    const conn = await pool.getConnection();
+    try {
+      const updated = await updateRuleTemplate(conn, req.tenantId, templateId, {
+        ruleName: req.body.ruleName,
+        fundProviderId: req.body.fundProviderId,
+        sortOrder: req.body.sortOrder,
+        ...percents,
+      });
+      res.json(updated);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/rule-templates/:templateId', async (req, res, next) => {
+  try {
+    const templateId = parsePositiveInt(req.params.templateId, 'template id');
+    const conn = await pool.getConnection();
+    try {
+      await deleteRuleTemplate(conn, req.tenantId, templateId);
+      res.json({ ok: true });
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/rule-templates/:templateId', async (req, res, next) => {
+  try {
+    const templateId = parsePositiveInt(req.params.templateId, 'template id');
+    const conn = await pool.getConnection();
+    try {
+      const row = await getRuleTemplate(conn, req.tenantId, templateId);
+      if (!row) throw new AppError('Rule template not found', 404);
+      res.json(row);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** All fund providers with their share rules */
 router.get('/providers', async (req, res, next) => {
   try {
@@ -53,8 +154,12 @@ router.get('/providers', async (req, res, next) => {
           return {
             fundProviderId: p.id,
             providerName: p.name,
+            ruleName: rule?.ruleName ?? p.name,
             memberCount: Number(memberCount[0].c),
-            hasRule: !!rule,
+            hasRule: !!rule && (
+              Number(rule.profitProviderPercent) + Number(rule.profitManagerPercent)
+              + Number(rule.lossProviderPercent) + Number(rule.lossManagerPercent) > 0
+            ),
             profitProviderPercent: rule?.profitProviderPercent ?? 0,
             profitManagerPercent: rule?.profitManagerPercent ?? 0,
             lossProviderPercent: rule?.lossProviderPercent ?? 0,
@@ -83,12 +188,15 @@ router.put('/providers/:providerId', async (req, res, next) => {
     );
     if (!fp.length) throw new AppError('Fund provider not found', 404);
 
+    const ruleName = req.body.ruleName?.trim() || fp[0].name;
+
     await pool.query(
       `INSERT INTO fund_provider_share_rules
-       (fund_provider_id, tenant_id, profit_provider_percent, profit_manager_percent,
+       (fund_provider_id, tenant_id, rule_name, profit_provider_percent, profit_manager_percent,
         loss_provider_percent, loss_manager_percent)
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
+         rule_name = VALUES(rule_name),
          profit_provider_percent = VALUES(profit_provider_percent),
          profit_manager_percent = VALUES(profit_manager_percent),
          loss_provider_percent = VALUES(loss_provider_percent),
@@ -96,6 +204,7 @@ router.put('/providers/:providerId', async (req, res, next) => {
       [
         providerId,
         req.tenantId,
+        ruleName,
         percents.profitProviderPercent,
         percents.profitManagerPercent,
         percents.lossProviderPercent,
@@ -222,7 +331,7 @@ router.get('/members/:memberId/rules', async (req, res, next) => {
 /** Apply one share rule definition to many members at once */
 router.post('/members/bulk-rules', async (req, res, next) => {
   try {
-    const { memberIds, fundProviderId, ruleName, sortOrder } = req.body;
+    const { memberIds, fundProviderId, ruleName, sortOrder, ipoId } = req.body;
     if (!Array.isArray(memberIds) || !memberIds.length) {
       throw new AppError('Select at least one member', 400);
     }
@@ -235,6 +344,7 @@ router.post('/members/bulk-rules', async (req, res, next) => {
         ruleName,
         sortOrder,
         fundProviderId,
+        ipoId,
         ...percents,
       });
       res.status(result.appliedCount ? 201 : 400).json(result);
@@ -399,7 +509,9 @@ router.get('/providers/:providerId/template', async (req, res, next) => {
     const providerId = parsePositiveInt(req.params.providerId, 'provider id');
     const conn = await pool.getConnection();
     try {
-      const rule = await getProviderShareRule(conn, req.tenantId, providerId);
+      const templates = await listRuleTemplates(conn, req.tenantId);
+      const match = templates.find((t) => t.fundProviderId === providerId && t.hasRule);
+      const rule = match || await getProviderShareRule(conn, req.tenantId, providerId);
       if (!rule) {
         throw new AppError('No template saved for this fund provider', 404);
       }

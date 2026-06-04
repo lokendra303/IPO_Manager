@@ -1,7 +1,26 @@
--- Per fund provider: separate profit & loss share %
+-- Reusable named share rules (multiple per tenant; apply to members from Rule list)
+CREATE TABLE IF NOT EXISTS profit_share_rule_templates (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  rule_name VARCHAR(100) NOT NULL,
+  fund_provider_id INT NOT NULL,
+  profit_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
+  INDEX idx_rule_templates_tenant (tenant_id, sort_order)
+);
+
+-- Per fund provider: separate profit & loss share % (legacy single template)
 CREATE TABLE IF NOT EXISTS fund_provider_share_rules (
   fund_provider_id INT PRIMARY KEY,
   tenant_id INT NOT NULL,
+  rule_name VARCHAR(100) DEFAULT NULL,
   profit_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,

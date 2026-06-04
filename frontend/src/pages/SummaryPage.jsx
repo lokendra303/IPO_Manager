@@ -36,7 +36,18 @@ export default function SummaryPage() {
       render: (s) => <Tag color={s === 'ACTIVE' ? 'success' : 'error'}>{s}</Tag>,
     },
     { title: 'Total Given', dataIndex: 'totalGiven', render: formatCurrency },
-    { title: 'Total Received', dataIndex: 'totalReceived', render: formatCurrency },
+    {
+      title: (
+        <span>
+          Total Received{' '}
+          <Tooltip title="Money this member paid back to you (UPI/refund). Not used for sub-group bulk paid to owner.">
+            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+          </Tooltip>
+        </span>
+      ),
+      dataIndex: 'totalReceived',
+      render: formatCurrency,
+    },
     { title: 'Bonus', dataIndex: 'bonus', render: (v) => (v ? formatCurrency(v) : '—') },
     { title: 'IPOs Applied', dataIndex: 'iposApplied' },
     { title: 'IPOs Alloted', dataIndex: 'iposAlloted' },

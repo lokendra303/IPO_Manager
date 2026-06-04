@@ -12,10 +12,15 @@ import {
   Checkbox,
   Typography,
   Select,
-  Descriptions,
+  Row,
+  Col,
+  Divider,
 } from 'antd';
-import { PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined,
+} from '@ant-design/icons';
 import client from '../api/client';
+import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
@@ -33,6 +38,8 @@ export default function MemberGroupsPage() {
   const [ownerMemberId, setOwnerMemberId] = useState(null);
   const [viewGroup, setViewGroup] = useState(null);
   const [viewOwnerId, setViewOwnerId] = useState(null);
+  const [groupBulkTxns, setGroupBulkTxns] = useState([]);
+  const [bulkTxnsLoading, setBulkTxnsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
 
@@ -82,6 +89,12 @@ export default function MemberGroupsPage() {
   const openViewInfo = (group) => {
     setViewGroup(group);
     setViewOwnerId(group.ownerMemberId ?? null);
+    setGroupBulkTxns([]);
+    setBulkTxnsLoading(true);
+    client.get(`/member-groups/${group.id}/bulk-transactions`)
+      .then((res) => setGroupBulkTxns(res.data))
+      .catch(() => setGroupBulkTxns([]))
+      .finally(() => setBulkTxnsLoading(false));
   };
 
   const onSaveViewOwner = async () => {
@@ -272,24 +285,8 @@ export default function MemberGroupsPage() {
       </ContentCard>
 
       <Modal
-        title={
-          viewGroup ? (
-            <Space direction="vertical" size={0}>
-              <span>Sub-group — {viewGroup.name}</span>
-              {getOwnerLabel(viewGroup) ? (
-                <Typography.Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>
-                  Owner: <Typography.Text style={{ color: '#b45309' }}>{getOwnerLabel(viewGroup)}</Typography.Text>
-                </Typography.Text>
-              ) : (
-                <Typography.Text type="warning" style={{ fontSize: 13, fontWeight: 400 }}>
-                  Owner not set
-                </Typography.Text>
-              )}
-            </Space>
-          ) : (
-            'Sub-group info'
-          )
-        }
+        className="subgroup-view-modal"
+        title={viewGroup ? `Sub-group — ${viewGroup.name}` : 'Sub-group info'}
         open={!!viewGroup}
         onCancel={() => setViewGroup(null)}
         footer={[
@@ -306,41 +303,70 @@ export default function MemberGroupsPage() {
             Manage members
           </Button>,
         ]}
-        width={560}
+        width={960}
         destroyOnClose
       >
         {viewGroup && (() => {
           const ownerMember = viewGroup.members?.find((m) => m.id === viewGroup.ownerMemberId);
           const ownerName = viewGroup.ownerDisplayName || ownerMember?.displayName;
           const ownerPan = viewGroup.ownerPan || ownerMember?.pan;
+          const hasOwner = Boolean(viewGroup.ownerMemberId && ownerName);
+          const bulkTotal = groupBulkTxns.reduce((s, t) => s + Number(t.totalAmount || 0), 0);
           return (
-          <>
-            <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="Group name">{viewGroup.name}</Descriptions.Item>
-              <Descriptions.Item label="Sort order">{viewGroup.sortOrder ?? 0}</Descriptions.Item>
-              <Descriptions.Item label="Members">{viewGroup.memberCount}</Descriptions.Item>
-              <Descriptions.Item label="Group owner">
-                {ownerName && viewOwnerId === viewGroup.ownerMemberId ? (
-                  <Space direction="vertical" size={0}>
-                    <Typography.Text strong style={{ fontSize: 15 }}>{ownerName}</Typography.Text>
-                    {ownerPan && (
-                      <Typography.Text type="secondary">PAN: {ownerPan}</Typography.Text>
-                    )}
-                  </Space>
-                ) : (
-                  <Typography.Text type="warning">Not set — required for bulk IPO pay to owner</Typography.Text>
-                )}
-              </Descriptions.Item>
-            </Descriptions>
-            {!ownerName && viewGroup.members.length > 0 && (
-              <div style={{ marginBottom: 16, padding: 12, background: '#fffbeb', borderRadius: 8, border: '1px solid #fde68a' }}>
+          <div className="subgroup-view">
+            <div className="subgroup-view__owner-bar">
+              {hasOwner ? (
+                <Space wrap size="middle">
+                  <Tag color="gold" icon={<UserOutlined />}>Owner</Tag>
+                  <Typography.Text strong style={{ fontSize: 16 }}>{ownerName}</Typography.Text>
+                  {ownerPan && (
+                    <Typography.Text type="secondary">PAN {ownerPan}</Typography.Text>
+                  )}
+                </Space>
+              ) : (
+                <Typography.Text type="warning">No owner set — bulk IPO pay requires an owner</Typography.Text>
+              )}
+            </div>
+
+            <Row gutter={[12, 12]} className="subgroup-view__stats">
+              <Col xs={8}>
+                <div className="subgroup-view__stat">
+                  <TeamOutlined className="subgroup-view__stat-icon" />
+                  <div>
+                    <div className="subgroup-view__stat-value">{viewGroup.memberCount}</div>
+                    <div className="subgroup-view__stat-label">Members</div>
+                  </div>
+                </div>
+              </Col>
+              <Col xs={8}>
+                <div className="subgroup-view__stat">
+                  <BankOutlined className="subgroup-view__stat-icon subgroup-view__stat-icon--gold" />
+                  <div>
+                    <div className="subgroup-view__stat-value">{groupBulkTxns.length}</div>
+                    <div className="subgroup-view__stat-label">Bulk IPO pays</div>
+                  </div>
+                </div>
+              </Col>
+              <Col xs={8}>
+                <div className="subgroup-view__stat">
+                  <BankOutlined className="subgroup-view__stat-icon subgroup-view__stat-icon--green" />
+                  <div>
+                    <div className="subgroup-view__stat-value">{formatCurrency(bulkTotal)}</div>
+                    <div className="subgroup-view__stat-label">Total to owner</div>
+                  </div>
+                </div>
+              </Col>
+            </Row>
+
+            {!hasOwner && viewGroup.members.length > 0 && (
+              <div className="subgroup-view__alert">
                 <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
                   Set group owner
                 </Typography.Text>
                 <Space wrap>
                   <Select
-                    style={{ minWidth: 280 }}
-                    placeholder="Choose owner from group members"
+                    style={{ minWidth: 260 }}
+                    placeholder="Choose owner from members"
                     value={viewOwnerId}
                     onChange={setViewOwnerId}
                     options={viewGroup.members.map((m) => ({
@@ -354,52 +380,112 @@ export default function MemberGroupsPage() {
                 </Space>
               </div>
             )}
-            <Typography.Text strong>Members in this group</Typography.Text>
-            {viewGroup.members.length ? (
+
+            <Divider orientation="left" plain className="subgroup-view__divider">
+              Members ({viewGroup.members.length})
+            </Divider>
+            <div className="subgroup-view__panel subgroup-view__panel--members">
+              {viewGroup.members.length ? (
+                <Table
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  scroll={{ y: 240 }}
+                  dataSource={viewGroup.members}
+                  columns={[
+                    {
+                      title: 'Name',
+                      dataIndex: 'displayName',
+                      render: (v, m) => (
+                        <Space size={6}>
+                          <span style={{ fontWeight: m.id === viewGroup.ownerMemberId ? 600 : 400 }}>{v}</span>
+                          {m.id === viewGroup.ownerMemberId && <Tag color="gold">Owner</Tag>}
+                        </Space>
+                      ),
+                    },
+                    { title: 'PAN', dataIndex: 'pan', width: 140 },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      width: 96,
+                      align: 'center',
+                      render: (s) => (
+                        <Tag color={s === 'ACTIVE' ? 'success' : 'default'}>
+                          {s === 'ACTIVE' ? 'Active' : 'Inactive'}
+                        </Tag>
+                      ),
+                    },
+                  ]}
+                />
+              ) : (
+                <Typography.Paragraph type="secondary" style={{ margin: 12 }}>
+                  No members assigned — use Manage members to add people to this group.
+                </Typography.Paragraph>
+              )}
+            </div>
+
+            <Divider orientation="left" plain className="subgroup-view__divider subgroup-view__divider--history">
+              Group transaction history
+            </Divider>
+            <Typography.Paragraph type="secondary" className="subgroup-view__hint">
+              One transfer per IPO (<strong>Bulk to owner</strong> on Distribute). Count includes owner.
+              Each member’s share appears on Summary → Total Given.
+            </Typography.Paragraph>
+            <div className="subgroup-view__panel subgroup-view__panel--history">
               <Table
+                className="subgroup-history-table"
                 rowKey="id"
                 size="small"
+                loading={bulkTxnsLoading}
                 pagination={false}
-                style={{ marginTop: 8 }}
-                dataSource={viewGroup.members}
+                tableLayout="fixed"
+                locale={{ emptyText: 'No bulk payments yet — use Bulk to owner on an IPO' }}
+                dataSource={groupBulkTxns}
                 columns={[
                   {
-                    title: 'Name',
-                    dataIndex: 'displayName',
-                    render: (v, m) => (
-                      <Space>
-                        {v}
-                        {m.id === viewGroup.ownerMemberId && <Tag color="gold">Owner</Tag>}
-                      </Space>
+                    title: 'Date',
+                    dataIndex: 'paidAt',
+                    width: 118,
+                    align: 'left',
+                    render: (v) => (
+                      <span className="subgroup-history-table__date">
+                        {v ? new Date(v).toLocaleDateString('en-IN') : '—'}
+                      </span>
                     ),
                   },
-                  { title: 'PAN', dataIndex: 'pan' },
                   {
-                    title: 'Status',
-                    dataIndex: 'status',
-                    width: 90,
-                    render: (s) => (
-                      <Tag color={s === 'ACTIVE' ? 'green' : 'default'}>
-                        {s === 'ACTIVE' ? 'Active' : 'Inactive'}
-                      </Tag>
+                    title: 'IPO',
+                    dataIndex: 'ipoName',
+                    align: 'left',
+                    ellipsis: { showTitle: true },
+                  },
+                  {
+                    title: 'Transfer',
+                    dataIndex: 'totalAmount',
+                    width: 132,
+                    align: 'right',
+                    render: (v) => (
+                      <span className="subgroup-history-table__amount">{formatCurrency(v)}</span>
                     ),
+                  },
+                  {
+                    title: 'Members',
+                    dataIndex: 'memberCount',
+                    width: 96,
+                    align: 'center',
+                    render: (n) => n,
+                  },
+                  {
+                    title: 'Type',
+                    dataIndex: 'investorCategory',
+                    width: 72,
+                    align: 'center',
+                    render: (v) => (v ? <Tag>{v}</Tag> : '—'),
                   },
                 ]}
               />
-            ) : (
-              <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                No members assigned yet.
-              </Typography.Paragraph>
-            )}
-            <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
-              On an IPO, use <strong>Bulk to owner</strong>
-              {ownerName ? (
-                <> to pay this group’s lot amount for every member in one transfer to <strong>{ownerName}</strong>.</>
-              ) : (
-                <> to pay this group’s lot amount for every member in one transfer to the owner.</>
-              )}
-            </Typography.Paragraph>
-          </>
+            </div>
+          </div>
           );
         })()}
       </Modal>

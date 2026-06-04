@@ -538,6 +538,310 @@ async function applyGroupOwnerV18(conn) {
   }
 }
 
+async function applyFixGroupBulkMemberCountV24(conn) {
+  if (!(await tableExists(conn, 'member_group_bulk_payments'))) return;
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+
+  const [result] = await conn.query(
+    `UPDATE member_group_bulk_payments bp
+     JOIN (
+       SELECT a.tenant_id, m.member_group_id, a.ipo_id, a.paid_to_member_id AS owner_member_id,
+              COUNT(*) AS member_count, SUM(a.amount) AS total_amount
+       FROM ipo_applications a
+       JOIN members m ON m.id = a.member_id AND m.tenant_id = a.tenant_id
+       WHERE a.paid_to_member_id IS NOT NULL AND m.member_group_id IS NOT NULL
+       GROUP BY a.tenant_id, m.member_group_id, a.ipo_id, a.paid_to_member_id
+     ) agg ON agg.tenant_id = bp.tenant_id
+       AND agg.member_group_id = bp.member_group_id
+       AND agg.ipo_id = bp.ipo_id
+       AND agg.owner_member_id = bp.owner_member_id
+     SET bp.member_count = agg.member_count,
+         bp.total_amount = agg.total_amount`
+  );
+  if (result.affectedRows) {
+    console.log(`Updated ${result.affectedRows} group bulk payment row(s) to include owner in member count`);
+  }
+}
+
+async function applyGroupBulkPaymentsV23(conn) {
+  if (!(await tableExists(conn, 'member_group_bulk_payments'))) {
+    await conn.query(
+      `CREATE TABLE member_group_bulk_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        member_group_id INT NOT NULL,
+        ipo_id INT NOT NULL,
+        owner_member_id INT NOT NULL,
+        total_amount DECIMAL(15, 2) NOT NULL,
+        member_count INT NOT NULL,
+        investor_category VARCHAR(10) DEFAULT NULL,
+        paid_at DATETIME NOT NULL,
+        notes VARCHAR(255) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (member_group_id) REFERENCES member_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
+        FOREIGN KEY (owner_member_id) REFERENCES members(id) ON DELETE CASCADE,
+        INDEX idx_group_bulk_group (member_group_id, paid_at),
+        INDEX idx_group_bulk_tenant (tenant_id)
+      )`
+    );
+    console.log('Created member_group_bulk_payments');
+  }
+
+  if (
+    (await tableExists(conn, 'ipo_applications'))
+    && (await columnExists(conn, 'ipo_applications', 'paid_to_member_id'))
+    && (await tableExists(conn, 'members'))
+    && (await tableExists(conn, 'member_groups'))
+  ) {
+    const [existing] = await conn.query('SELECT COUNT(*) AS c FROM member_group_bulk_payments');
+    if (Number(existing[0].c) === 0) {
+      await conn.query(
+        `INSERT INTO member_group_bulk_payments
+         (tenant_id, member_group_id, ipo_id, owner_member_id, total_amount, member_count,
+          investor_category, paid_at, notes)
+         SELECT a.tenant_id,
+                m.member_group_id,
+                a.ipo_id,
+                a.paid_to_member_id,
+                SUM(a.amount),
+                COUNT(*),
+                MAX(a.investor_category),
+                COALESCE(MIN(a.date_given), MIN(a.created_at)),
+                CONCAT('IPO: ', i.name, ' — ', g.name)
+         FROM ipo_applications a
+         JOIN members m ON m.id = a.member_id AND m.tenant_id = a.tenant_id
+         JOIN member_groups g ON g.id = m.member_group_id
+         JOIN ipos i ON i.id = a.ipo_id
+         WHERE a.paid_to_member_id IS NOT NULL
+           AND m.member_group_id IS NOT NULL
+         GROUP BY a.tenant_id, m.member_group_id, a.ipo_id, a.paid_to_member_id`
+      );
+      console.log('Backfilled member_group_bulk_payments from IPO applications');
+    }
+  }
+
+  if (!(await tableExists(conn, 'member_ledger_entries'))) return;
+  const [missing] = await conn.query(
+    `SELECT a.id, a.member_id, a.tenant_id, a.amount, a.date_given, a.paid_to_member_id,
+            i.name AS ipo_name, g.name AS group_name
+     FROM ipo_applications a
+     JOIN ipos i ON i.id = a.ipo_id
+     LEFT JOIN members m ON m.id = a.member_id
+     LEFT JOIN member_groups g ON g.id = m.member_group_id
+     WHERE NOT EXISTS (
+       SELECT 1 FROM member_ledger_entries l
+       WHERE l.ipo_application_id = a.id AND l.member_id = a.member_id AND l.type = 'GIVEN'
+     )`
+  );
+  let fixed = 0;
+  for (const row of missing) {
+    const note = row.paid_to_member_id && row.paid_to_member_id !== row.member_id
+      ? `IPO: ${row.ipo_name} — ${row.group_name || 'group'} (paid to group owner)`
+      : `IPO: ${row.ipo_name}`;
+    await conn.query(
+      `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
+       VALUES (?, ?, 'GIVEN', ?, ?, ?, ?)`,
+      [
+        row.member_id,
+        row.tenant_id,
+        row.amount,
+        row.date_given || new Date(),
+        row.id,
+        note,
+      ]
+    );
+    fixed += 1;
+  }
+  if (fixed) console.log(`Backfilled ${fixed} missing member GIVEN ledger entries`);
+}
+
+async function applyFixBulkOwnerLedgerV22(conn) {
+  if (!(await tableExists(conn, 'member_ledger_entries'))) return;
+
+  const [removedReceived] = await conn.query(
+    `DELETE FROM member_ledger_entries
+     WHERE type = 'RECEIVED'
+       AND (notes LIKE '%group bulk (received on behalf%' OR notes LIKE '%bulk (received%')`
+  );
+
+  const [removedOwnerGiven] = await conn.query(
+    `DELETE l FROM member_ledger_entries l
+     WHERE l.type = 'GIVEN'
+       AND l.notes LIKE '%bulk%'
+       AND l.notes NOT LIKE '%paid to group owner%'
+       AND EXISTS (
+         SELECT 1 FROM ipo_applications a
+         WHERE a.paid_to_member_id = l.member_id
+           AND a.member_id <> l.member_id
+           AND a.tenant_id = l.tenant_id
+       )`
+  );
+
+  const rc = Number(removedReceived.affectedRows || 0) + Number(removedOwnerGiven.affectedRows || 0);
+  if (rc > 0) {
+    console.log(
+      `Cleaned bulk owner ledgers: ${removedReceived.affectedRows || 0} RECEIVED, ${removedOwnerGiven.affectedRows || 0} duplicate owner GIVEN`
+    );
+  }
+}
+
+async function applyBulkMemberGivenLedgerV21(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+  if (!(await tableExists(conn, 'member_ledger_entries'))) return;
+  if (!(await columnExists(conn, 'ipo_applications', 'paid_to_member_id'))) return;
+
+  const [rows] = await conn.query(
+    `SELECT a.id, a.member_id, a.tenant_id, a.amount, a.date_given, a.paid_to_member_id,
+            i.name AS ipo_name, m.display_name AS member_name, o.display_name AS owner_name
+     FROM ipo_applications a
+     JOIN ipos i ON i.id = a.ipo_id
+     JOIN members m ON m.id = a.member_id
+     JOIN members o ON o.id = a.paid_to_member_id
+     WHERE a.paid_to_member_id IS NOT NULL
+       AND a.paid_to_member_id <> a.member_id`
+  );
+
+  let insertedGiven = 0;
+  let insertedReceived = 0;
+
+  for (const row of rows) {
+    const [hasGiven] = await conn.query(
+      `SELECT 1 FROM member_ledger_entries
+       WHERE ipo_application_id = ? AND member_id = ? AND tenant_id = ? AND type = 'GIVEN'
+       LIMIT 1`,
+      [row.id, row.member_id, row.tenant_id]
+    );
+    if (!hasGiven.length) {
+      const txnDate = row.date_given || new Date();
+      await conn.query(
+        `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
+         VALUES (?, ?, 'GIVEN', ?, ?, ?, ?)`,
+        [
+          row.member_id,
+          row.tenant_id,
+          row.amount,
+          txnDate,
+          row.id,
+          `IPO: ${row.ipo_name} — bulk (paid to ${row.owner_name})`,
+        ]
+      );
+      insertedGiven += 1;
+    }
+  }
+
+  const [bulkGroups] = await conn.query(
+    `SELECT a.tenant_id, a.ipo_id, a.paid_to_member_id AS owner_id,
+            i.name AS ipo_name, o.display_name AS owner_name,
+            SUM(a.amount) AS group_total, MIN(a.date_given) AS txn_date,
+            GROUP_CONCAT(a.id) AS app_ids
+     FROM ipo_applications a
+     JOIN ipos i ON i.id = a.ipo_id
+     JOIN members o ON o.id = a.paid_to_member_id
+     WHERE a.paid_to_member_id IS NOT NULL
+       AND a.paid_to_member_id <> a.member_id
+     GROUP BY a.tenant_id, a.ipo_id, a.paid_to_member_id`
+  );
+
+  for (const g of bulkGroups) {
+    const [hasReceived] = await conn.query(
+      `SELECT 1 FROM member_ledger_entries
+       WHERE member_id = ? AND tenant_id = ? AND type = 'RECEIVED'
+         AND notes LIKE ? LIMIT 1`,
+      [g.owner_id, g.tenant_id, `IPO: ${g.ipo_name} —%bulk%`]
+    );
+    if (!hasReceived.length) {
+      const firstAppId = Number(String(g.app_ids).split(',')[0]);
+      await conn.query(
+        `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
+         VALUES (?, ?, 'RECEIVED', ?, ?, ?, ?)`,
+        [
+          g.owner_id,
+          g.tenant_id,
+          g.group_total,
+          g.txn_date || new Date(),
+          firstAppId,
+          `IPO: ${g.ipo_name} — group bulk (received on behalf of members)`,
+        ]
+      );
+      insertedReceived += 1;
+    }
+  }
+
+  if (insertedGiven || insertedReceived) {
+    console.log(
+      `Backfilled bulk IPO ledgers: ${insertedGiven} member GIVEN, ${insertedReceived} owner RECEIVED`
+    );
+  }
+}
+
+async function applyRuleTemplatesV20(conn) {
+  if (!(await tableExists(conn, 'profit_share_rule_templates'))) {
+    await conn.query(
+      `CREATE TABLE profit_share_rule_templates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        rule_name VARCHAR(100) NOT NULL,
+        fund_provider_id INT NOT NULL,
+        profit_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
+        INDEX idx_rule_templates_tenant (tenant_id, sort_order)
+      )`
+    );
+    console.log('Created profit_share_rule_templates');
+  }
+  if (
+    (await tableExists(conn, 'fund_provider_share_rules'))
+    && (await tableExists(conn, 'fund_providers'))
+  ) {
+    const [existing] = await conn.query('SELECT COUNT(*) AS c FROM profit_share_rule_templates');
+    if (Number(existing[0].c) === 0) {
+      await conn.query(
+        `INSERT INTO profit_share_rule_templates
+         (tenant_id, rule_name, fund_provider_id, profit_provider_percent, profit_manager_percent,
+          loss_provider_percent, loss_manager_percent, sort_order)
+         SELECT fpsr.tenant_id,
+                COALESCE(NULLIF(TRIM(fpsr.rule_name), ''), fp.name),
+                fpsr.fund_provider_id,
+                fpsr.profit_provider_percent,
+                fpsr.profit_manager_percent,
+                fpsr.loss_provider_percent,
+                fpsr.loss_manager_percent,
+                fp.id
+         FROM fund_provider_share_rules fpsr
+         JOIN fund_providers fp ON fp.id = fpsr.fund_provider_id
+         WHERE fpsr.profit_provider_percent + fpsr.profit_manager_percent
+             + fpsr.loss_provider_percent + fpsr.loss_manager_percent > 0`
+      );
+      console.log('Seeded profit_share_rule_templates from fund_provider_share_rules');
+    }
+  }
+}
+
+async function applyProviderRuleNameV19(conn) {
+  if (!(await tableExists(conn, 'fund_provider_share_rules'))) return;
+  if (!(await columnExists(conn, 'fund_provider_share_rules', 'rule_name'))) {
+    await conn.query(
+      'ALTER TABLE fund_provider_share_rules ADD COLUMN rule_name VARCHAR(100) DEFAULT NULL AFTER tenant_id'
+    );
+    console.log('Added fund_provider_share_rules.rule_name');
+  }
+  await conn.query(
+    `UPDATE fund_provider_share_rules fpsr
+     JOIN fund_providers fp ON fp.id = fpsr.fund_provider_id
+     SET fpsr.rule_name = fp.name
+     WHERE fpsr.rule_name IS NULL OR TRIM(fpsr.rule_name) = ''`
+  );
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -569,6 +873,12 @@ async function migrate() {
   await applyIpoLotByCategoryV16(conn);
   await applyOptionalHniV17(conn);
   await applyGroupOwnerV18(conn);
+  await applyProviderRuleNameV19(conn);
+  await applyRuleTemplatesV20(conn);
+  await applyBulkMemberGivenLedgerV21(conn);
+  await applyFixBulkOwnerLedgerV22(conn);
+  await applyGroupBulkPaymentsV23(conn);
+  await applyFixGroupBulkMemberCountV24(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

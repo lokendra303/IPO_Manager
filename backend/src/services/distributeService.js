@@ -48,6 +48,7 @@ async function buildDistributionPlan(conn, {
   const allowed = parseAllowedCategories(ipo.allowed_categories);
   const applications = [];
   const ledgers = [];
+  const bulkPayments = [];
   const coveredMemberIds = new Set();
 
   for (const bulk of groupBulks || []) {
@@ -74,12 +75,21 @@ async function buildDistributionPlan(conn, {
         paidToMemberId: ownerId,
       });
       groupTotal += lot;
+      ledgers.push({
+        memberId: m.id,
+        type: 'GIVEN',
+        amount: lot,
+        notes: `IPO: ${ipo.name} — ${group.name} (paid to group owner)`,
+      });
     }
 
-    ledgers.push({
-      memberId: ownerId,
-      amount: groupTotal,
-      notes: `IPO: ${ipo.name} — ${group.name} bulk (${members.length} members)`,
+    bulkPayments.push({
+      memberGroupId: group.id,
+      ownerMemberId: ownerId,
+      totalAmount: groupTotal,
+      memberCount: members.length,
+      investorCategory: cat,
+      notes: `IPO: ${ipo.name} — ${group.name}`,
     });
   }
 
@@ -133,13 +143,14 @@ async function buildDistributionPlan(conn, {
       });
       ledgers.push({
         memberId,
+        type: 'GIVEN',
         amount: amt,
         notes: `IPO: ${ipo.name}`,
       });
     }
   }
 
-  return { applications, ledgers };
+  return { applications, ledgers, bulkPayments };
 }
 
 export async function distributeIpo(conn, {
@@ -168,7 +179,7 @@ export async function distributeIpo(conn, {
     throw new AppError('Cannot distribute funds for a closed IPO. Reopen the IPO first.');
   }
 
-  const { applications: appPlans, ledgers: ledgerPlans } = await buildDistributionPlan(conn, {
+  const { applications: appPlans, ledgers: ledgerPlans, bulkPayments: bulkPaymentPlans } = await buildDistributionPlan(conn, {
     tenantId,
     ipo,
     memberIds,
@@ -178,7 +189,7 @@ export async function distributeIpo(conn, {
     groupBulks,
   });
 
-  const total = ledgerPlans.reduce((s, l) => s + l.amount, 0);
+  const total = appPlans.reduce((s, p) => s + Number(p.amount), 0);
   const now = new Date();
 
   await ensureWallet(conn, tenantId);
@@ -238,11 +249,30 @@ export async function distributeIpo(conn, {
   }
 
   for (const ledger of ledgerPlans) {
-    const ownerAppId = appIdByMember.get(ledger.memberId) ?? applications[0]?.id;
+    const appId = appIdByMember.get(ledger.memberId) ?? applications[0]?.id;
     await conn.query(
       `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
        VALUES (?, ?, 'GIVEN', ?, ?, ?, ?)`,
-      [ledger.memberId, tenantId, ledger.amount, now, ownerAppId, ledger.notes]
+      [ledger.memberId, tenantId, ledger.amount, now, appId, ledger.notes]
+    );
+  }
+
+  for (const bp of bulkPaymentPlans || []) {
+    await conn.query(
+      `INSERT INTO member_group_bulk_payments
+       (tenant_id, member_group_id, ipo_id, owner_member_id, total_amount, member_count, investor_category, paid_at, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        bp.memberGroupId,
+        ipoIdNum,
+        bp.ownerMemberId,
+        bp.totalAmount,
+        bp.memberCount,
+        bp.investorCategory,
+        now,
+        bp.notes,
+      ]
     );
   }
 

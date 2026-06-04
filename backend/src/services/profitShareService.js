@@ -85,6 +85,179 @@ function emptyRule(fundProviderId = null, providerName = null) {
   };
 }
 
+function mapRuleTemplateRow(row) {
+  const profitProviderPercent = Number(row.profit_provider_percent);
+  const profitManagerPercent = Number(row.profit_manager_percent);
+  const lossProviderPercent = Number(row.loss_provider_percent);
+  const lossManagerPercent = Number(row.loss_manager_percent);
+  const hasRule = profitProviderPercent + profitManagerPercent + lossProviderPercent + lossManagerPercent > 0;
+  return {
+    id: row.id,
+    ruleName: row.rule_name?.trim() || row.provider_name,
+    fundProviderId: row.fund_provider_id,
+    providerName: row.provider_name,
+    sortOrder: Number(row.sort_order ?? 0),
+    hasRule,
+    profitProviderPercent,
+    profitManagerPercent,
+    lossProviderPercent,
+    lossManagerPercent,
+  };
+}
+
+export async function listRuleTemplates(conn, tenantId) {
+  const [rows] = await conn.query(
+    `SELECT rt.*, fp.name AS provider_name
+     FROM profit_share_rule_templates rt
+     JOIN fund_providers fp ON fp.id = rt.fund_provider_id AND fp.tenant_id = rt.tenant_id
+     WHERE rt.tenant_id = ?
+     ORDER BY rt.sort_order, rt.rule_name, rt.id`,
+    [tenantId]
+  );
+  return rows.map(mapRuleTemplateRow);
+}
+
+export async function getRuleTemplate(conn, tenantId, templateId) {
+  const [rows] = await conn.query(
+    `SELECT rt.*, fp.name AS provider_name
+     FROM profit_share_rule_templates rt
+     JOIN fund_providers fp ON fp.id = rt.fund_provider_id AND fp.tenant_id = rt.tenant_id
+     WHERE rt.id = ? AND rt.tenant_id = ?`,
+    [templateId, tenantId]
+  );
+  if (!rows.length) return null;
+  return mapRuleTemplateRow(rows[0]);
+}
+
+export async function createRuleTemplate(conn, tenantId, {
+  ruleName,
+  fundProviderId,
+  profitProviderPercent,
+  profitManagerPercent,
+  lossProviderPercent,
+  lossManagerPercent,
+  sortOrder,
+}) {
+  const pid = Number(fundProviderId);
+  if (!pid) throw new AppError('Fund provider is required');
+
+  const [fp] = await conn.query(
+    'SELECT id, name FROM fund_providers WHERE id = ? AND tenant_id = ?',
+    [pid, tenantId]
+  );
+  if (!fp.length) throw new AppError('Fund provider not found', 404);
+
+  const percents = {
+    profitProviderPercent,
+    profitManagerPercent,
+    lossProviderPercent,
+    lossManagerPercent,
+  };
+  validateProfitLossPercents(percents);
+
+  const name = ruleName?.trim() || fp[0].name;
+  let order = Number(sortOrder);
+  if (!Number.isFinite(order)) {
+    const [maxRow] = await conn.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM profit_share_rule_templates WHERE tenant_id = ?',
+      [tenantId]
+    );
+    order = Number(maxRow[0].next_order);
+  }
+
+  const [result] = await conn.query(
+    `INSERT INTO profit_share_rule_templates
+     (tenant_id, rule_name, fund_provider_id, profit_provider_percent, profit_manager_percent,
+      loss_provider_percent, loss_manager_percent, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      tenantId,
+      name,
+      pid,
+      percents.profitProviderPercent,
+      percents.profitManagerPercent,
+      percents.lossProviderPercent,
+      percents.lossManagerPercent,
+      order,
+    ]
+  );
+
+  return getRuleTemplate(conn, tenantId, result.insertId);
+}
+
+export async function updateRuleTemplate(conn, tenantId, templateId, fields) {
+  const existing = await getRuleTemplate(conn, tenantId, templateId);
+  if (!existing) throw new AppError('Rule template not found', 404);
+
+  const updates = [];
+  const values = [];
+
+  if (fields.ruleName !== undefined) {
+    updates.push('rule_name = ?');
+    values.push(fields.ruleName?.trim() || existing.providerName);
+  }
+  if (fields.fundProviderId !== undefined) {
+    const pid = Number(fields.fundProviderId);
+    if (!pid) throw new AppError('Fund provider is required');
+    const [fp] = await conn.query(
+      'SELECT id FROM fund_providers WHERE id = ? AND tenant_id = ?',
+      [pid, tenantId]
+    );
+    if (!fp.length) throw new AppError('Fund provider not found', 404);
+    updates.push('fund_provider_id = ?');
+    values.push(pid);
+  }
+  if (fields.sortOrder !== undefined) {
+    updates.push('sort_order = ?');
+    values.push(Number(fields.sortOrder));
+  }
+  const percentFields = [
+    ['profit_provider_percent', 'profitProviderPercent'],
+    ['profit_manager_percent', 'profitManagerPercent'],
+    ['loss_provider_percent', 'lossProviderPercent'],
+    ['loss_manager_percent', 'lossManagerPercent'],
+  ];
+  for (const [col, key] of percentFields) {
+    if (fields[key] !== undefined) {
+      updates.push(`${col} = ?`);
+      values.push(Number(fields[key]));
+    }
+  }
+
+  if (!updates.length) throw new AppError('No fields to update');
+
+  const merged = {
+    profitProviderPercent: fields.profitProviderPercent ?? existing.profitProviderPercent,
+    profitManagerPercent: fields.profitManagerPercent ?? existing.profitManagerPercent,
+    lossProviderPercent: fields.lossProviderPercent ?? existing.lossProviderPercent,
+    lossManagerPercent: fields.lossManagerPercent ?? existing.lossManagerPercent,
+  };
+  if (
+    fields.profitProviderPercent !== undefined
+    || fields.profitManagerPercent !== undefined
+    || fields.lossProviderPercent !== undefined
+    || fields.lossManagerPercent !== undefined
+  ) {
+    validateProfitLossPercents(merged);
+  }
+
+  values.push(templateId, tenantId);
+  await conn.query(
+    `UPDATE profit_share_rule_templates SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
+    values
+  );
+
+  return getRuleTemplate(conn, tenantId, templateId);
+}
+
+export async function deleteRuleTemplate(conn, tenantId, templateId) {
+  const [result] = await conn.query(
+    'DELETE FROM profit_share_rule_templates WHERE id = ? AND tenant_id = ?',
+    [templateId, tenantId]
+  );
+  if (!result.affectedRows) throw new AppError('Rule template not found', 404);
+}
+
 export async function getProviderShareRule(conn, tenantId, fundProviderId) {
   const [rows] = await conn.query(
     `SELECT fpsr.*, fp.name as provider_name
@@ -98,6 +271,7 @@ export async function getProviderShareRule(conn, tenantId, fundProviderId) {
   return {
     fundProviderId: r.fund_provider_id,
     providerName: r.provider_name,
+    ruleName: r.rule_name?.trim() || r.provider_name,
     profitProviderPercent: Number(r.profit_provider_percent),
     profitManagerPercent: Number(r.profit_manager_percent),
     lossProviderPercent: Number(r.loss_provider_percent),

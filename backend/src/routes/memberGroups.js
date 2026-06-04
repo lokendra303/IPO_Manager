@@ -3,6 +3,7 @@ import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import {
   listMemberGroups,
+  listGroupBulkTransactions,
   assertGroupNameUnique,
   assignMembersToGroup,
   assertGroupOwner,
@@ -15,6 +16,25 @@ router.get('/', async (req, res, next) => {
   try {
     const groups = await listMemberGroups(pool, req.tenantId);
     res.json(groups);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/bulk-transactions', async (req, res, next) => {
+  try {
+    const rows = await listGroupBulkTransactions(pool, req.tenantId);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/bulk-transactions', async (req, res, next) => {
+  try {
+    const id = parsePositiveInt(req.params.id, 'group id');
+    const rows = await listGroupBulkTransactions(pool, req.tenantId, id);
+    res.json(rows);
   } catch (err) {
     next(err);
   }

@@ -106,6 +106,65 @@ export async function loadGroupForBulkDistribute(conn, tenantId, ipoId, groupId)
   return { group, members };
 }
 
+export async function listGroupBulkTransactions(pool, tenantId, groupId = null) {
+  const params = [tenantId];
+  let groupFilter = '';
+  if (groupId != null) {
+    groupFilter = ' AND bp.member_group_id = ?';
+    params.push(parsePositiveInt(groupId, 'group id'));
+  }
+
+  const [rows] = await pool.query(
+    `SELECT bp.id, bp.member_group_id, bp.ipo_id, bp.owner_member_id, bp.total_amount, bp.member_count,
+            bp.investor_category, bp.paid_at, bp.notes,
+            g.name AS group_name,
+            i.name AS ipo_name,
+            o.display_name AS owner_display_name,
+            (
+              SELECT COUNT(*)
+              FROM ipo_applications a
+              JOIN members m ON m.id = a.member_id AND m.tenant_id = bp.tenant_id
+              WHERE a.ipo_id = bp.ipo_id
+                AND a.paid_to_member_id = bp.owner_member_id
+                AND m.member_group_id = bp.member_group_id
+            ) AS app_member_count,
+            (
+              SELECT COALESCE(SUM(a.amount), 0)
+              FROM ipo_applications a
+              JOIN members m ON m.id = a.member_id AND m.tenant_id = bp.tenant_id
+              WHERE a.ipo_id = bp.ipo_id
+                AND a.paid_to_member_id = bp.owner_member_id
+                AND m.member_group_id = bp.member_group_id
+            ) AS app_total_amount
+     FROM member_group_bulk_payments bp
+     JOIN member_groups g ON g.id = bp.member_group_id
+     JOIN ipos i ON i.id = bp.ipo_id
+     JOIN members o ON o.id = bp.owner_member_id
+     WHERE bp.tenant_id = ?${groupFilter}
+     ORDER BY bp.paid_at DESC, bp.id DESC`,
+    params
+  );
+
+  return rows.map((r) => {
+    const appCount = Number(r.app_member_count);
+    const appTotal = Number(r.app_total_amount);
+    return {
+      id: r.id,
+      memberGroupId: r.member_group_id,
+      groupName: r.group_name,
+      ipoId: r.ipo_id,
+      ipoName: r.ipo_name,
+      ownerMemberId: r.owner_member_id,
+      ownerDisplayName: r.owner_display_name,
+      totalAmount: appTotal > 0 ? appTotal : Number(r.total_amount),
+      memberCount: appCount > 0 ? appCount : Number(r.member_count),
+      investorCategory: r.investor_category,
+      paidAt: r.paid_at,
+      notes: r.notes,
+    };
+  });
+}
+
 export async function assertGroupNameUnique(pool, tenantId, name, excludeId = null) {
   const trimmed = name.trim();
   const params = [tenantId, trimmed];

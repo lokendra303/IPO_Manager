@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Table, Button, Form, InputNumber, Input, Select, message, Modal, Tabs, Row, Col, Tag, Space, Divider, Segmented, Popconfirm,
+  Table, Button, Form, InputNumber, Input, Select, message, Modal, Tabs, Row, Col, Tag, Space, Divider, Segmented, Popconfirm, Typography, Dropdown, Alert,
 } from 'antd';
 import {
   PercentageOutlined, SaveOutlined, EditOutlined, ReloadOutlined, WarningOutlined, PlusOutlined, DeleteOutlined,
@@ -31,6 +31,42 @@ function IpoScopeTag({ rule }) {
     return <Tag color="purple">{rule.ipoName || `IPO #${rule.ipoId}`}</Tag>;
   }
   return <Tag>All IPOs</Tag>;
+}
+
+function normalizeProviderId(id) {
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function normalizeTemplateId(id) {
+  const n = Number(id);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function normalizeMemberIds(ids) {
+  return [...new Set((ids || []).map((id) => Number(id)).filter((n) => Number.isInteger(n) && n > 0))];
+}
+
+/** null = all IPOs; number = specific IPO */
+function normalizeIpoScope(ipoId) {
+  if (ipoId == null || ipoId === '') return null;
+  const n = Number(ipoId);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function IpoScopeSelect({ value, onChange, placeholder = 'All IPOs (default)', options, ...rest }) {
+  const scoped = normalizeIpoScope(value);
+  return (
+    <Select
+      allowClear
+      placeholder={placeholder}
+      options={options}
+      value={scoped}
+      onChange={(v) => onChange(v == null ? null : Number(v))}
+      onClear={() => onChange(null)}
+      {...rest}
+    />
+  );
 }
 
 function SharePercentForm({ form, prefix }) {
@@ -65,6 +101,7 @@ export default function ProfitSharingPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fundProviders, setFundProviders] = useState([]);
+  const [ruleTemplates, setRuleTemplates] = useState([]);
   const [ipos, setIpos] = useState([]);
   const [members, setMembers] = useState([]);
   const [report, setReport] = useState(null);
@@ -78,28 +115,45 @@ export default function ProfitSharingPage() {
   const [ruleForm] = Form.useForm();
   const [ruleSaving, setRuleSaving] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
+  const [templateApplyOpen, setTemplateApplyOpen] = useState(false);
+  const [templateApplyContext, setTemplateApplyContext] = useState(null);
+  const [templateApplyForm] = Form.useForm();
+  const [ruleListEditOpen, setRuleListEditOpen] = useState(false);
+  const [ruleListEdit, setRuleListEdit] = useState(null);
+  const [ruleListForm] = Form.useForm();
+  const [bulkTemplateId, setBulkTemplateId] = useState(null);
+  const [bulkTemplateIpoId, setBulkTemplateIpoId] = useState(null);
+  const [activeTabKey, setActiveTabKey] = useState('members');
+  const [membersFilter, setMembersFilter] = useState('all');
 
   const renderAmt = (v) => <span className={pnlClassName(v)}>{formatCurrency(v)}</span>;
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-      const [memRes, fpRes, ipoRes, repRes, totalsRes] = await Promise.all([
+      const [memRes, fpRes, ipoRes, repRes, totalsRes, templatesRes] = await Promise.all([
         client.get('/profit-shares/members'),
         client.get('/fund-providers'),
         client.get('/ipos'),
         client.get('/profit-shares/report'),
         client.get('/profit-shares/totals'),
+        client.get('/profit-shares/rule-templates'),
       ]);
       setMembers(memRes.data);
       setFundProviders(fpRes.data);
+      setRuleTemplates(templatesRes.data);
       setIpos(ipoRes.data);
       setReport(repRes.data);
       setPnlTotals(totalsRes.data);
       return memRes.data;
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
+  };
+
+  const refreshAfterRuleChange = async () => {
+    setActiveTabKey('members');
+    await load({ silent: true });
   };
 
   useEffect(() => { load(); }, []);
@@ -108,12 +162,332 @@ export default function ProfitSharingPage() {
     const editId = location.state?.editMemberId;
     if (!editId || !members.length) return;
     const m = members.find((x) => x.memberId === editId);
-    if (m) openManageMember(m);
+    if (m) {
+      setActiveTabKey('members');
+      openManageMember(m);
+    }
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.state?.editMemberId, members]);
 
   const providerOptions = fundProviders.map((p) => ({ value: p.id, label: p.name }));
   const ipoOptions = ipos.map((i) => ({ value: i.id, label: i.name }));
+
+  const templateCatalog = useMemo(() => {
+    const byId = new Map();
+    for (const t of ruleTemplates) {
+      if (t.hasRule) byId.set(t.id, t);
+    }
+    for (const m of members) {
+      for (const rule of m.rules || []) {
+        const fpId = normalizeProviderId(rule.fundProviderId);
+        if (!fpId) continue;
+        const key = `member-${m.memberId}-${rule.id}`;
+        if ([...byId.values()].some((x) => x.fundProviderId === fpId
+          && x.profitProviderPercent === rule.profitProviderPercent)) continue;
+        byId.set(key, {
+          id: key,
+          fundProviderId: fpId,
+          providerName: rule.providerName,
+          ruleName: rule.ruleName || rule.providerName,
+          profitProviderPercent: rule.profitProviderPercent,
+          profitManagerPercent: rule.profitManagerPercent,
+          lossProviderPercent: rule.lossProviderPercent,
+          lossManagerPercent: rule.lossManagerPercent,
+          hasRule: true,
+          fromMember: true,
+        });
+      }
+    }
+    return byId;
+  }, [ruleTemplates, members]);
+
+  const templateRuleOptions = useMemo(
+    () => ruleTemplates
+      .filter((t) => t.hasRule)
+      .map((t) => ({
+        value: t.id,
+        label: `${t.ruleName} (${t.providerName}) — P ${t.profitProviderPercent}/${t.profitManagerPercent}% · L ${t.lossProviderPercent}/${t.lossManagerPercent}%`,
+      })),
+    [ruleTemplates]
+  );
+
+  const getTemplateById = (templateId) => {
+    const id = normalizeTemplateId(templateId);
+    if (id) {
+      const saved = ruleTemplates.find((t) => t.id === id);
+      if (saved) return saved;
+    }
+    return templateCatalog.get(templateId) ?? null;
+  };
+
+  const buildApplyRuleMenu = (memberId, displayName, afterApply) => ({
+    items: templateRuleOptions.map((o) => ({
+      key: String(o.value),
+      label: o.label,
+    })),
+    onClick: async ({ key }) => {
+      const templateId = normalizeTemplateId(key) ?? key;
+      if (!templateId) return;
+      await onQuickApplyTemplate(templateId, memberId, displayName);
+      if (afterApply) await afterApply();
+    },
+  });
+
+  const applyTemplateToMembers = async (templateId, memberIds, ipoId, ruleName) => {
+    const tpl = getTemplateById(templateId);
+    if (!tpl) {
+      throw new Error('Select a rule from the Rule list tab or use a provider already set on a member');
+    }
+    const fundProviderId = normalizeProviderId(tpl.fundProviderId);
+    if (!fundProviderId) throw new Error('Rule has no fund provider');
+    const payload = {
+      ruleName: ruleName || tpl.ruleName || `${tpl.providerName} share`,
+      fundProviderId,
+      ipoId: normalizeIpoScope(ipoId),
+      profitProviderPercent: tpl.profitProviderPercent,
+      profitManagerPercent: tpl.profitManagerPercent,
+      lossProviderPercent: tpl.lossProviderPercent,
+      lossManagerPercent: tpl.lossManagerPercent,
+    };
+    if (memberIds.length === 1) {
+      await client.post(`/profit-shares/members/${memberIds[0]}/rules`, payload);
+      return { appliedCount: 1, failedCount: 0 };
+    }
+    const { data } = await client.post('/profit-shares/members/bulk-rules', {
+      memberIds,
+      ...payload,
+    });
+    return data;
+  };
+
+  const openApplyTemplate = (memberIds, label) => {
+    if (!templateRuleOptions.length) {
+      message.warning('Add share % in the Rule list tab first');
+      return;
+    }
+    setTemplateApplyContext({ memberIds, label });
+    templateApplyForm.resetFields();
+    templateApplyForm.setFieldsValue({
+      templateId: bulkTemplateId ?? undefined,
+      ipoId: bulkTemplateIpoId,
+    });
+    setTemplateApplyOpen(true);
+  };
+
+  const onApplyTemplateSubmit = async (values) => {
+    if (!templateApplyContext) return;
+    const templateId = normalizeTemplateId(values.templateId) ?? values.templateId;
+    if (!templateId) {
+      message.warning('Select a rule from the list');
+      return;
+    }
+    setRuleSaving(true);
+    try {
+      const memberIds = normalizeMemberIds(templateApplyContext.memberIds);
+      const data = await applyTemplateToMembers(
+        templateId,
+        memberIds,
+        normalizeIpoScope(values.ipoId),
+        values.ruleName
+      );
+      const { appliedCount, failedCount, failed } = data;
+      if (appliedCount) {
+        message.success(`Rule applied to ${appliedCount} member(s)`);
+      }
+      if (failedCount) {
+        message.warning(`${failedCount} skipped — ${failed?.[0]?.error || 'see details'}`, 6);
+      }
+      if (!appliedCount && failedCount) {
+        message.error('Rule could not be applied');
+        return;
+      }
+      setTemplateApplyOpen(false);
+      setTemplateApplyContext(null);
+      setSelectedMemberIds([]);
+      if (manageMember && templateApplyContext.memberIds.includes(manageMember.memberId)) {
+        await loadMemberRules(manageMember.memberId);
+      }
+      refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const onQuickApplyTemplate = async (templateId, memberId, displayName) => {
+    if (!templateId) return;
+    const tpl = getTemplateById(templateId);
+    setRuleSaving(true);
+    try {
+      await applyTemplateToMembers(templateId, [memberId], undefined);
+      message.success(`"${tpl?.ruleName || tpl?.providerName || 'Rule'}" applied to ${displayName}`);
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const openAddRuleTemplate = () => {
+    if (!fundProviders.length) {
+      message.warning('Add a fund provider first (Fund Providers page)');
+      return;
+    }
+    setRuleListEdit({ mode: 'create' });
+    ruleListForm.setFieldsValue({
+      ruleName: '',
+      fundProviderId: undefined,
+      profitProviderPercent: 0,
+      profitManagerPercent: 0,
+      lossProviderPercent: 0,
+      lossManagerPercent: 0,
+    });
+    setRuleListEditOpen(true);
+  };
+
+  const openEditRuleTemplate = (row) => {
+    setRuleListEdit({ mode: 'edit', id: row.id });
+    ruleListForm.setFieldsValue({
+      ruleName: row.ruleName,
+      fundProviderId: row.fundProviderId,
+      profitProviderPercent: row.profitProviderPercent ?? 0,
+      profitManagerPercent: row.profitManagerPercent ?? 0,
+      lossProviderPercent: row.lossProviderPercent ?? 0,
+      lossManagerPercent: row.lossManagerPercent ?? 0,
+    });
+    setRuleListEditOpen(true);
+  };
+
+  const onSaveRuleTemplate = async (values) => {
+    if (!ruleListEdit) return;
+    setRuleSaving(true);
+    try {
+      if (ruleListEdit.mode === 'create') {
+        await client.post('/profit-shares/rule-templates', values);
+        message.success('Rule added to list');
+      } else {
+        await client.put(`/profit-shares/rule-templates/${ruleListEdit.id}`, values);
+        message.success('Rule updated');
+      }
+      setRuleListEditOpen(false);
+      setRuleListEdit(null);
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const onDeleteRuleTemplate = async (templateId) => {
+    try {
+      await client.delete(`/profit-shares/rule-templates/${templateId}`);
+      message.success('Rule removed from list');
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
+  };
+
+  const onApplyToNextMember = async () => {
+    const templateId = normalizeTemplateId(bulkTemplateId) ?? bulkTemplateId;
+    if (!templateId) {
+      message.warning('Select a rule from the list first');
+      return;
+    }
+    const next = members.find((m) => !m.hasShareRule);
+    if (!next) {
+      message.info('Every member already has a share rule');
+      return;
+    }
+    await onQuickApplyTemplate(templateId, next.memberId, next.displayName);
+  };
+
+  const onApplySelectedOneByOne = async () => {
+    const templateId = normalizeTemplateId(bulkTemplateId) ?? bulkTemplateId;
+    const memberIds = normalizeMemberIds(selectedMemberIds);
+    if (!templateId) {
+      message.warning('Select a rule from the list first');
+      return;
+    }
+    if (!memberIds.length) {
+      message.warning('Select one or more members in the table');
+      return;
+    }
+    const tpl = getTemplateById(templateId);
+    setActiveTabKey('members');
+    setRuleSaving(true);
+    let applied = 0;
+    let failed = 0;
+    const errors = [];
+    try {
+      for (const memberId of memberIds) {
+        const m = members.find((x) => x.memberId === memberId);
+        try {
+          await applyTemplateToMembers(templateId, [memberId], bulkTemplateIpoId);
+          applied += 1;
+        } catch (err) {
+          failed += 1;
+          errors.push(`${m?.displayName || memberId}: ${getErrorMessage(err)}`);
+        }
+      }
+      await load({ silent: true });
+      if (applied) {
+        message.success(
+          `"${tpl?.ruleName || tpl?.providerName || 'Rule'}" applied to ${applied} member(s) one by one`
+        );
+      }
+      if (failed) {
+        message.warning(`${failed} failed — ${errors[0] || 'see console'}`, 6);
+      }
+      if (!applied && failed) message.error('No members were updated');
+      if (applied) setSelectedMemberIds([]);
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const onBulkApplyFromToolbar = async () => {
+    const templateId = normalizeTemplateId(bulkTemplateId) ?? bulkTemplateId;
+    const memberIds = normalizeMemberIds(selectedMemberIds);
+    if (!templateId) {
+      message.warning('Select a rule from the list');
+      return;
+    }
+    if (!memberIds.length) {
+      message.warning('Select one or more members in the table');
+      return;
+    }
+    const tpl = getTemplateById(templateId);
+    setRuleSaving(true);
+    try {
+      const data = await applyTemplateToMembers(templateId, memberIds, bulkTemplateIpoId);
+      if (data.appliedCount) {
+        message.success(
+          `"${tpl?.ruleName || tpl?.providerName || 'Rule'}" applied to ${data.appliedCount} member(s)`
+        );
+      }
+      if (data.failedCount) {
+        const detail = data.failed?.[0]?.error;
+        message.warning(
+          `${data.failedCount} member(s) skipped${detail ? ` — ${detail}` : ''}`,
+          6
+        );
+      }
+      if (!data.appliedCount && data.failedCount) {
+        message.error('Rule could not be applied to any selected member');
+        return;
+      }
+      setSelectedMemberIds([]);
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
+    }
+  };
 
   const loadMemberRules = async (memberId) => {
     setRulesLoading(true);
@@ -151,7 +525,7 @@ export default function ProfitSharingPage() {
 
   const defaultRuleFormValues = (nextIndex = 1) => ({
     ruleName: `Rule ${nextIndex}`,
-    ipoId: undefined,
+    ipoId: null,
     fundProviderId: undefined,
     profitProviderPercent: 0,
     profitManagerPercent: 0,
@@ -168,15 +542,24 @@ export default function ProfitSharingPage() {
   };
 
   const openAddRuleForMember = (m) => {
-    openAddRuleForm([m.memberId], m.displayName, (m.ruleCount || 0) + 1);
+    openApplyTemplate([m.memberId], m.displayName);
   };
 
-  const openAddRuleForSelected = () => {
-    const selected = members.filter((m) => selectedMemberIds.includes(m.memberId));
+  const openBulkApplyForSelected = () => {
+    const memberIds = normalizeMemberIds(selectedMemberIds);
+    if (!memberIds.length) {
+      message.warning('Select one or more members in the table');
+      return;
+    }
+    const selected = members.filter((m) => memberIds.includes(m.memberId));
     const label = selected.length === 1
       ? selected[0].displayName
       : `${selected.length} members`;
-    openAddRuleForm(selectedMemberIds, label, 1);
+    openApplyTemplate(memberIds, label);
+  };
+
+  const openCustomRuleForMember = (m) => {
+    openAddRuleForm([m.memberId], m.displayName, (m.ruleCount || 0) + 1);
   };
 
   const openEditRuleForm = (rule) => {
@@ -189,7 +572,7 @@ export default function ProfitSharingPage() {
     });
     ruleForm.setFieldsValue({
       ruleName: rule.ruleName,
-      ipoId: rule.ipoId ?? undefined,
+      ipoId: rule.ipoId ?? null,
       fundProviderId: rule.fundProviderId,
       profitProviderPercent: rule.profitProviderPercent,
       profitManagerPercent: rule.profitManagerPercent,
@@ -201,6 +584,16 @@ export default function ProfitSharingPage() {
 
   const onRuleProviderChange = async (providerId) => {
     if (!providerId) return;
+    const fromList = ruleTemplates.find((t) => t.fundProviderId === providerId && t.hasRule);
+    if (fromList) {
+      ruleForm.setFieldsValue({
+        profitProviderPercent: fromList.profitProviderPercent,
+        profitManagerPercent: fromList.profitManagerPercent,
+        lossProviderPercent: fromList.lossProviderPercent,
+        lossManagerPercent: fromList.lossManagerPercent,
+      });
+      return;
+    }
     try {
       const { data } = await client.get(`/profit-shares/providers/${providerId}/template`);
       ruleForm.setFieldsValue({
@@ -214,21 +607,27 @@ export default function ProfitSharingPage() {
     }
   };
 
+  const rulePayloadFromValues = (values) => ({
+    ...values,
+    ipoId: normalizeIpoScope(values.ipoId),
+  });
+
   const onSaveRule = async (values) => {
     if (!ruleFormContext) return;
+    const payload = rulePayloadFromValues(values);
     setRuleSaving(true);
     try {
       if (ruleFormContext.mode === 'edit') {
         const memberId = ruleFormContext.memberIds[0];
-        await client.put(`/profit-shares/members/${memberId}/rules/${ruleFormContext.ruleId}`, values);
+        await client.put(`/profit-shares/members/${memberId}/rules/${ruleFormContext.ruleId}`, payload);
         message.success('Rule updated');
       } else if (ruleFormContext.memberIds.length === 1) {
-        await client.post(`/profit-shares/members/${ruleFormContext.memberIds[0]}/rules`, values);
+        await client.post(`/profit-shares/members/${ruleFormContext.memberIds[0]}/rules`, payload);
         message.success('Rule added');
       } else {
         const { data } = await client.post('/profit-shares/members/bulk-rules', {
           memberIds: ruleFormContext.memberIds,
-          ...values,
+          ...payload,
         });
         const { appliedCount, failedCount, failed } = data;
         if (appliedCount) message.success(`Rule added to ${appliedCount} member(s)`);
@@ -251,7 +650,7 @@ export default function ProfitSharingPage() {
       setRuleFormOpen(false);
       setRuleFormContext(null);
       if (manageMember) await loadMemberRules(manageMember.memberId);
-      load();
+      await refreshAfterRuleChange();
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
@@ -265,7 +664,7 @@ export default function ProfitSharingPage() {
       await client.delete(`/profit-shares/members/${manageMember.memberId}/rules/${ruleId}`);
       message.success('Rule removed');
       await loadMemberRules(manageMember.memberId);
-      load();
+      await refreshAfterRuleChange();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
@@ -278,53 +677,75 @@ export default function ProfitSharingPage() {
       message.success('All share rules removed');
       setManageMember(null);
       setMemberRules([]);
-      load();
+      await refreshAfterRuleChange();
     } catch (err) {
       message.error(getErrorMessage(err));
     }
   };
 
-  const pctPair = (prov, mgr) => (
-    <div>
-      <div>Provider {prov}% · Manager {mgr}%</div>
-      <div style={{ fontSize: 12, color: '#64748b' }}>Member keeps {Math.max(0, 100 - prov - mgr)}%</div>
-    </div>
+  const pctSummary = (prov, mgr) => (
+    <span style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+      {prov}% / {mgr}% <Typography.Text type="secondary">(keeps {Math.max(0, 100 - prov - mgr)}%)</Typography.Text>
+    </span>
   );
 
   const memberCols = [
-    { title: 'Member', dataIndex: 'displayName', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'PAN', dataIndex: 'pan' },
     {
-      title: 'Providers',
+      title: 'Member',
+      dataIndex: 'displayName',
+      width: 130,
+      fixed: 'left',
+      render: (v) => <span style={{ fontWeight: 500 }}>{v}</span>,
+    },
+    { title: 'PAN', dataIndex: 'pan', width: 108 },
+    {
+      title: 'Provider',
+      width: 110,
       render: (_, r) => r.effectiveProviderName || <Tag color="error">Not set</Tag>,
     },
     {
       title: 'Rules',
-      dataIndex: 'ruleCount',
-      width: 120,
-      render: (n, r) => (
-        <Space direction="vertical" size={2}>
-          {n > 0 ? <Tag color="success">{n} rule{n > 1 ? 's' : ''}</Tag> : <Tag color="warning">Required</Tag>}
-          {r.hasIpoSpecificRules && <Tag color="purple" style={{ margin: 0 }}>IPO-specific</Tag>}
+      width: 88,
+      render: (_, r) => (
+        <Space size={4} wrap>
+          {r.ruleCount > 0 ? (
+            <Tag color="success">{r.ruleCount}</Tag>
+          ) : (
+            <Tag color="warning">Need rule</Tag>
+          )}
+          {r.hasIpoSpecificRules && <Tag color="purple">IPO</Tag>}
         </Space>
       ),
     },
     {
-      title: 'On profit (default)',
-      render: (_, r) => (r.hasShareRule ? pctPair(r.effectiveProfitProviderPercent, r.effectiveProfitManagerPercent) : '—'),
+      title: 'Profit %',
+      width: 168,
+      render: (_, r) => (r.hasShareRule
+        ? pctSummary(r.effectiveProfitProviderPercent, r.effectiveProfitManagerPercent)
+        : '—'),
     },
     {
-      title: 'On loss',
-      render: (_, r) => (r.hasShareRule ? pctPair(r.effectiveLossProviderPercent, r.effectiveLossManagerPercent) : '—'),
+      title: 'Loss %',
+      width: 168,
+      render: (_, r) => (r.hasShareRule
+        ? pctSummary(r.effectiveLossProviderPercent, r.effectiveLossManagerPercent)
+        : '—'),
     },
     {
       title: 'Actions',
-      width: 200,
-      fixed: 'right',
+      width: 220,
       render: (_, r) => (
-        <Space size="small">
-          <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openAddRuleForMember(r)}>
-            Add rule
+        <Space size="small" wrap className="profit-share-row-actions">
+          <Dropdown
+            disabled={!templateRuleOptions.length || ruleSaving}
+            menu={buildApplyRuleMenu(r.memberId, r.displayName)}
+          >
+            <Button size="small" type="primary" loading={ruleSaving}>
+              Apply rule
+            </Button>
+          </Dropdown>
+          <Button size="small" type="link" onClick={() => openCustomRuleForMember(r)}>
+            Custom
           </Button>
           <Button
             size="small"
@@ -404,6 +825,9 @@ export default function ProfitSharingPage() {
   const totals = report?.totals || {};
   const overall = pnlTotals?.overall || {};
   const unconfiguredMembers = members.filter((m) => !m.hasShareRule);
+  const filteredMembers = membersFilter === 'needs-rule'
+    ? members.filter((m) => !m.hasShareRule)
+    : members;
 
   return (
     <div>
@@ -445,6 +869,8 @@ export default function ProfitSharingPage() {
 
       <Tabs
         size="large"
+        activeKey={activeTabKey}
+        onChange={setActiveTabKey}
         items={[
           {
             key: 'totals',
@@ -527,43 +953,197 @@ export default function ProfitSharingPage() {
             ),
           },
           {
-            key: 'members',
-            label: `Share rules (${members.length})`,
+            key: 'rule-list',
+            label: `Rule list (${ruleTemplates.length})`,
             children: (
               <ContentCard
-                title="Member share rules"
+                title="Share rule list"
                 extra={
-                  <Space wrap>
-                    {selectedMemberIds.length > 0 ? (
-                      <>
-                        <span style={{ color: '#64748b' }}>{selectedMemberIds.length} selected</span>
-                        <Button type="link" size="small" onClick={() => setSelectedMemberIds([])}>
-                          Clear selection
-                        </Button>
-                        <Button type="primary" icon={<PlusOutlined />} onClick={openAddRuleForSelected}>
-                          Add rule to selected
-                        </Button>
-                      </>
-                    ) : (
-                      <span style={{ color: '#94a3b8', fontSize: 13 }}>
-                        Tip: select rows to add the same rule to multiple members
-                      </span>
-                    )}
-                  </Space>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openAddRuleTemplate}>
+                    Add rule
+                  </Button>
                 }
               >
                 <Table
-                  rowKey="memberId"
-                  columns={memberCols}
-                  dataSource={members}
-                  scroll={{ x: 1100 }}
-                  rowSelection={{
-                    selectedRowKeys: selectedMemberIds,
-                    onChange: setSelectedMemberIds,
-                  }}
+                  rowKey="id"
+                  dataSource={ruleTemplates}
+                  pagination={false}
+                  columns={[
+                    {
+                      title: 'Rule name',
+                      dataIndex: 'ruleName',
+                      width: 160,
+                      render: (v, r) => (
+                        <div>
+                          <strong>{v || r.providerName}</strong>
+                          {r.hasRule && v && v !== r.providerName && (
+                            <div style={{ fontSize: 12, color: '#64748b' }}>{r.providerName}</div>
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Fund provider',
+                      dataIndex: 'providerName',
+                      width: 130,
+                      render: (v) => v || '—',
+                    },
+                    {
+                      title: 'On profit',
+                      render: (_, r) => (r.hasRule
+                        ? `${r.profitProviderPercent}% provider · ${r.profitManagerPercent}% manager`
+                        : <Tag color="warning">Not set</Tag>),
+                    },
+                    {
+                      title: 'On loss',
+                      render: (_, r) => (r.hasRule
+                        ? `${r.lossProviderPercent}% provider · ${r.lossManagerPercent}% manager`
+                        : '—'),
+                    },
+                    {
+                      title: '',
+                      width: 140,
+                      render: (_, r) => (
+                        <Space size="small">
+                          <Button size="small" icon={<EditOutlined />} onClick={() => openEditRuleTemplate(r)}>
+                            Edit
+                          </Button>
+                          <Popconfirm
+                            title="Delete this rule from the list?"
+                            onConfirm={() => onDeleteRuleTemplate(r.id)}
+                          >
+                            <Button size="small" danger icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        </Space>
+                      ),
+                    },
+                  ]}
+                  locale={{ emptyText: 'No rules yet — click Add rule' }}
                   {...tableDefaults}
                 />
               </ContentCard>
+            ),
+          },
+          {
+            key: 'members',
+            label: `Share rules (${members.length})`,
+            children: (
+              <>
+                {!templateRuleOptions.length && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="No rules in the rule list yet"
+                    description="Open the Rule list tab, set profit/loss % for each fund provider (e.g. Sagar Gupta). Then apply those rules to members here."
+                  />
+                )}
+                <ContentCard
+                  title="Member share rules"
+                  extra={
+                    <div className="profit-share-toolbar profit-share-toolbar--stacked">
+                      <Typography.Text strong className="profit-share-toolbar__label">
+                        Apply rule
+                      </Typography.Text>
+                      <Select
+                        placeholder="Rule from list"
+                        className="profit-share-toolbar__rule"
+                        allowClear
+                        value={bulkTemplateId}
+                        onChange={(v) => setBulkTemplateId(normalizeTemplateId(v) ?? v)}
+                        options={templateRuleOptions}
+                        disabled={!templateRuleOptions.length}
+                        showSearch
+                        optionFilterProp="label"
+                      />
+                      <IpoScopeSelect
+                        placeholder="All IPOs"
+                        className="profit-share-toolbar__ipo"
+                        value={bulkTemplateIpoId}
+                        onChange={setBulkTemplateIpoId}
+                        options={ipoOptions}
+                      />
+                      <Space wrap className="profit-share-toolbar__actions">
+                        {normalizeMemberIds(selectedMemberIds).length > 0 && (
+                          <>
+                            <Typography.Text type="secondary">
+                              {normalizeMemberIds(selectedMemberIds).length} selected
+                            </Typography.Text>
+                            <Button type="link" size="small" onClick={() => setSelectedMemberIds([])}>
+                              Clear
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          loading={ruleSaving}
+                          disabled={!bulkTemplateId}
+                          onClick={onApplyToNextMember}
+                        >
+                          Apply to next member
+                        </Button>
+                        <Button
+                          loading={ruleSaving}
+                          disabled={
+                            !bulkTemplateId
+                            || !normalizeMemberIds(selectedMemberIds).length
+                          }
+                          onClick={onApplySelectedOneByOne}
+                        >
+                          Apply one by one (selected)
+                        </Button>
+                        <Button
+                          type="primary"
+                          loading={ruleSaving}
+                          disabled={
+                            !bulkTemplateId
+                            || !normalizeMemberIds(selectedMemberIds).length
+                          }
+                          onClick={onBulkApplyFromToolbar}
+                        >
+                          Bulk apply (all at once)
+                        </Button>
+                        <Button
+                          disabled={!normalizeMemberIds(selectedMemberIds).length}
+                          onClick={openBulkApplyForSelected}
+                        >
+                          Options…
+                        </Button>
+                      </Space>
+                      <Typography.Text type="secondary" className="profit-share-toolbar__hint">
+                        Or use <strong>Apply rule</strong> on each row. This tab stays open after each apply.
+                      </Typography.Text>
+                    </div>
+                  }
+                >
+                  <div style={{ marginBottom: 12 }}>
+                    <Segmented
+                      value={membersFilter}
+                      onChange={setMembersFilter}
+                      options={[
+                        { label: `All members (${members.length})`, value: 'all' },
+                        { label: `Need rule (${unconfiguredMembers.length})`, value: 'needs-rule' },
+                      ]}
+                    />
+                  </div>
+                  <Table
+                    rowKey="memberId"
+                    className="profit-share-members-table"
+                    columns={memberCols}
+                    dataSource={filteredMembers}
+                    scroll={{ x: 1000 }}
+                    rowSelection={{
+                      selectedRowKeys: selectedMemberIds,
+                      onChange: (keys) => setSelectedMemberIds(normalizeMemberIds(keys)),
+                      selections: [
+                        Table.SELECTION_ALL,
+                        Table.SELECTION_INVERT,
+                        Table.SELECTION_NONE,
+                      ],
+                    }}
+                    {...tableDefaults}
+                  />
+                </ContentCard>
+              </>
             ),
           },
           {
@@ -620,6 +1200,8 @@ export default function ProfitSharingPage() {
           ) : null
         }
       >
+        {manageMember && (
+        <>
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
           <Space direction="vertical" size="small">
             {rulesByScope(memberRules).map((scope) => (
@@ -634,17 +1216,23 @@ export default function ProfitSharingPage() {
               </Space>
             ))}
           </Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => openAddRuleForm(
-              [manageMember.memberId],
-              manageMember.displayName,
-              memberRules.length + 1
-            )}
-          >
-            Add another rule
-          </Button>
+          <Space wrap>
+            <Dropdown
+              disabled={!templateRuleOptions.length || ruleSaving}
+              menu={buildApplyRuleMenu(
+                manageMember.memberId,
+                manageMember.displayName,
+                () => loadMemberRules(manageMember.memberId)
+              )}
+            >
+              <Button type="primary" icon={<PlusOutlined />} loading={ruleSaving}>
+                Apply from list
+              </Button>
+            </Dropdown>
+            <Button type="link" onClick={() => openAddRuleForm([manageMember.memberId], manageMember.displayName, memberRules.length + 1)}>
+              Custom rule
+            </Button>
+          </Space>
         </div>
         <Table
           rowKey="id"
@@ -681,6 +1269,73 @@ export default function ProfitSharingPage() {
             },
           ]}
         />
+        </>
+        )}
+      </Modal>
+
+      <Modal
+        title={`Apply rule — ${templateApplyContext?.label || ''}`}
+        open={templateApplyOpen}
+        onCancel={() => { setTemplateApplyOpen(false); setTemplateApplyContext(null); }}
+        onOk={() => templateApplyForm.submit()}
+        confirmLoading={ruleSaving}
+        destroyOnClose
+        width={480}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          Pick a rule from the list (configured under Rule list tab). IPO scope is optional.
+        </Typography.Paragraph>
+        <Form form={templateApplyForm} layout="vertical" onFinish={onApplyTemplateSubmit}>
+          <Form.Item
+            name="templateId"
+            label="Rule from list"
+            rules={[{ required: true, message: 'Select a rule' }]}
+          >
+            <Select placeholder="Pick a saved rule" options={templateRuleOptions} showSearch optionFilterProp="label" />
+          </Form.Item>
+          <Form.Item name="ipoId" label="Applies to IPO" extra="Leave empty for all IPOs">
+            <IpoScopeSelect options={ipoOptions} placeholder="All IPOs" />
+          </Form.Item>
+          <Form.Item name="ruleName" label="Rule name (optional)">
+            <Input placeholder="Auto from provider name" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={ruleListEdit?.mode === 'edit' ? `Edit rule — ${ruleListEdit?.ruleName || ''}` : 'Add rule to list'}
+        open={ruleListEditOpen}
+        onCancel={() => { setRuleListEditOpen(false); setRuleListEdit(null); }}
+        onOk={() => ruleListForm.submit()}
+        confirmLoading={ruleSaving}
+        destroyOnClose
+        width={480}
+      >
+        <Form form={ruleListForm} layout="vertical" onFinish={onSaveRuleTemplate}>
+          <Form.Item
+            name="ruleName"
+            label="Rule name"
+            rules={[{ required: true, message: 'Enter a rule name' }]}
+            extra="Shown in the rule list and when applying to members (e.g. Sagar standard, Sagar HNI)."
+          >
+            <Input placeholder="Rule name" />
+          </Form.Item>
+          <Form.Item
+            name="fundProviderId"
+            label="Fund provider"
+            rules={[{ required: true, message: 'Select fund provider' }]}
+          >
+            <Select
+              placeholder="Who receives the provider share?"
+              options={providerOptions}
+              disabled={ruleListEdit?.mode === 'edit'}
+            />
+          </Form.Item>
+          <Divider orientation="left" plain>When member has profit</Divider>
+          <SharePercentForm form={ruleListForm} prefix="profit" />
+          <Divider orientation="left" plain>When member has loss</Divider>
+          <SharePercentForm form={ruleListForm} prefix="loss" />
+        </Form>
       </Modal>
 
       <Modal
@@ -711,11 +1366,7 @@ export default function ProfitSharingPage() {
             label="Applies to IPO"
             extra="Leave empty for all IPOs. Pick one IPO to use this rule only for that IPO (overrides default rules for that IPO)."
           >
-            <Select
-              allowClear
-              placeholder="All IPOs (default)"
-              options={ipoOptions}
-            />
+            <IpoScopeSelect options={ipoOptions} />
           </Form.Item>
           <Form.Item name="fundProviderId" label="Fund provider" rules={[{ required: true }]}>
             <Select
