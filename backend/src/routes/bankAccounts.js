@@ -16,10 +16,8 @@ router.get('/', async (req, res, next) => {
   try {
     const conn = await pool.getConnection();
     try {
+      const totalBalance = await syncOwnerWalletTotal(conn, req.tenantId);
       const accounts = await listBankAccounts(conn, req.tenantId, { activeOnly: false });
-      const totalBalance = accounts
-        .filter((a) => a.is_active)
-        .reduce((s, a) => s + a.balance, 0);
       res.json({ accounts, totalBalance });
     } finally {
       conn.release();

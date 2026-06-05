@@ -3,7 +3,7 @@ import {
   Table, Button, Tag, Modal, Form, Input, InputNumber, DatePicker, Space,
   message, Drawer, Switch, Row, Col, Select, Typography,
 } from 'antd';
-import { PlusOutlined, TransactionOutlined, BankOutlined } from '@ant-design/icons';
+import { PlusOutlined, TransactionOutlined, BankOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency, amountToWordsInr } from '../utils/format';
@@ -20,11 +20,15 @@ export default function FundProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [providerModal, setProviderModal] = useState(false);
   const [txnModal, setTxnModal] = useState(false);
+  const [editTxnModal, setEditTxnModal] = useState(false);
+  const [editingTxn, setEditingTxn] = useState(null);
+  const [savingTxnEdit, setSavingTxnEdit] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [form] = Form.useForm();
   const [txnForm] = Form.useForm();
+  const [editTxnForm] = Form.useForm();
   const [bankAccounts, setBankAccounts] = useState([]);
   const [creditMode, setCreditMode] = useState('single');
   const [creditSplits, setCreditSplits] = useState({});
@@ -68,6 +72,41 @@ export default function FundProvidersPage() {
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
+    }
+  };
+
+  const openEditTxn = (txn) => {
+    setEditingTxn(txn);
+    editTxnForm.setFieldsValue({
+      amount: txn.amount,
+      txnDate: dayjs(txn.txn_date),
+      notes: txn.notes,
+      providerProfit: txn.provider_profit,
+    });
+    setEditTxnModal(true);
+  };
+
+  const onSaveTxnEdit = async (values) => {
+    if (!editingTxn || !selected) return;
+    setSavingTxnEdit(true);
+    try {
+      await client.patch(`/fund-providers/${selected.id}/transactions/${editingTxn.id}`, {
+        amount: values.amount,
+        txnDate: values.txnDate?.toISOString(),
+        notes: values.notes,
+        providerProfit: values.providerProfit,
+      });
+      message.success('Transaction updated — wallet balance synced');
+      setEditTxnModal(false);
+      setEditingTxn(null);
+      editTxnForm.resetFields();
+      load();
+      loadAccounts();
+      openLedger(selected);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to update transaction'));
+    } finally {
+      setSavingTxnEdit(false);
     }
   };
 
@@ -187,6 +226,15 @@ export default function FundProvidersPage() {
       dataIndex: 'notes',
       render: (v) => <NoteCell value={v} maxWidth={480} />,
     },
+    {
+      title: '',
+      width: 80,
+      render: (_, r) => (
+        <Button size="small" icon={<EditOutlined />} onClick={() => openEditTxn(r)}>
+          Edit
+        </Button>
+      ),
+    },
   ];
 
   return (
@@ -305,6 +353,31 @@ export default function FundProvidersPage() {
                 )}
               </>
             )}
+          </Form.Item>
+          <Form.Item name="providerProfit" label="Provider Profit">
+            <InputNumber style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="notes" label="Notes">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Edit Transaction"
+        open={editTxnModal}
+        onCancel={() => { setEditTxnModal(false); setEditingTxn(null); }}
+        onOk={() => editTxnForm.submit()}
+        confirmLoading={savingTxnEdit}
+        destroyOnClose
+        width={480}
+      >
+        <Form form={editTxnForm} layout="vertical" onFinish={onSaveTxnEdit}>
+          <Form.Item name="amount" label="Amount" rules={[{ required: true }]}>
+            <InputNumber style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="txnDate" label="Date">
+            <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="providerProfit" label="Provider Profit">
             <InputNumber style={{ width: '100%' }} />

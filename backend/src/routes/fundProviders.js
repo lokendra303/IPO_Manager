@@ -5,7 +5,7 @@ import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 
 import { creditWallet, debitWallet, creditWalletFromAccounts, debitWalletFromAccounts } from '../services/walletService.js';
-import { requireBankAccountId, getBankAccount, assertAccountAllocations } from '../services/bankAccountService.js';
+import { requireBankAccountId, getBankAccount, assertAccountAllocations, syncOwnerWalletTotal } from '../services/bankAccountService.js';
 
 import { parsePositiveInt, parseDate } from '../utils/validate.js';
 
@@ -432,6 +432,120 @@ router.post('/:id/transactions', async (req, res, next) => {
     const [txn] = await pool.query('SELECT * FROM provider_transactions WHERE id = ?', [result.transactionId]);
 
     res.status(201).json({ transaction: txn[0], walletBalance: result.walletBalance });
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
+router.patch('/:id/transactions/:txnId', async (req, res, next) => {
+
+  try {
+
+    const providerId = parsePositiveInt(req.params.id, 'provider id');
+
+    const txnId = parsePositiveInt(req.params.txnId, 'transaction id');
+
+    const { amount, txnDate, notes, providerProfit } = req.body;
+
+
+
+    const result = await withTransaction(async (conn) => {
+
+      const [existing] = await conn.query(
+
+        `SELECT * FROM provider_transactions
+
+         WHERE id = ? AND fund_provider_id = ? AND tenant_id = ?`,
+
+        [txnId, providerId, req.tenantId]
+
+      );
+
+      if (!existing.length) throw new AppError('Transaction not found', 404);
+
+
+
+      const updates = [];
+
+      const values = [];
+
+
+
+      if (amount !== undefined) {
+
+        const amt = Number(amount);
+
+        if (Number.isNaN(amt) || amt === 0) throw new AppError('Amount must be non-zero');
+
+        updates.push('amount = ?');
+
+        values.push(amt);
+
+      }
+
+      if (txnDate !== undefined) {
+
+        updates.push('txn_date = ?');
+
+        values.push(parseDate(txnDate, 'transaction date'));
+
+      }
+
+      if (notes !== undefined) {
+
+        updates.push('notes = ?');
+
+        values.push(notes?.trim() || null);
+
+      }
+
+      if (providerProfit !== undefined) {
+
+        const profitVal = providerProfit === null || providerProfit === '' ? null : Number(providerProfit);
+
+        if (profitVal !== null && Number.isNaN(profitVal)) throw new AppError('Invalid provider profit amount');
+
+        updates.push('provider_profit = ?');
+
+        values.push(profitVal);
+
+      }
+
+
+
+      if (!updates.length) throw new AppError('No fields to update');
+
+
+
+      values.push(txnId, providerId, req.tenantId);
+
+      await conn.query(
+
+        `UPDATE provider_transactions SET ${updates.join(', ')} WHERE id = ? AND fund_provider_id = ? AND tenant_id = ?`,
+
+        values
+
+      );
+
+
+
+      const walletBalance = await syncOwnerWalletTotal(conn, req.tenantId);
+
+      return { walletBalance };
+
+    });
+
+
+
+    const [txn] = await pool.query('SELECT * FROM provider_transactions WHERE id = ?', [txnId]);
+
+    res.json({ transaction: txn[0], walletBalance: result.walletBalance });
 
   } catch (err) {
 

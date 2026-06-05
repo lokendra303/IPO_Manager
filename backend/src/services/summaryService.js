@@ -1,3 +1,5 @@
+import { syncOwnerWalletTotal } from './bankAccountService.js';
+
 export async function getSummary(pool, tenantId) {
   const [members] = await pool.query(
     `SELECT m.id, m.display_name, m.pan, m.email, m.upi, m.status, m.relationship_note,
@@ -25,10 +27,13 @@ export async function getSummary(pool, tenantId) {
     [tenantId]
   );
 
-  const [walletRows] = await pool.query(
-    'SELECT balance FROM owner_wallets WHERE tenant_id = ?',
-    [tenantId]
-  );
+  const conn = await pool.getConnection();
+  let walletBalance = 0;
+  try {
+    walletBalance = await syncOwnerWalletTotal(conn, tenantId);
+  } finally {
+    conn.release();
+  }
 
   const [providerBalance] = await pool.query(
     `SELECT COALESCE(SUM(pt.amount), 0) as net_provider_balance
@@ -95,7 +100,7 @@ export async function getSummary(pool, tenantId) {
   return {
     rows,
     totals,
-    availableFreeAmount: Number(walletRows[0]?.balance ?? 0),
+    availableFreeAmount: walletBalance,
     providerNetBalance: Number(providerBalance[0]?.net_provider_balance ?? 0),
   };
 }
