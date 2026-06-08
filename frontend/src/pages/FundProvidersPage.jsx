@@ -401,7 +401,7 @@ export default function FundProvidersPage() {
         )}
       >
         <Row gutter={16} style={{ marginBottom: 20 }}>
-          <Col span={12}>
+          <Col xs={24} md={12}>
             <StatCard
               title="Ledger Balance"
               value={<AmountWithWords value={selected?.ledgerBalance} />}

@@ -329,7 +329,7 @@ export default function MemberGroupsPage() {
             </div>
 
             <Row gutter={[12, 12]} className="subgroup-view__stats">
-              <Col xs={8}>
+              <Col xs={24} sm={8}>
                 <div className="subgroup-view__stat">
                   <TeamOutlined className="subgroup-view__stat-icon" />
                   <div>
@@ -338,7 +338,7 @@ export default function MemberGroupsPage() {
                   </div>
                 </div>
               </Col>
-              <Col xs={8}>
+              <Col xs={24} sm={8}>
                 <div className="subgroup-view__stat">
                   <BankOutlined className="subgroup-view__stat-icon subgroup-view__stat-icon--gold" />
                   <div>
@@ -347,7 +347,7 @@ export default function MemberGroupsPage() {
                   </div>
                 </div>
               </Col>
-              <Col xs={8}>
+              <Col xs={24} sm={8}>
                 <div className="subgroup-view__stat">
                   <BankOutlined className="subgroup-view__stat-icon subgroup-view__stat-icon--green" />
                   <div>
@@ -390,7 +390,7 @@ export default function MemberGroupsPage() {
                   rowKey="id"
                   size="small"
                   pagination={false}
-                  scroll={{ y: 240 }}
+                  scroll={{ x: 'max-content', y: 240 }}
                   dataSource={viewGroup.members}
                   columns={[
                     {

@@ -930,26 +930,26 @@ export default function ProfitSharingPage() {
                           variant={Number(pnlTotals?.manager?.totalShare) >= 0 ? 'success' : 'danger'}
                         />
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} sm={12}>
                         <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
                           <div style={{ color: '#64748b', fontSize: 12 }}>Gross split (distributed)</div>
                           <div style={{ fontSize: 20, fontWeight: 600 }}>{formatCurrency(overall.grossDistributed)}</div>
                         </div>
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} sm={12}>
                         <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
                           <div style={{ color: '#64748b', fontSize: 12 }}>Pending to split</div>
                           <div style={{ fontSize: 20, fontWeight: 600 }}>{formatCurrency(overall.grossPending)}</div>
                           <div style={{ fontSize: 12, color: '#94a3b8' }}>{overall.pendingCount} application(s)</div>
                         </div>
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} sm={12}>
                         <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 8 }}>
                           <div style={{ color: '#64748b', fontSize: 12 }}>IPO profit (allotted)</div>
                           <div className="amount-positive" style={{ fontSize: 18, fontWeight: 600 }}>{formatCurrency(overall.ipoProfit)}</div>
                         </div>
                       </Col>
-                      <Col span={12}>
+                      <Col xs={24} sm={12}>
                         <div style={{ padding: 16, background: '#fef2f2', borderRadius: 8 }}>
                           <div style={{ color: '#64748b', fontSize: 12 }}>IPO loss (allotted)</div>
                           <div className="amount-negative" style={{ fontSize: 18, fontWeight: 600 }}>{formatCurrency(overall.ipoLoss)}</div>
@@ -1252,9 +1252,10 @@ export default function ProfitSharingPage() {
         </div>
         <Table
           rowKey="id"
-          size="small"
           loading={rulesLoading}
           dataSource={memberRules}
+          {...tableDefaults}
+          size="small"
           pagination={false}
           columns={[
             { title: 'Name', dataIndex: 'ruleName' },

@@ -365,17 +365,17 @@ export default function MembersPage() {
       >
         <Form form={form} layout="vertical" onFinish={onSave}>
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item name="displayName" label="Name" rules={[{ required: true }]}>
                 <Input placeholder="Rahul (ME)" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
                 <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item
                 name="email"
                 label="Email"
@@ -392,7 +392,7 @@ export default function MembersPage() {
                 <Input type="email" placeholder="member@example.com" allowClear />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item
                 name="upi"
                 label="UPI ID"
@@ -410,7 +410,7 @@ export default function MembersPage() {
                 <Input placeholder="name@paytm" allowClear style={{ textTransform: 'lowercase' }} />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item
                 name="status"
                 label="Status"
@@ -429,7 +429,7 @@ export default function MembersPage() {
                 />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item name="memberGroupId" label="Sub-Group">
                 <Select
                   allowClear
@@ -438,12 +438,12 @@ export default function MembersPage() {
                 />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item name="relationshipNote" label="Relationship Note">
                 <Input placeholder="MOTHER, BROTHER, etc." />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item
                 name="sortOrder"
                 label="Sort Order"

@@ -711,7 +711,7 @@ export default function IpoDetailPage() {
       )}
 
       {bankAccounts.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
+        <div className="ipo-receive-account-row" style={{ marginBottom: 16 }}>
           <Typography.Text type="secondary">Member returns credit to: </Typography.Text>
           <Select
             style={{ minWidth: 280, marginLeft: 8 }}
@@ -783,6 +783,8 @@ export default function IpoDetailPage() {
           rowKey="applicationId"
           size="small"
           pagination={false}
+          scroll={{ x: 'max-content' }}
+          className="pro-table"
           dataSource={profitPreview}
           columns={[
             { title: 'Member', dataIndex: 'memberName' },

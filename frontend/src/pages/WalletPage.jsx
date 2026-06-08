@@ -240,8 +240,8 @@ export default function WalletPage() {
           columns={accountCols}
           dataSource={accounts}
           pagination={false}
-          size="middle"
           locale={{ emptyText: 'No bank accounts — add one to distribute IPO funds' }}
+          {...tableDefaults}
         />
       </ContentCard>
 

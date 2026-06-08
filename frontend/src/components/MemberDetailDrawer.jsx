@@ -269,6 +269,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
                     columns={ledgerColumns}
                     dataSource={data.ledgerEntries}
                     pagination={{ pageSize: 10 }}
+                    scroll={{ x: 'max-content' }}
                     className="pro-table"
                     size="middle"
                   />

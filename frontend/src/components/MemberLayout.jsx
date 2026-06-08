@@ -14,10 +14,12 @@ export default function MemberLayout({ children }) {
       <Header className="app-header">
         <div className="app-header-inner">
           <div className="app-header-left">
-            <span className="app-header-team-label">Team</span>
-            <Typography.Title level={5} className="app-header-team">
-              {user?.tenantName || 'My Team'}
-            </Typography.Title>
+            <div className="app-header-team-block">
+              <span className="app-header-team-label">Team</span>
+              <Typography.Title level={5} className="app-header-team">
+                {user?.tenantName || 'My Team'}
+              </Typography.Title>
+            </div>
           </div>
           <div className="app-header-right">
             <div className="app-header-user">
