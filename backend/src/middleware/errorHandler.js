@@ -1,6 +1,19 @@
 export function errorHandler(err, req, res, _next) {
   if (err.code === 'ER_DUP_ENTRY') {
-    return res.status(409).json({ error: 'Duplicate entry — record already exists' });
+    const msg = String(err.sqlMessage || '');
+    let error = 'Duplicate entry — record already exists';
+    if (/users\.email|for key ['']users\.email['']/i.test(msg) || /'email'/i.test(msg)) {
+      error = 'This email is already registered';
+    } else if (/members\.pan|uk_member_pan|for key.*pan/i.test(msg)) {
+      error = 'A member with this PAN already exists in your team';
+    } else if (/uk_ipo_member/i.test(msg)) {
+      error = 'This member already has an application for this IPO';
+    } else if (/system_admins\.email/i.test(msg)) {
+      error = 'This admin email is already in use';
+    } else if (msg) {
+      error = `Duplicate entry: ${msg.replace(/^Duplicate entry /i, '')}`;
+    }
+    return res.status(409).json({ error });
   }
 
   if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE') {

@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS manager_bank_accounts (
   balance DECIMAL(15, 2) NOT NULL DEFAULT 0,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   INDEX idx_bank_accounts_tenant (tenant_id)
 );

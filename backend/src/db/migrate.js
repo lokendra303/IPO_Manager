@@ -65,7 +65,7 @@ async function applyProviderShareRulesV3(conn) {
         profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
         loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
         loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT NULL,
         FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
         INDEX idx_provider_share_tenant (tenant_id)
@@ -790,7 +790,7 @@ async function applyRuleTemplatesV20(conn) {
         loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
         sort_order INT NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT NULL,
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
         FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
         INDEX idx_rule_templates_tenant (tenant_id, sort_order)
@@ -847,7 +847,7 @@ async function applySystemAdminV25(conn) {
     await conn.query(
       `CREATE TABLE system_admins (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(191) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         display_name VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -899,6 +899,76 @@ async function applyTenantDisabledV26(conn) {
   }
 }
 
+async function applyJsonCompatV27(conn) {
+  const jsonColumns = [
+    { table: 'audit_logs', column: 'metadata' },
+    { table: 'fund_providers', column: 'contact_info' },
+    { table: 'ipos', column: 'allowed_categories' },
+  ];
+
+  for (const { table, column } of jsonColumns) {
+    if (!(await tableExists(conn, table)) || !(await columnExists(conn, table, column))) continue;
+    const [col] = await conn.query(
+      `SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+      [table, column]
+    );
+    if (col[0]?.DATA_TYPE?.toLowerCase() === 'json') {
+      await conn.query(`ALTER TABLE \`${table}\` MODIFY \`${column}\` LONGTEXT DEFAULT NULL`);
+      console.log(`Converted ${table}.${column} from JSON to LONGTEXT`);
+    }
+  }
+
+  if (await indexExists(conn, 'audit_logs', 'idx_audit_tenant_time')) {
+    await conn.query('ALTER TABLE audit_logs DROP INDEX idx_audit_tenant_time');
+    await conn.query('CREATE INDEX idx_audit_tenant_time ON audit_logs (tenant_id, created_at)');
+    console.log('Rebuilt idx_audit_tenant_time without DESC');
+  }
+}
+
+async function applyTimestampCompatV28(conn) {
+  const tables = [
+    'members',
+    'manager_bank_accounts',
+    'ipo_applications',
+    'profit_share_rule_templates',
+    'fund_provider_share_rules',
+    'profit_share_defaults',
+    'member_profit_shares',
+  ];
+
+  for (const table of tables) {
+    if (!(await tableExists(conn, table)) || !(await columnExists(conn, table, 'updated_at'))) continue;
+    const [col] = await conn.query(
+      `SELECT DATA_TYPE, COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'updated_at'`,
+      [table]
+    );
+    if (!col.length) continue;
+    const type = col[0].DATA_TYPE?.toLowerCase();
+    const columnType = String(col[0].COLUMN_TYPE || '');
+    if (type === 'timestamp' || columnType.includes('ON UPDATE CURRENT_TIMESTAMP')) {
+      await conn.query(`ALTER TABLE \`${table}\` MODIFY \`updated_at\` DATETIME DEFAULT NULL`);
+      console.log(`Converted ${table}.updated_at to DATETIME for older MySQL compatibility`);
+    }
+  }
+}
+
+async function applyEmailIndexCompatV29(conn) {
+  for (const table of ['users', 'system_admins']) {
+    if (!(await tableExists(conn, table)) || !(await columnExists(conn, table, 'email'))) continue;
+    const [col] = await conn.query(
+      `SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'email'`,
+      [table]
+    );
+    if (Number(col[0]?.CHARACTER_MAXIMUM_LENGTH) > 191) {
+      await conn.query(`ALTER TABLE \`${table}\` MODIFY \`email\` VARCHAR(191) NOT NULL`);
+      console.log(`Shrunk ${table}.email to VARCHAR(191) for index compatibility`);
+    }
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -938,6 +1008,9 @@ async function migrate() {
   await applyFixGroupBulkMemberCountV24(conn);
   await applySystemAdminV25(conn);
   await applyTenantDisabledV26(conn);
+  await applyJsonCompatV27(conn);
+  await applyTimestampCompatV28(conn);
+  await applyEmailIndexCompatV29(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

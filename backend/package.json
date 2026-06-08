@@ -8,6 +8,8 @@
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
     "seed-admin": "node src/db/seed-admin.js",
+    "db:export": "node scripts/db-export.js",
+    "db:import": "node scripts/db-import-server.js",
     "truncate": "node src/db/truncate-all.js"
   },
   "dependencies": {

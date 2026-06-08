@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS profit_share_rule_templates (
   loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   sort_order INT NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
   INDEX idx_rule_templates_tenant (tenant_id, sort_order)
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS fund_provider_share_rules (
   profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
   FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   INDEX idx_provider_share_tenant (tenant_id)
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS profit_share_defaults (
   default_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (default_fund_provider_id) REFERENCES fund_providers(id) ON DELETE SET NULL
 );
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS member_profit_shares (
   loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
   FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
