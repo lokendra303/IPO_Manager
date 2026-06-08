@@ -1,3 +1,8 @@
+export function formatDateTime(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString('en-IN');
+}
+
 export function formatCurrency(value) {
   const n = Number(value ?? 0);
   return new Intl.NumberFormat('en-IN', {

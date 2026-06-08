@@ -1,14 +1,14 @@
 import axios from 'axios';
 import { config } from '../config.js';
 
-const client = axios.create({
+const adminClient = axios.create({
   baseURL: config.apiBaseUrl,
 });
 
-client.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
+adminClient.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem('adminToken');
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  return cfg;
 });
 
 async function retryOnce(err) {
@@ -21,17 +21,17 @@ async function retryOnce(err) {
 
   config.__retryCount = 1;
   await new Promise((resolve) => setTimeout(resolve, 500));
-  return client(config);
+  return adminClient(config);
 }
 
-client.interceptors.response.use(
+adminClient.interceptors.response.use(
   (r) => r,
   async (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login';
+      localStorage.removeItem('adminToken');
+      localStorage.removeItem('adminUser');
+      if (!window.location.pathname.includes('/admin/login')) {
+        window.location.href = '/admin/login';
       }
       return Promise.reject(err);
     }
@@ -39,4 +39,4 @@ client.interceptors.response.use(
   }
 );
 
-export default client;
+export default adminClient;

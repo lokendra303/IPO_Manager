@@ -1,41 +1,8 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
+import { ACTION_LABELS, labelForAction } from '../constants/auditActions.js';
 
 const router = Router();
-
-const ACTION_LABELS = {
-  MEMBER_CREATE: 'Member added',
-  MEMBER_UPDATE: 'Member updated',
-  MEMBER_DELETE: 'Member deleted',
-  GROUP_CREATE: 'Sub-group created',
-  GROUP_UPDATE: 'Sub-group updated',
-  GROUP_MEMBERS: 'Sub-group members',
-  GROUP_DELETE: 'Sub-group removed',
-  IPO_CREATE: 'IPO created',
-  IPO_UPDATE: 'IPO updated',
-  IPO_CLOSE: 'IPO closed',
-  IPO_REOPEN: 'IPO reopened',
-  IPO_DISTRIBUTE: 'IPO distribute',
-  IPO_RECEIVE: 'Fund return',
-  IPO_APPLICATIONS_BULK: 'Applications bulk update',
-  PROVIDER_CREATE: 'Provider added',
-  PROVIDER_UPDATE: 'Provider updated',
-  PROVIDER_TRANSACTION: 'Provider transaction',
-  BANK_ACCOUNT_CREATE: 'Bank account added',
-  BANK_ACCOUNT_UPDATE: 'Bank account updated',
-  BANK_TRANSFER: 'Bank transfer',
-  PROFIT_SHARE_PREVIEW: 'Profit share preview',
-  PROFIT_SHARE_DISTRIBUTE: 'Profit share',
-  PROFIT_SHARE_BULK_RULES: 'Bulk share rules',
-  MEMBER_ISSUE_CREATE: 'Issue raised',
-  MEMBER_ISSUE_UPDATE: 'Issue updated',
-  SETTINGS_TEAM: 'Team settings',
-  SETTINGS_EMAIL: 'Email changed',
-  SETTINGS_PASSWORD: 'Password changed',
-  AUTH_LOGIN: 'Manager login',
-  AUTH_MEMBER_LOGIN: 'Member login',
-  AUTH_REGISTER: 'Team registered',
-};
 
 router.get('/stats', async (req, res, next) => {
   try {
@@ -113,7 +80,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       rows: rows.map((r) => ({
         ...r,
-        actionLabel: ACTION_LABELS[r.action] || r.action,
+        actionLabel: labelForAction(r.action),
         metadata: r.metadata ? (typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata) : null,
       })),
       page,

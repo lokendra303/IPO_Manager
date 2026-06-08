@@ -1,9 +1,17 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import PageLoading from './components/PageLoading';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AdminAuthProvider, useAdminAuth } from './context/AdminAuthContext';
 import AppLayout from './components/AppLayout';
 import MemberLayout from './components/MemberLayout';
+import AdminLayout from './components/AdminLayout';
 import LoginPage from './pages/LoginPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminRegistrationsPage from './pages/AdminRegistrationsPage';
+import AdminTenantDetailPage from './pages/AdminTenantDetailPage';
+import AdminSettingsPage from './pages/AdminSettingsPage';
+import AdminAuditLogPage from './pages/AdminAuditLogPage';
 import DashboardPage from './pages/DashboardPage';
 import MembersPage from './pages/MembersPage';
 import FundProvidersPage from './pages/FundProvidersPage';
@@ -34,9 +42,22 @@ function MemberRoute({ children }) {
   return <MemberLayout>{children}</MemberLayout>;
 }
 
+function AdminRoute({ children }) {
+  const { isAdminAuthenticated, loading } = useAdminAuth();
+  if (loading) return <PageLoading />;
+  if (!isAdminAuthenticated) return <Navigate to="/admin/login" replace />;
+  return <AdminLayout>{children}</AdminLayout>;
+}
+
 function AppRoutes() {
   return (
     <Routes>
+      <Route path="/admin/login" element={<AdminLoginPage />} />
+      <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
+      <Route path="/admin/registrations" element={<AdminRoute><AdminRegistrationsPage /></AdminRoute>} />
+      <Route path="/admin/tenants/:id" element={<AdminRoute><AdminTenantDetailPage /></AdminRoute>} />
+      <Route path="/admin/audit-log" element={<AdminRoute><AdminAuditLogPage /></AdminRoute>} />
+      <Route path="/admin/settings" element={<AdminRoute><AdminSettingsPage /></AdminRoute>} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/portal" element={<MemberRoute><MemberPortalPage /></MemberRoute>} />
       <Route path="/" element={<ManagerRoute><DashboardPage /></ManagerRoute>} />
@@ -59,9 +80,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <AdminAuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </AdminAuthProvider>
     </AuthProvider>
   );
 }

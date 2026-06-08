@@ -28,6 +28,12 @@ export function getAuthErrorModal(err, context = 'manager') {
   }
 
   if (context === 'register') {
+    if (lower.includes('pending approval')) {
+      return {
+        title: 'Registration pending',
+        content: 'This email already has a registration waiting for administrator approval. Use the Manager tab to sign in once approved.',
+      };
+    }
     if (lower.includes('already registered')) {
       return {
         title: 'Email already in use',
@@ -37,6 +43,28 @@ export function getAuthErrorModal(err, context = 'manager') {
     return {
       title: 'Registration failed',
       content: raw || 'Could not create your account. Please try again.',
+    };
+  }
+
+  if (lower.includes('pending administrator approval') || lower.includes('pending approval')) {
+    return {
+      title: 'Account pending approval',
+      content:
+        'Your registration is waiting for system administrator approval. You will receive access once approved.',
+    };
+  }
+
+  if (lower.includes('disabled')) {
+    return {
+      title: 'Account disabled',
+      content: raw || 'Your team account has been disabled by the system administrator.',
+    };
+  }
+
+  if (lower.includes('registration was rejected') || lower.includes('rejected')) {
+    return {
+      title: 'Registration rejected',
+      content: raw || 'Your registration was rejected. Contact the system administrator for details.',
     };
   }
 

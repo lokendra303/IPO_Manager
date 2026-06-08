@@ -1689,3 +1689,44 @@ body {
 .ipo-receive-account-row .ant-select {
   min-width: 280px;
 }
+
+/* System admin */
+.admin-sider {
+  background: #1e1b4b !important;
+}
+
+.admin-logo-icon {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%) !important;
+  font-size: 18px;
+}
+
+.admin-layout .admin-header-label {
+  color: #a78bfa;
+}
+
+.admin-layout .admin-header-user:hover {
+  border-color: #c4b5fd;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+.admin-layout .app-header-avatar.admin-avatar {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%) !important;
+}
+
+.admin-layout .app-sider .ant-menu-item-selected {
+  background: rgba(124, 58, 237, 0.25) !important;
+}
+
+.admin-login-page .admin-login-brand {
+  background: linear-gradient(160deg, #1e1b4b 0%, #312e81 50%, #4c1d95 100%);
+}
+
+.admin-login-btn {
+  background: #7c3aed !important;
+  border-color: #7c3aed !important;
+}
+
+.admin-login-btn:hover {
+  background: #6d28d9 !important;
+  border-color: #6d28d9 !important;
+}

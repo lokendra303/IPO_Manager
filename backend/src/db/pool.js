@@ -11,7 +11,19 @@ export const pool = mysql.createPool({
   database: process.env.DB_NAME || 'ipo_team',
   waitForConnections: true,
   connectionLimit: 10,
+  connectTimeout: 10000,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000,
 });
+
+export async function warmPool() {
+  const conn = await pool.getConnection();
+  try {
+    await conn.ping();
+  } finally {
+    conn.release();
+  }
+}
 
 export async function withTransaction(fn) {
   const conn = await pool.getConnection();

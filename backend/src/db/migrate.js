@@ -842,6 +842,63 @@ async function applyProviderRuleNameV19(conn) {
   );
 }
 
+async function applySystemAdminV25(conn) {
+  if (!(await tableExists(conn, 'system_admins'))) {
+    await conn.query(
+      `CREATE TABLE system_admins (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        display_name VARCHAR(255) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )`
+    );
+    console.log('Created system_admins');
+  }
+
+  if (!(await columnExists(conn, 'tenants', 'status'))) {
+    await conn.query(
+      `ALTER TABLE tenants
+       ADD COLUMN status ENUM('PENDING', 'APPROVED', 'REJECTED') NOT NULL DEFAULT 'APPROVED' AFTER name,
+       ADD COLUMN approved_at TIMESTAMP NULL DEFAULT NULL,
+       ADD COLUMN approved_by INT DEFAULT NULL,
+       ADD COLUMN rejection_reason TEXT DEFAULT NULL`
+    );
+    await conn.query('UPDATE tenants SET status = ? WHERE status IS NULL OR status = ?', ['APPROVED', 'APPROVED']);
+    console.log('Added tenant approval columns');
+  }
+
+  if (!(await indexExists(conn, 'tenants', 'idx_tenants_status'))) {
+    await conn.query('CREATE INDEX idx_tenants_status ON tenants (status)');
+    console.log('Added idx_tenants_status');
+  }
+}
+
+async function applyTenantDisabledV26(conn) {
+  if (await columnExists(conn, 'tenants', 'status')) {
+    const [col] = await conn.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tenants' AND COLUMN_NAME = 'status'`
+    );
+    if (col[0] && !String(col[0].COLUMN_TYPE).includes('DISABLED')) {
+      await conn.query(
+        `ALTER TABLE tenants MODIFY status ENUM('PENDING', 'APPROVED', 'REJECTED', 'DISABLED') NOT NULL DEFAULT 'PENDING'`
+      );
+      console.log('Added DISABLED to tenants.status');
+    }
+  }
+
+  if (!(await columnExists(conn, 'tenants', 'disabled_at'))) {
+    await conn.query(
+      `ALTER TABLE tenants
+       ADD COLUMN disabled_at TIMESTAMP NULL DEFAULT NULL,
+       ADD COLUMN disabled_by INT DEFAULT NULL,
+       ADD COLUMN disable_reason TEXT DEFAULT NULL`
+    );
+    console.log('Added tenant disable columns');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -879,6 +936,8 @@ async function migrate() {
   await applyFixBulkOwnerLedgerV22(conn);
   await applyGroupBulkPaymentsV23(conn);
   await applyFixGroupBulkMemberCountV24(conn);
+  await applySystemAdminV25(conn);
+  await applyTenantDisabledV26(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

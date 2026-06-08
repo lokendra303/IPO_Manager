@@ -6,6 +6,7 @@ import { authMiddleware, tenantScope, requireMember, managerOnly } from './middl
 import { auditMiddleware } from './middleware/audit.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/admin.js';
 import membersRoutes from './routes/members.js';
 import fundProvidersRoutes from './routes/fundProviders.js';
 import walletRoutes from './routes/wallet.js';
@@ -20,6 +21,7 @@ import memberPortalRoutes from './routes/memberPortal.js';
 import memberIssuesRoutes from './routes/memberIssues.js';
 import memberGroupsRoutes from './routes/memberGroups.js';
 import auditLogsRoutes from './routes/auditLogs.js';
+import { warmPool } from './db/pool.js';
 
 dotenv.config();
 
@@ -38,6 +40,7 @@ const authLimiter = rateLimit({
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/admin', authLimiter, adminRoutes);
 
 app.use('/api', authMiddleware, tenantScope);
 app.use('/api', auditMiddleware);
@@ -61,6 +64,14 @@ app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use(errorHandler);
 
-app.listen(PORT, () => {
-  console.log(`IPO Team API running on http://localhost:${PORT}`);
-});
+warmPool()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`IPO Team API running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Failed to connect to database:', err.message);
+    console.error('Start MySQL and run: npm run migrate');
+    process.exit(1);
+  });

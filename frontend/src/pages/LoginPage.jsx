@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, Form, Input, Button, Tabs, Typography, message, Modal } from 'antd';
 import { MailOutlined, LockOutlined, TeamOutlined, IdcardOutlined, CloseCircleOutlined } from '@ant-design/icons';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getAuthErrorModal } from '../utils/errors';
 
@@ -19,6 +19,9 @@ function showAuthErrorModal(err, context) {
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('login');
+  const [managerForm] = Form.useForm();
+  const [registerForm] = Form.useForm();
   const { login, memberLogin, register, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
 
@@ -55,9 +58,12 @@ export default function LoginPage() {
   const onRegister = async (values) => {
     setLoading(true);
     try {
-      await register(values.email?.trim(), values.password, values.tenantName?.trim());
-      message.success('Account created!');
-      navigate('/');
+      const email = values.email?.trim();
+      await register(email, values.password, values.tenantName?.trim());
+      registerForm.resetFields();
+      managerForm.setFieldsValue({ email });
+      setActiveTab('login');
+      message.success('Registration submitted. Sign in once an administrator approves your account.');
     } catch (err) {
       showAuthErrorModal(err, 'register');
     } finally {
@@ -86,7 +92,8 @@ export default function LoginPage() {
           <Typography.Text className="login-card-sub">Sign in as manager or member</Typography.Text>
           <Tabs
             size="large"
-            defaultActiveKey="login"
+            activeKey={activeTab}
+            onChange={setActiveTab}
             items={[
               {
                 key: 'member',
@@ -125,7 +132,7 @@ export default function LoginPage() {
                 key: 'login',
                 label: 'Manager',
                 children: (
-                  <Form layout="vertical" onFinish={onLogin} size="large">
+                  <Form form={managerForm} layout="vertical" onFinish={onLogin} size="large">
                     <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
                       <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
                     </Form.Item>
@@ -142,7 +149,7 @@ export default function LoginPage() {
                 key: 'register',
                 label: 'Register',
                 children: (
-                  <Form layout="vertical" onFinish={onRegister} size="large">
+                  <Form form={registerForm} layout="vertical" onFinish={onRegister} size="large">
                     <Form.Item name="tenantName" label="Team Name" rules={[{ required: true }]}>
                       <Input prefix={<TeamOutlined style={{ color: '#94a3b8' }} />} placeholder="My IPO Team" />
                     </Form.Item>
@@ -152,14 +159,20 @@ export default function LoginPage() {
                     <Form.Item name="password" label="Password" rules={[{ required: true, min: 6 }]}>
                       <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Min. 6 characters" />
                     </Form.Item>
+                    <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                      New teams require administrator approval before you can sign in.
+                    </Typography.Text>
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
-                      Create account
+                      Submit registration
                     </Button>
                   </Form>
                 ),
               },
             ]}
           />
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 20, textAlign: 'center', fontSize: 12 }}>
+            <Link to="/admin/login">System administrator</Link>
+          </Typography.Text>
         </Card>
       </div>
     </div>

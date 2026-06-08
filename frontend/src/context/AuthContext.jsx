@@ -48,9 +48,11 @@ export function AuthProvider({ children }) {
 
   const register = async (email, password, tenantName) => {
     const { data } = await client.post('/auth/register', { email, password, tenantName });
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    setUser(data.user);
+    if (!data.pending) {
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      setUser(data.user);
+    }
     return data;
   };
 

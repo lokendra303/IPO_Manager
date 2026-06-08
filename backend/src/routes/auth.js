@@ -19,12 +19,21 @@ router.post('/register', async (req, res, next) => {
       throw new AppError('Password must be at least 6 characters');
     }
 
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length) throw new AppError('Email already registered', 409);
+    const [existing] = await pool.query(
+      `SELECT u.id, t.status AS tenant_status FROM users u
+       JOIN tenants t ON t.id = u.tenant_id WHERE u.email = ?`,
+      [email]
+    );
+    if (existing.length) {
+      if (existing[0].tenant_status === 'PENDING') {
+        throw new AppError('A registration with this email is already pending approval', 409);
+      }
+      throw new AppError('Email already registered', 409);
+    }
 
     const result = await withTransaction(async (conn) => {
       const [tenantResult] = await conn.query(
-        'INSERT INTO tenants (name) VALUES (?)',
+        `INSERT INTO tenants (name, status) VALUES (?, 'PENDING')`,
         [tenantName.trim()]
       );
       const tenantId = tenantResult.insertId;
@@ -43,27 +52,11 @@ router.post('/register', async (req, res, next) => {
       return { userId: userResult.insertId, tenantId };
     });
 
-    const token = jwt.sign(
-      { userId: result.userId, tenantId: result.tenantId, role: 'owner' },
-      process.env.JWT_SECRET || 'dev-secret',
-      { expiresIn: '7d' }
-    );
-
-    await writeAuditLog({
-      tenantId: result.tenantId,
-      actorType: 'manager',
-      actorId: result.userId,
-      actorLabel: email,
-      action: 'AUTH_REGISTER',
-      entityType: 'tenant',
-      entityId: result.tenantId,
-      summary: `Registered team "${tenantName.trim()}"`,
-      ipAddress: req.ip,
-    });
-
     res.status(201).json({
-      token,
-      user: { id: result.userId, email, tenantId: result.tenantId, tenantName },
+      pending: true,
+      message: 'Registration submitted. You will be able to sign in once a system administrator approves your account.',
+      email,
+      tenantName: tenantName.trim(),
     });
   } catch (err) {
     next(err);
@@ -77,7 +70,8 @@ router.post('/login', async (req, res, next) => {
     if (!password) throw new AppError('Password required');
 
     const [rows] = await pool.query(
-      `SELECT u.id, u.tenant_id, u.password_hash, u.role, t.name as tenant_name
+      `SELECT u.id, u.tenant_id, u.password_hash, u.role, t.name as tenant_name, t.status as tenant_status,
+              t.rejection_reason
        FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.email = ?`,
       [email]
     );
@@ -86,6 +80,17 @@ router.post('/login', async (req, res, next) => {
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) throw new AppError('Invalid credentials', 401);
+
+    if (user.tenant_status === 'PENDING') {
+      throw new AppError('Your account is pending administrator approval. Please try again later.', 403);
+    }
+    if (user.tenant_status === 'REJECTED') {
+      const reason = user.rejection_reason || 'Contact the system administrator for details.';
+      throw new AppError(`Registration was rejected: ${reason}`, 403);
+    }
+    if (user.tenant_status === 'DISABLED') {
+      throw new AppError('Your team account has been disabled by the system administrator.', 403);
+    }
 
     const token = jwt.sign(
       { userId: user.id, tenantId: user.tenant_id, role: user.role },
@@ -123,7 +128,7 @@ router.post('/member-login', async (req, res, next) => {
     const pan = normalizePan(req.body.pan);
 
     const [rows] = await pool.query(
-      `SELECT m.id, m.tenant_id, m.display_name, m.pan, m.status, t.name AS tenant_name
+      `SELECT m.id, m.tenant_id, m.display_name, m.pan, m.status, t.name AS tenant_name, t.status AS tenant_status
        FROM members m
        JOIN tenants t ON t.id = m.tenant_id
        WHERE UPPER(m.pan) = ? AND m.status = 'ACTIVE'`,
@@ -136,6 +141,12 @@ router.post('/member-login', async (req, res, next) => {
     }
 
     const member = rows[0];
+    if (member.tenant_status === 'DISABLED') {
+      throw new AppError('This team has been disabled. Contact your manager.', 403);
+    }
+    if (member.tenant_status !== 'APPROVED') {
+      throw new AppError('This team is not yet active. Contact your manager.', 403);
+    }
     const token = jwt.sign(
       { memberId: member.id, tenantId: member.tenant_id, role: 'member' },
       process.env.JWT_SECRET || 'dev-secret',
@@ -179,7 +190,7 @@ router.get('/me', async (req, res, next) => {
 
     if (payload.role === 'member') {
       const [rows] = await pool.query(
-        `SELECT m.id, m.display_name, m.pan, m.tenant_id, m.status, t.name AS tenant_name
+        `SELECT m.id, m.display_name, m.pan, m.tenant_id, m.status, t.name AS tenant_name, t.status AS tenant_status
          FROM members m
          JOIN tenants t ON t.id = m.tenant_id
          WHERE m.id = ? AND m.tenant_id = ?`,
@@ -188,6 +199,7 @@ router.get('/me', async (req, res, next) => {
       if (!rows.length) throw new AppError('Member not found', 404);
       const m = rows[0];
       if (m.status !== 'ACTIVE') throw new AppError('Member account is inactive', 403);
+      if (m.tenant_status === 'DISABLED') throw new AppError('Team account disabled', 403);
       return res.json({
         id: m.id,
         memberId: m.id,
@@ -200,12 +212,21 @@ router.get('/me', async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name
+      `SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name, t.status as tenant_status
        FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ?`,
       [payload.userId]
     );
     if (!rows.length) throw new AppError('User not found', 404);
     const u = rows[0];
+    if (u.tenant_status === 'PENDING') {
+      throw new AppError('Account pending approval', 403);
+    }
+    if (u.tenant_status === 'REJECTED') {
+      throw new AppError('Account rejected', 403);
+    }
+    if (u.tenant_status === 'DISABLED') {
+      throw new AppError('Account disabled', 403);
+    }
     res.json({
       id: u.id,
       email: u.email,
