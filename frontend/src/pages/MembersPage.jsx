@@ -18,6 +18,7 @@ import {
   Result,
   Row,
   Col,
+  Tooltip,
 } from 'antd';
 import { PlusOutlined, EditOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -179,33 +180,29 @@ export default function MembersPage() {
     {
       title: 'Active',
       key: 'active',
-      width: 90,
+      width: 72,
+      align: 'center',
       render: (_, r) => (
-        <Popconfirm
-          title={r.status === 'ACTIVE' ? 'Set member inactive?' : 'Activate this member?'}
-          description={
-            r.status === 'ACTIVE'
-              ? 'Inactive members are hidden from IPO distribute and cannot log in. History is kept.'
-              : 'Member can receive IPOs and log in with PAN again.'
-          }
-          onConfirm={() => setMemberStatus(r, r.status !== 'ACTIVE')}
-          okText={r.status === 'ACTIVE' ? 'Set inactive' : 'Activate'}
-          disabled={togglingId === r.id}
-        >
-          <Switch
-            checked={r.status === 'ACTIVE'}
-            loading={togglingId === r.id}
-            onClick={(_, e) => e.stopPropagation()}
-          />
-        </Popconfirm>
-      ),
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 100,
-      render: (s) => (
-        <Tag color={s === 'ACTIVE' ? 'green' : 'default'}>{s === 'ACTIVE' ? 'Active' : 'Inactive'}</Tag>
+        <Tooltip title={r.status === 'ACTIVE' ? 'Active — click to deactivate' : 'Inactive — click to activate'}>
+          <Popconfirm
+            title={r.status === 'ACTIVE' ? 'Set member inactive?' : 'Activate this member?'}
+            description={
+              r.status === 'ACTIVE'
+                ? 'Inactive members are hidden from IPO distribute and cannot log in. History is kept.'
+                : 'Member can receive IPOs and log in with PAN again.'
+            }
+            onConfirm={() => setMemberStatus(r, r.status !== 'ACTIVE')}
+            okText={r.status === 'ACTIVE' ? 'Set inactive' : 'Activate'}
+            disabled={togglingId === r.id}
+          >
+            <Switch
+              checked={r.status === 'ACTIVE'}
+              loading={togglingId === r.id}
+              size="small"
+              onClick={(_, e) => e.stopPropagation()}
+            />
+          </Popconfirm>
+        </Tooltip>
       ),
     },
     { title: 'PAN', dataIndex: 'pan' },
