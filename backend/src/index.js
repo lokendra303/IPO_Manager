@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware, tenantScope, requireMember, managerOnly } from './middleware/auth.js';
 import { auditMiddleware } from './middleware/audit.js';
@@ -60,11 +63,23 @@ app.use('/api/member-issues', memberIssuesRoutes);
 app.use('/api/member-groups', memberGroupsRoutes);
 app.use('/api/audit-logs', auditLogsRoutes);
 
-app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
-
-app.use(errorHandler);
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 const isVercel = process.env.VERCEL === '1';
+
+if (isVercel) {
+  const distPath = path.resolve(fileURLToPath(new URL('../../frontend/dist', import.meta.url)));
+  const indexHtml = path.join(distPath, 'index.html');
+
+  if (fs.existsSync(indexHtml)) {
+    app.use(express.static(distPath));
+    app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(indexHtml);
+    });
+  }
+}
+
+app.use(errorHandler);
 
 if (isVercel) {
   warmPool().catch((err) => {
