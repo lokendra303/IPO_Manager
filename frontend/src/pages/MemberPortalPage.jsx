@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Col,
+  Descriptions,
   Form,
   Input,
   Row,
@@ -15,7 +16,7 @@ import {
 } from 'antd';
 import {
   StockOutlined,
-  ClockCircleOutlined,
+  HourglassOutlined,
   RiseOutlined,
   CheckCircleOutlined,
   LinkOutlined,
@@ -26,6 +27,7 @@ import {
   CloseCircleOutlined,
   TeamOutlined,
   CrownOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import {
@@ -295,8 +297,14 @@ export default function MemberPortalPage() {
     },
   ];
 
+  const copyField = async (value, label) => {
+    if (!value) return;
+    const ok = await copyToClipboard(value);
+    message[ok ? 'success' : 'error'](ok ? `${label} copied` : 'Could not copy');
+  };
+
   return (
-    <div>
+    <div className="member-portal-page">
       <PageHeader
         title={`Hello, ${dashboard?.member?.displayName || 'Member'}`}
         subtitle="Your fund flow, IPO applications, and profit summary"
@@ -306,166 +314,143 @@ export default function MemberPortalPage() {
         <Alert
           type="warning"
           showIcon
-          style={{ marginBottom: 24 }}
+          className="member-portal-alert"
           message={`${formatCurrency(pendingReturn)} pending to return to your manager`}
           description="This is the difference between fund received from your team and what you have returned so far."
         />
       )}
 
-      {(dashboard?.member?.email || dashboard?.member?.upi || dashboard?.member?.pan || subGroup) && (
-        <ContentCard title="Your profile" style={{ marginBottom: 24 }}>
-          <Space direction="vertical" size={8}>
-            {subGroup && (
-              <Space wrap>
-                <span>
-                  Sub-group: <Tag color="blue">{subGroup.name}</Tag>
-                </span>
-                {isGroupLeader ? (
-                  <Tag color="gold" icon={<CrownOutlined />}>Sub-group leader</Tag>
-                ) : subGroup.leaderDisplayName ? (
-                  <span>
-                    Leader: <Typography.Text strong>{subGroup.leaderDisplayName}</Typography.Text>
-                    {subGroup.leaderPan ? (
-                      <> (<Typography.Text code>{subGroup.leaderPan}</Typography.Text>)</>
-                    ) : null}
-                  </span>
-                ) : (
-                  <Typography.Text type="secondary">No leader assigned yet</Typography.Text>
-                )}
+      <ContentCard title="Your profile" style={{ marginBottom: 24 }}>
+        <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} className="member-portal-profile">
+          <Descriptions.Item label="PAN">
+            {memberPan ? (
+              <Space size={4}>
+                <Typography.Text code>{memberPan}</Typography.Text>
+                <Button type="text" size="small" icon={<CopyOutlined />} onClick={copyMyPan} aria-label="Copy PAN" />
               </Space>
+            ) : '—'}
+          </Descriptions.Item>
+          <Descriptions.Item label="Sub-group">
+            {subGroup ? <Tag color="blue">{subGroup.name}</Tag> : <Typography.Text type="secondary">Not assigned</Typography.Text>}
+          </Descriptions.Item>
+          <Descriptions.Item label="Role">
+            {isGroupLeader ? (
+              <Tag color="gold" icon={<CrownOutlined />}>Sub-group leader</Tag>
+            ) : subGroup?.leaderDisplayName ? (
+              <Typography.Text type="secondary">Member</Typography.Text>
+            ) : (
+              '—'
             )}
-            {dashboard.member.pan && (
-              <Space>
-                <span>PAN: <Typography.Text code>{dashboard.member.pan}</Typography.Text></span>
+          </Descriptions.Item>
+          {subGroup && !isGroupLeader && (
+            <Descriptions.Item label="Group leader" span={{ xs: 1, sm: 2, lg: 3 }}>
+              {subGroup.leaderDisplayName ? (
+                <Space size={4} wrap>
+                  <Typography.Text strong>{subGroup.leaderDisplayName}</Typography.Text>
+                  {subGroup.leaderPan && <Typography.Text code>{subGroup.leaderPan}</Typography.Text>}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">No leader assigned yet</Typography.Text>
+              )}
+            </Descriptions.Item>
+          )}
+          <Descriptions.Item label="Email">
+            {dashboard?.member?.email ? (
+              <Space size={4}>
+                <a href={`mailto:${dashboard.member.email}`}>{dashboard.member.email}</a>
                 <Button
                   type="text"
                   size="small"
                   icon={<CopyOutlined />}
-                  onClick={copyMyPan}
-                  aria-label="Copy PAN"
-                />
-              </Space>
-            )}
-            {dashboard.member.email && (
-              <Space>
-                <span>
-                  Email: <a href={`mailto:${dashboard.member.email}`}>{dashboard.member.email}</a>
-                </span>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={async () => {
-                    const ok = await copyToClipboard(dashboard.member.email);
-                    message[ok ? 'success' : 'error'](ok ? 'Email copied' : 'Could not copy');
-                  }}
+                  onClick={() => copyField(dashboard.member.email, 'Email')}
                   aria-label="Copy email"
                 />
               </Space>
-            )}
-            {dashboard.member.upi && (
-              <Space>
-                <span>UPI: <Typography.Text code>{dashboard.member.upi}</Typography.Text></span>
+            ) : '—'}
+          </Descriptions.Item>
+          <Descriptions.Item label="UPI">
+            {dashboard?.member?.upi ? (
+              <Space size={4}>
+                <Typography.Text code>{dashboard.member.upi}</Typography.Text>
                 <Button
                   type="text"
                   size="small"
                   icon={<CopyOutlined />}
-                  onClick={async () => {
-                    const ok = await copyToClipboard(dashboard.member.upi);
-                    message[ok ? 'success' : 'error'](ok ? 'UPI copied' : 'Could not copy');
-                  }}
+                  onClick={() => copyField(dashboard.member.upi, 'UPI')}
                   aria-label="Copy UPI"
                 />
               </Space>
-            )}
-          </Space>
-        </ContentCard>
-      )}
-
-      <ContentCard title="Fund summary" style={{ marginBottom: 24 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Fund received"
-              value={formatCurrency(stats.totalGiven ?? 0)}
-              icon={<ArrowDownOutlined />}
-              variant="warning"
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Fund returned"
-              value={formatCurrency(stats.totalReceived ?? 0)}
-              icon={<ArrowUpOutlined />}
-              variant="success"
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Pending to return"
-              value={formatCurrency(pendingReturn)}
-              icon={<ClockCircleOutlined />}
-              variant={pendingReturn !== 0 ? 'danger' : 'primary'}
-              valueClassName={pendingReturn !== 0 ? 'stat-card-value--loss' : ''}
-            />
-          </Col>
-        </Row>
+            ) : '—'}
+          </Descriptions.Item>
+        </Descriptions>
       </ContentCard>
 
-      <ContentCard title="IPO summary" style={{ marginBottom: 24 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="IPOs Applied"
-              value={stats.iposApplied ?? 0}
-              icon={<StockOutlined />}
-              variant="primary"
-            />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="Pending Allotment"
-              value={stats.iposPending ?? 0}
-              icon={<ClockCircleOutlined />}
-              variant="warning"
-            />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="Allotted"
-              value={stats.iposAlloted ?? 0}
-              icon={<CheckCircleOutlined />}
-              variant="info"
-            />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="Not Allotted"
-              value={stats.iposNotAlloted ?? 0}
-              icon={<CloseCircleOutlined />}
-              variant="danger"
-            />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="Total P&L"
-              value={formatCurrency(profit)}
-              icon={<RiseOutlined />}
-              variant={profit >= 0 ? 'success' : 'danger'}
-              valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-            />
-          </Col>
+      <ContentCard title="Overview" style={{ marginBottom: 24 }}>
+        <Typography.Text type="secondary" className="member-portal-section-label">Fund</Typography.Text>
+        <div className="member-portal-stat-grid member-portal-stat-grid--3">
+          <StatCard
+            title="Fund received"
+            value={formatCurrency(stats.totalGiven ?? 0)}
+            icon={<ArrowDownOutlined />}
+            variant="warning"
+          />
+          <StatCard
+            title="Fund returned"
+            value={formatCurrency(stats.totalReceived ?? 0)}
+            icon={<ArrowUpOutlined />}
+            variant="success"
+          />
+          <StatCard
+            title="Pending to return"
+            value={formatCurrency(pendingReturn)}
+            icon={<RollbackOutlined />}
+            variant={pendingReturn !== 0 ? 'danger' : 'primary'}
+            valueClassName={pendingReturn !== 0 ? 'stat-card-value--loss' : ''}
+          />
+        </div>
+
+        <Typography.Text type="secondary" className="member-portal-section-label">IPO</Typography.Text>
+        <div className="member-portal-stat-grid member-portal-stat-grid--ipo ipo-summary-stats">
+          <StatCard
+            title="Applied"
+            value={stats.iposApplied ?? 0}
+            icon={<StockOutlined />}
+            variant="primary"
+          />
+          <StatCard
+            title="Pending allotment"
+            value={stats.iposPending ?? 0}
+            icon={<HourglassOutlined />}
+            variant="warning"
+          />
+          <StatCard
+            title="Allotted"
+            value={stats.iposAlloted ?? 0}
+            icon={<CheckCircleOutlined />}
+            variant="info"
+          />
+          <StatCard
+            title="Not allotted"
+            value={stats.iposNotAlloted ?? 0}
+            icon={<CloseCircleOutlined />}
+            variant="danger"
+          />
+          <StatCard
+            title="Total P&L"
+            value={formatCurrency(profit)}
+            icon={<RiseOutlined />}
+            variant={profit >= 0 ? 'success' : 'danger'}
+            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+          />
           {(stats.bonus ?? 0) > 0 && (
-            <Col xs={12} sm={8} lg={4}>
-              <StatCard
-                title="Bonus"
-                value={formatCurrency(stats.bonus)}
-                icon={<FundOutlined />}
-                variant="success"
-              />
-            </Col>
+            <StatCard
+              title="Bonus"
+              value={formatCurrency(stats.bonus)}
+              icon={<FundOutlined />}
+              variant="success"
+            />
           )}
-        </Row>
+        </div>
       </ContentCard>
 
       {isGroupLeader && (

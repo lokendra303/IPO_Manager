@@ -123,7 +123,7 @@ export async function listGroupBulkTransactions(pool, tenantId, groupId = null) 
             (
               SELECT COUNT(*)
               FROM ipo_applications a
-              JOIN members m ON m.id = a.member_id AND m.tenant_id = bp.tenant_id
+              JOIN members m ON m.id = a.member_id
               WHERE a.ipo_id = bp.ipo_id
                 AND a.paid_to_member_id = bp.owner_member_id
                 AND m.member_group_id = bp.member_group_id
@@ -131,7 +131,7 @@ export async function listGroupBulkTransactions(pool, tenantId, groupId = null) 
             (
               SELECT COALESCE(SUM(a.amount), 0)
               FROM ipo_applications a
-              JOIN members m ON m.id = a.member_id AND m.tenant_id = bp.tenant_id
+              JOIN members m ON m.id = a.member_id
               WHERE a.ipo_id = bp.ipo_id
                 AND a.paid_to_member_id = bp.owner_member_id
                 AND m.member_group_id = bp.member_group_id

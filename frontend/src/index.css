@@ -1757,3 +1757,81 @@ body {
   background: #6d28d9 !important;
   border-color: #6d28d9 !important;
 }
+
+/* Member portal */
+.member-portal-page .member-portal-alert {
+  margin-bottom: 24px;
+}
+
+.member-portal-profile .ant-descriptions-item-label {
+  width: 110px;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.member-portal-section-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 12px;
+}
+
+.member-portal-section-label + .member-portal-stat-grid {
+  margin-bottom: 24px;
+}
+
+.member-portal-stat-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.member-portal-stat-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.member-portal-stat-grid--ipo {
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+}
+
+.member-portal-stat-grid .stat-card {
+  min-width: 0;
+}
+
+.member-portal-stat-grid .stat-card-value {
+  font-size: clamp(15px, 1.6vw, 20px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.member-portal-stat-grid .stat-card .ant-card-body {
+  padding: 16px !important;
+  gap: 12px;
+  align-items: center;
+}
+
+.member-portal-stat-grid .stat-card-icon {
+  width: 42px;
+  height: 42px;
+  font-size: 18px;
+}
+
+@media (max-width: 768px) {
+  .member-portal-stat-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .member-portal-stat-grid--ipo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .member-portal-stat-grid--3,
+  .member-portal-stat-grid--ipo {
+    grid-template-columns: 1fr;
+  }
+}
