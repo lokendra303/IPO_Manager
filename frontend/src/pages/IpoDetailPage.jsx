@@ -21,6 +21,7 @@ import {
 } from '../utils/ipoCategories';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
+import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
 
@@ -58,20 +59,23 @@ export default function IpoDetailPage() {
   const [returnFilter, setReturnFilter] = useState('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
   const [receivingBulk, setReceivingBulk] = useState(false);
+  const [ipoSummary, setIpoSummary] = useState(null);
 
   const load = async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [ipoRes, appsRes, membersRes, walletRes, groupsRes] = await Promise.all([
+      const [ipoRes, appsRes, membersRes, walletRes, groupsRes, summaryRes] = await Promise.all([
         client.get(`/ipos/${id}`),
         client.get(`/ipos/${id}/applications`),
         client.get('/members'),
         client.get('/wallet'),
         client.get('/member-groups'),
+        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
       ]);
       setIpo(ipoRes.data);
       setApplications(appsRes.data);
+      setIpoSummary(summaryRes.data);
       const activeMembers = membersRes.data.filter((m) => m.status === 'ACTIVE');
       const uniqueActive = [...new Map(activeMembers.map((m) => [m.id, m])).values()];
       setMembers(uniqueActive);
@@ -102,14 +106,21 @@ export default function IpoDetailPage() {
   const getAllotmentStatus = (app) =>
     editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
   const isNotApplied = (app) => getAllotmentStatus(app) === 'NOT_APPLIED';
+  const isAllotted = (app) => getAllotmentStatus(app) === 'ALLOTED';
   const returnedCount = applications.filter(isFundReturned).length;
   const pendingReturnCount = applications.length - returnedCount;
   const notAppliedCount = applications.filter(isNotApplied).length;
+  const allottedCount = applications.filter(isAllotted).length;
+  const allotmentSortOrder = (app) => {
+    const rank = { ALLOTED: 0, PENDING: 1, NOT_ALLOTED: 2, NOT_APPLIED: 3 };
+    return rank[getAllotmentStatus(app)] ?? 9;
+  };
   const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app));
   const filteredApplications = applications.filter((app) => {
     if (returnFilter === 'returned') return isFundReturned(app);
     if (returnFilter === 'pending') return !isFundReturned(app);
     if (returnFilter === 'not_applied') return isNotApplied(app);
+    if (returnFilter === 'allotted') return isAllotted(app);
     return true;
   });
   const receivableSelectedIds = selectedReceiveIds.filter((appId) => {
@@ -588,6 +599,8 @@ export default function IpoDetailPage() {
       title: 'Allotment',
       dataIndex: 'allotment_status',
       width: 132,
+      sorter: (a, b) => allotmentSortOrder(a) - allotmentSortOrder(b),
+      sortDirections: ['ascend', 'descend'],
       render: (v, r) => (
         <Select
           size="small"
@@ -791,6 +804,10 @@ export default function IpoDetailPage() {
         }
       />
 
+      <div style={{ marginBottom: 16 }}>
+        <IpoSummaryStats summary={ipoSummary} loading={loading} />
+      </div>
+
       {!isClosed && !ipoAllowsHni(ipo) && (
         <Alert
           type="info"
@@ -888,6 +905,7 @@ export default function IpoDetailPage() {
                 { label: `Returned (${returnedCount})`, value: 'returned' },
                 { label: `Pending (${pendingReturnCount})`, value: 'pending' },
                 { label: `Did not apply (${notAppliedCount})`, value: 'not_applied' },
+                { label: `Alloted (${allottedCount})`, value: 'allotted' },
               ]}
             />
             {returnedCount > 0 && (
@@ -903,6 +921,7 @@ export default function IpoDetailPage() {
           </Space>
         )}
         <Table
+          key={returnFilter}
           rowKey="id"
           loading={loading}
           className="pro-table ipo-applications-table"
@@ -917,7 +936,12 @@ export default function IpoDetailPage() {
               title: isFundReturned(record) ? 'Already returned' : undefined,
             }),
           }}
-          pagination={false}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            showTotal: (total) => `${total} member${total !== 1 ? 's' : ''}`,
+          }}
           scroll={{ x: 'max-content' }}
           locale={{
             emptyText: returnFilter === 'all'
@@ -926,7 +950,9 @@ export default function IpoDetailPage() {
                 ? 'No members have returned funds yet'
                 : returnFilter === 'not_applied'
                   ? 'No members marked as did not apply'
-                  : 'All members have returned funds',
+                  : returnFilter === 'allotted'
+                    ? 'No members marked as alloted yet'
+                    : 'All members have returned funds',
           }}
         />
       </ContentCard>
