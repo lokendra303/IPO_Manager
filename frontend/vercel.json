@@ -4,7 +4,7 @@
   "buildCommand": "node scripts/vercel-build.mjs",
   "outputDirectory": "dist",
   "functions": {
-    "../api/index.js": {
+    "api/index.js": {
       "includeFiles": "dist/**"
     }
   },
