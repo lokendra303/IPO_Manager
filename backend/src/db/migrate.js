@@ -969,6 +969,24 @@ async function applyEmailIndexCompatV29(conn) {
   }
 }
 
+async function applyNotAppliedV30(conn) {
+  if (!(await tableExists(conn, 'ipo_applications')) || !(await columnExists(conn, 'ipo_applications', 'allotment_status'))) {
+    return;
+  }
+  const [col] = await conn.query(
+    `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipo_applications' AND COLUMN_NAME = 'allotment_status'`
+  );
+  const columnType = String(col[0]?.COLUMN_TYPE || '');
+  if (!columnType.includes('NOT_APPLIED')) {
+    await conn.query(
+      `ALTER TABLE ipo_applications
+       MODIFY allotment_status ENUM('PENDING', 'ALLOTED', 'NOT_ALLOTED', 'NOT_APPLIED') NOT NULL DEFAULT 'PENDING'`
+    );
+    console.log('Added NOT_APPLIED to ipo_applications.allotment_status');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -1011,6 +1029,7 @@ async function migrate() {
   await applyJsonCompatV27(conn);
   await applyTimestampCompatV28(conn);
   await applyEmailIndexCompatV29(conn);
+  await applyNotAppliedV30(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

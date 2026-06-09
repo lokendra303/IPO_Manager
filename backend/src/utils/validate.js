@@ -40,7 +40,7 @@ export function normalizeEmail(email) {
   return e;
 }
 
-export const ALLOTMENT_STATUSES = ['PENDING', 'ALLOTED', 'NOT_ALLOTED'];
+export const ALLOTMENT_STATUSES = ['PENDING', 'ALLOTED', 'NOT_ALLOTED', 'NOT_APPLIED'];
 
 export function validateAllotmentStatus(status) {
   if (status && !ALLOTMENT_STATUSES.includes(status)) {

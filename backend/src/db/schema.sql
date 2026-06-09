@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   trns_received VARCHAR(20) DEFAULT NULL,
   date_given DATETIME DEFAULT NULL,
   trns_given VARCHAR(20) DEFAULT NULL,
-  allotment_status ENUM('PENDING', 'ALLOTED', 'NOT_ALLOTED') NOT NULL DEFAULT 'PENDING',
+  allotment_status ENUM('PENDING', 'ALLOTED', 'NOT_ALLOTED', 'NOT_APPLIED') NOT NULL DEFAULT 'PENDING',
   investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII',
   paid_to_member_id INT DEFAULT NULL,
   profit_loss DECIMAL(15, 2) DEFAULT NULL,

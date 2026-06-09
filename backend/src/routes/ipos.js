@@ -6,7 +6,8 @@ import { AppError } from '../middleware/errorHandler.js';
 
 import { distributeIpo } from '../services/distributeService.js';
 
-import { creditWallet } from '../services/walletService.js';
+import { receiveIpoApplication, receiveIpoApplicationsBulk } from '../services/receiveApplicationService.js';
+import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { VALID_REGISTRARS } from '../utils/allotmentCheck.js';
@@ -327,6 +328,7 @@ router.get('/:id/applications', async (req, res, next) => {
     const [rows] = await pool.query(
 
       `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
+              mg.name AS member_group_name,
               pay.display_name AS paid_to_display_name,
               psd.id AS profit_share_distribution_id,
               psd.provider_amount AS share_provider_amount,
@@ -339,13 +341,15 @@ router.get('/:id/applications', async (req, res, next) => {
 
        JOIN members m ON m.id = a.member_id
 
+       LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+
        LEFT JOIN members pay ON pay.id = a.paid_to_member_id
 
        LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
 
        WHERE a.ipo_id = ? AND a.tenant_id = ?
 
-       ORDER BY m.sort_order, m.id`,
+       ORDER BY mg.sort_order, mg.name, m.sort_order, m.id`,
 
       [ipoId, req.tenantId]
 
@@ -424,6 +428,60 @@ router.post('/:id/distribute', async (req, res, next) => {
 
 
 
+router.post('/applications/receive-bulk', async (req, res, next) => {
+
+  try {
+
+    const applicationIds = dedupeIds(req.body.applicationIds || []);
+
+    if (!applicationIds.length) {
+
+      throw new AppError('Select at least one application to receive');
+
+    }
+
+    const returnToWallet = req.body.returnToWallet !== false;
+
+    const { bankAccountId } = req.body;
+
+    const notes = req.body.notes?.trim() || null;
+
+
+
+    const result = await withTransaction(async (conn) =>
+
+      receiveIpoApplicationsBulk(conn, {
+
+        tenantId: req.tenantId,
+
+        applicationIds,
+
+        returnToWallet,
+
+        bankAccountId,
+
+        notes,
+
+        userId: req.user.userId,
+
+      })
+
+    );
+
+
+
+    res.json(result);
+
+  } catch (err) {
+
+    next(err);
+
+  }
+
+});
+
+
+
 router.post('/applications/:appId/receive', async (req, res, next) => {
 
   try {
@@ -440,133 +498,23 @@ router.post('/applications/:appId/receive', async (req, res, next) => {
 
     await withTransaction(async (conn) => {
 
-      const [apps] = await conn.query(
+      await receiveIpoApplication(conn, {
 
-        `SELECT a.*, i.name as ipo_name FROM ipo_applications a
+        tenantId: req.tenantId,
 
-         JOIN ipos i ON i.id = a.ipo_id
+        appId,
 
-         WHERE a.id = ? AND a.tenant_id = ?`,
+        returnToWallet,
 
-        [appId, req.tenantId]
+        bankAccountId,
 
-      );
+        amount: req.body.amount,
 
-      if (!apps.length) throw new AppError('Application not found', 404);
+        notes,
 
-      const app = apps[0];
+        userId: req.user.userId,
 
-
-
-      const recvAmount =
-
-        req.body.amount !== undefined
-
-          ? parseAmount(req.body.amount, { fieldName: 'receive amount' })
-
-          : parseAmount(app.amount, { fieldName: 'application amount' });
-
-
-
-      const now = new Date();
-
-
-
-      const [existingLedger] = await conn.query(
-
-        `SELECT id FROM member_ledger_entries WHERE ipo_application_id = ? AND type = 'RECEIVED'`,
-
-        [appId]
-
-      );
-
-
-
-      const [existingWalletReturn] = await conn.query(
-
-        `SELECT id FROM wallet_transactions
-
-         WHERE tenant_id = ? AND type = 'RETURN_IN' AND ref_type = 'ipo_application' AND ref_id = ?`,
-
-        [req.tenantId, appId]
-
-      );
-
-
-
-      if (existingLedger.length && existingWalletReturn.length) {
-
-        throw new AppError('This application is already fully settled');
-
-      }
-
-
-
-      if (!existingLedger.length) {
-
-        await conn.query(
-
-          `UPDATE ipo_applications SET date_received = COALESCE(date_received, ?), trns_received = 'Received' WHERE id = ?`,
-
-          [now, appId]
-
-        );
-
-        await conn.query(
-
-          `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
-
-           VALUES (?, ?, 'RECEIVED', ?, ?, ?, ?)`,
-
-          [app.member_id, req.tenantId, recvAmount, now, appId, notes || `Return: ${app.ipo_name}`]
-
-        );
-
-      } else if (app.trns_received !== 'Received') {
-
-        await conn.query(
-
-          `UPDATE ipo_applications SET date_received = ?, trns_received = 'Received' WHERE id = ?`,
-
-          [now, appId]
-
-        );
-
-      }
-
-
-
-      if (returnToWallet) {
-
-        if (existingWalletReturn.length) {
-
-          throw new AppError('Funds were already returned to wallet for this application');
-
-        }
-
-        await creditWallet(conn, {
-
-          tenantId: req.tenantId,
-
-          amount: recvAmount,
-
-          bankAccountId,
-
-          type: 'RETURN_IN',
-
-          refType: 'ipo_application',
-
-          refId: appId,
-
-          txnDate: now,
-
-          notes: notes || `Return from ${app.ipo_name}`,
-
-          userId: req.user.userId,
-
-        });
-
-      }
+      });
 
     });
 

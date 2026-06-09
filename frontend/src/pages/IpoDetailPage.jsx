@@ -4,7 +4,7 @@ import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert, Form,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
 import { formatCurrency, pnlClassName } from '../utils/format';
@@ -55,6 +55,9 @@ export default function IpoDetailPage() {
   const [hniModalOpen, setHniModalOpen] = useState(false);
   const [hniSaving, setHniSaving] = useState(false);
   const [hniForm] = Form.useForm();
+  const [returnFilter, setReturnFilter] = useState('all');
+  const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
+  const [receivingBulk, setReceivingBulk] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -84,13 +87,35 @@ export default function IpoDetailPage() {
     }
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    setEditedRows({});
+    load();
+  }, [id]);
 
   const activeMemberIds = new Set(applications.map((a) => a.member_id));
   const availableMembers = members.filter((m) => !activeMemberIds.has(m.id));
   const isMemberAvailable = (memberId) => availableMembers.some((m) => m.id === memberId);
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const isClosed = ipo?.status === 'CLOSED';
+
+  const isFundReturned = (app) => app.trns_received === 'Received';
+  const getAllotmentStatus = (app) =>
+    editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
+  const isNotApplied = (app) => getAllotmentStatus(app) === 'NOT_APPLIED';
+  const returnedCount = applications.filter(isFundReturned).length;
+  const pendingReturnCount = applications.length - returnedCount;
+  const notAppliedCount = applications.filter(isNotApplied).length;
+  const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app));
+  const filteredApplications = applications.filter((app) => {
+    if (returnFilter === 'returned') return isFundReturned(app);
+    if (returnFilter === 'pending') return !isFundReturned(app);
+    if (returnFilter === 'not_applied') return isNotApplied(app);
+    return true;
+  });
+  const receivableSelectedIds = selectedReceiveIds.filter((appId) => {
+    const app = applications.find((a) => a.id === appId);
+    return app && !isFundReturned(app);
+  });
 
   const groupAvailableIds = (group) =>
     group.members.filter((m) => isMemberAvailable(m.id)).map((m) => m.id);
@@ -336,6 +361,14 @@ export default function IpoDetailPage() {
     }
   };
 
+  const unsavedRowCount = Object.keys(editedRows).length;
+
+  const onUndoChanges = () => {
+    if (!unsavedRowCount) return;
+    setEditedRows({});
+    message.info('Unsaved changes discarded — restored to last saved state');
+  };
+
   const onSaveBulk = async () => {
     const updates = Object.entries(editedRows).map(([appId, vals]) => {
       const update = { id: Number(appId) };
@@ -409,9 +442,43 @@ export default function IpoDetailPage() {
         bankAccountId: receiveAccountId,
       });
       message.success('Marked as received — funds returned to wallet');
+      setSelectedReceiveIds((prev) => prev.filter((id) => id !== appId));
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
+    }
+  };
+
+  const onReceiveBulk = async () => {
+    if (!receivableSelectedIds.length) {
+      message.warning('Select members whose funds you have received back');
+      return;
+    }
+    if (missingReceiveAccount) {
+      message.warning('Select which bank account should receive the returned funds');
+      return;
+    }
+    setReceivingBulk(true);
+    try {
+      const { data } = await client.post('/ipos/applications/receive-bulk', {
+        applicationIds: receivableSelectedIds,
+        returnToWallet: true,
+        bankAccountId: receiveAccountId,
+      });
+      const ok = data.receivedCount || 0;
+      const fail = data.failed?.length || 0;
+      if (ok) {
+        message.success(`Received funds for ${ok} member${ok !== 1 ? 's' : ''} — credited to wallet`);
+      }
+      if (fail) {
+        message.warning(`${fail} could not be received — check those rows individually`);
+      }
+      setSelectedReceiveIds([]);
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Bulk receive failed'));
+    } finally {
+      setReceivingBulk(false);
     }
   };
 
@@ -438,15 +505,24 @@ export default function IpoDetailPage() {
       render: (v) => <span style={{ fontWeight: 500 }}>{v}</span>,
     },
     {
+      title: 'Sub-group',
+      dataIndex: 'member_group_name',
+      width: 112,
+      ellipsis: true,
+      render: (v) => (v ? <Tag style={{ marginInlineEnd: 0 }}>{v}</Tag> : '—'),
+    },
+    {
       title: 'Payment',
       width: 108,
       ellipsis: true,
       render: (_, r) => {
         if (r.paid_to_member_id && r.paid_to_member_id !== r.member_id) {
           return (
-            <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-              To {r.paid_to_display_name}
-            </Tag>
+            <Tooltip title="Group bulk — collect return from this owner, then mark each member below">
+              <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+                To {r.paid_to_display_name}
+              </Tag>
+            </Tooltip>
           );
         }
         return <Typography.Text type="secondary">Direct</Typography.Text>;
@@ -493,6 +569,7 @@ export default function IpoDetailPage() {
       dataIndex: 'trns_received',
       width: 118,
       align: 'center',
+      sorter: (a, b) => Number(isFundReturned(b)) - Number(isFundReturned(a)),
       render: (v) =>
         v === 'Received' ? (
           <Tag color="success" style={{ marginInlineEnd: 0 }}>Returned</Tag>
@@ -514,16 +591,17 @@ export default function IpoDetailPage() {
       render: (v, r) => (
         <Select
           size="small"
-          style={{ width: '100%', minWidth: 120 }}
+          style={{ width: '100%', minWidth: 132 }}
           value={getRowVal(r, 'allotmentStatus', 'allotment_status')}
           onChange={(val) => {
             updateRow(r.id, 'allotmentStatus', val);
-            if (val === 'NOT_ALLOTED') updateRow(r.id, 'profitLoss', null);
+            if (val === 'NOT_ALLOTED' || val === 'NOT_APPLIED') updateRow(r.id, 'profitLoss', null);
           }}
           options={[
             { value: 'PENDING', label: 'Pending' },
             { value: 'ALLOTED', label: 'Alloted' },
             { value: 'NOT_ALLOTED', label: 'Not Alloted' },
+            { value: 'NOT_APPLIED', label: 'Did not apply' },
           ]}
         />
       ),
@@ -674,7 +752,10 @@ export default function IpoDetailPage() {
                 Distribute Funds
               </Button>
             </Tooltip>
-            <Button icon={<SaveOutlined />} onClick={onSaveBulk} disabled={!Object.keys(editedRows).length}>
+            <Button icon={<UndoOutlined />} onClick={onUndoChanges} disabled={!unsavedRowCount}>
+              Undo{unsavedRowCount ? ` (${unsavedRowCount})` : ''}
+            </Button>
+            <Button icon={<SaveOutlined />} onClick={onSaveBulk} disabled={!unsavedRowCount} type={unsavedRowCount ? 'primary' : 'default'}>
               Save Changes
             </Button>
             {applications.length > 0 && (
@@ -757,6 +838,21 @@ export default function IpoDetailPage() {
         />
       )}
 
+      {notAppliedPendingReturn.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`${notAppliedPendingReturn.length} member${notAppliedPendingReturn.length !== 1 ? 's' : ''} did not apply — return funds pending`}
+          description={
+            <>
+              Set allotment to <strong>Did not apply</strong>, save, then use Receive when money is back.
+              For sub-group members paid to a group owner, collect from the owner first — each member row still needs its own Receive so ledgers stay correct.
+            </>
+          }
+        />
+      )}
+
       {bankAccounts.length > 0 && (
         <div className="ipo-receive-account-row" style={{ marginBottom: 16 }}>
           <Typography.Text type="secondary">Member returns credit to: </Typography.Text>
@@ -779,17 +875,59 @@ export default function IpoDetailPage() {
         </div>
       )}
 
-      <ContentCard title={`Applications (${applications.length})`}>
+      <ContentCard
+        title={`Applications (${filteredApplications.length}${returnFilter !== 'all' ? ` of ${applications.length}` : ''})`}
+      >
+        {applications.length > 0 && (
+          <Space wrap style={{ marginBottom: 16 }}>
+            <Segmented
+              value={returnFilter}
+              onChange={setReturnFilter}
+              options={[
+                { label: `All (${applications.length})`, value: 'all' },
+                { label: `Returned (${returnedCount})`, value: 'returned' },
+                { label: `Pending (${pendingReturnCount})`, value: 'pending' },
+                { label: `Did not apply (${notAppliedCount})`, value: 'not_applied' },
+              ]}
+            />
+            {returnedCount > 0 && (
+              <Typography.Text type="secondary">
+                {returnedCount} of {applications.length} member{applications.length !== 1 ? 's' : ''} returned funds
+              </Typography.Text>
+            )}
+            {receivableSelectedIds.length > 0 && (
+              <Button type="primary" loading={receivingBulk} onClick={onReceiveBulk}>
+                Receive selected ({receivableSelectedIds.length})
+              </Button>
+            )}
+          </Space>
+        )}
         <Table
           rowKey="id"
           loading={loading}
           className="pro-table ipo-applications-table"
           size="middle"
           columns={columns}
-          dataSource={applications}
+          dataSource={filteredApplications}
+          rowSelection={{
+            selectedRowKeys: selectedReceiveIds,
+            onChange: setSelectedReceiveIds,
+            getCheckboxProps: (record) => ({
+              disabled: isFundReturned(record),
+              title: isFundReturned(record) ? 'Already returned' : undefined,
+            }),
+          }}
           pagination={false}
           scroll={{ x: 'max-content' }}
-          locale={{ emptyText: 'No applications yet — distribute funds to members' }}
+          locale={{
+            emptyText: returnFilter === 'all'
+              ? 'No applications yet — distribute funds to members'
+              : returnFilter === 'returned'
+                ? 'No members have returned funds yet'
+                : returnFilter === 'not_applied'
+                  ? 'No members marked as did not apply'
+                  : 'All members have returned funds',
+          }}
         />
       </ContentCard>
 

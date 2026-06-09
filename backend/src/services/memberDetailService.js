@@ -91,7 +91,7 @@ export async function getMemberDetail(pool, tenantId, memberId) {
       totalIpoProfit += Number(app.profit_loss ?? 0);
     } else if (app.allotment_status === 'NOT_ALLOTED') {
       iposNotAlloted += 1;
-    } else {
+    } else if (app.allotment_status !== 'NOT_APPLIED') {
       iposPending += 1;
     }
   }

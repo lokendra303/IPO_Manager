@@ -43,7 +43,7 @@ router.patch('/bulk', async (req, res, next) => {
         if (u.allotmentStatus !== undefined) {
           fields.push('allotment_status = ?');
           values.push(u.allotmentStatus);
-          if (u.allotmentStatus === 'NOT_ALLOTED') {
+          if (u.allotmentStatus === 'NOT_ALLOTED' || u.allotmentStatus === 'NOT_APPLIED') {
             fields.push('profit_loss = ?');
             values.push(null);
           } else if (u.allotmentStatus === 'ALLOTED' && u.profitLoss !== undefined) {

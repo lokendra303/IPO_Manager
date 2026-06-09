@@ -47,12 +47,14 @@ function CopyableValue({ value, label, children }) {
 const allotmentColors = {
   ALLOTED: 'green',
   NOT_ALLOTED: 'red',
+  NOT_APPLIED: 'orange',
   PENDING: 'default',
 };
 
 const allotmentLabels = {
   ALLOTED: 'Alloted',
   NOT_ALLOTED: 'Not Alloted',
+  NOT_APPLIED: 'Did not apply',
   PENDING: 'Pending',
 };
 
