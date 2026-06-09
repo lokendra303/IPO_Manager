@@ -2,10 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "node frontend/scripts/vercel-install.mjs",
   "buildCommand": "node frontend/scripts/vercel-build.mjs",
-  "outputDirectory": "../frontend/dist",
+  "outputDirectory": "frontend/dist",
   "functions": {
     "api/index.js": {
-      "includeFiles": "../frontend/dist/**"
+      "includeFiles": "frontend/dist/**"
     }
   },
   "rewrites": [
