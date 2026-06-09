@@ -127,6 +127,11 @@ export default function MemberPortalPage() {
   const pendingReturn = stats.pendingReturn ?? 0;
   const memberPan = formatPan(dashboard?.member?.pan);
   const isGroupLeader = subGroup?.isLeader === true;
+  const groupMembers = subGroup?.members ?? [];
+  const totalGroupPendingReturn = groupMembers.reduce(
+    (sum, m) => sum + Number(m.pendingReturn ?? 0),
+    0
+  );
   const hasPendingAllotment = (dashboard?.ipoApplications ?? []).some(
     (a) => a.allotmentStatus === 'PENDING'
   );
@@ -477,17 +482,43 @@ export default function MemberPortalPage() {
             description="Bulk IPO funds are paid to you on behalf of your group. Collect from members and return to your manager. Below is each member’s pending return (fund received minus returned)."
           />
           <Typography.Title level={5} style={{ marginTop: 0 }}>
-            Members ({subGroup.memberCount ?? subGroup.members?.length ?? 0})
+            Members ({subGroup.memberCount ?? groupMembers.length})
           </Typography.Title>
+          {totalGroupPendingReturn > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`${formatCurrency(totalGroupPendingReturn)} total pending to refund to manager`}
+              description="Sum of each member’s pending return (fund received minus returned)."
+            />
+          )}
           <Table
             rowKey="id"
             columns={groupMemberCols}
-            dataSource={subGroup.members ?? []}
-            pagination={(subGroup.members?.length ?? 0) > 10 ? { pageSize: 10 } : false}
+            dataSource={groupMembers}
+            pagination={groupMembers.length > 10 ? { pageSize: 10 } : false}
             locale={{ emptyText: 'No members in this sub-group' }}
             scroll={{ x: 'max-content' }}
             style={{ marginBottom: 24 }}
             {...tableDefaults}
+            summary={() =>
+              groupMembers.length > 0 ? (
+                <Table.Summary fixed>
+                  <Table.Summary.Row style={{ fontWeight: 600, background: '#fff7ed' }}>
+                    <Table.Summary.Cell index={0} colSpan={3}>
+                      Total to refund to manager
+                    </Table.Summary.Cell>
+                    <Table.Summary.Cell index={3}>
+                      <span className={totalGroupPendingReturn !== 0 ? 'amount-negative' : undefined}>
+                        {formatCurrency(totalGroupPendingReturn)}
+                      </span>
+                    </Table.Summary.Cell>
+                    <Table.Summary.Cell index={4} />
+                  </Table.Summary.Row>
+                </Table.Summary>
+              ) : null
+            }
           />
           <Typography.Title level={5}>Bulk payments received</Typography.Title>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
