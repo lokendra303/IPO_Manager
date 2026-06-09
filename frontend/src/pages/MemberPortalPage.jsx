@@ -20,7 +20,14 @@ import {
   CheckCircleOutlined,
   LinkOutlined,
   CopyOutlined,
+  ArrowDownOutlined,
+  ArrowUpOutlined,
+  FundOutlined,
+  CloseCircleOutlined,
+  TeamOutlined,
+  CrownOutlined,
 } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import {
   getAllotmentPortals,
   openAllotmentPortal,
@@ -113,8 +120,11 @@ export default function MemberPortalPage() {
   }
 
   const stats = dashboard?.stats ?? {};
+  const subGroup = dashboard?.subGroup;
   const profit = stats.totalIpoProfit ?? 0;
+  const pendingReturn = stats.pendingReturn ?? 0;
   const memberPan = dashboard?.member?.pan;
+  const isGroupLeader = subGroup?.isLeader === true;
   const hasPendingAllotment = (dashboard?.ipoApplications ?? []).some(
     (a) => a.allotmentStatus === 'PENDING'
   );
@@ -131,6 +141,16 @@ export default function MemberPortalPage() {
       title: 'Amount',
       dataIndex: 'amount',
       render: (v) => formatCurrency(v),
+    },
+    {
+      title: 'Fund return',
+      dataIndex: 'fundReturned',
+      render: (returned, row) =>
+        returned ? (
+          <Tag color="success">Returned</Tag>
+        ) : (
+          <Tag color="warning">Pending {formatCurrency(row.amount)}</Tag>
+        ),
     },
     {
       title: 'Allotment',
@@ -166,6 +186,91 @@ export default function MemberPortalPage() {
     },
   ];
 
+  const ledgerCols = [
+    {
+      title: 'Date',
+      dataIndex: 'txnDate',
+      render: (v) => dayjs(v).format('DD MMM YYYY HH:mm'),
+    },
+    {
+      title: 'Type',
+      dataIndex: 'type',
+      render: (t) => (
+        <Tag color={t === 'GIVEN' ? 'orange' : t === 'RECEIVED' ? 'green' : 'purple'}>
+          {t === 'GIVEN' ? 'Received from team' : t === 'RECEIVED' ? 'Returned to team' : t}
+        </Tag>
+      ),
+    },
+    {
+      title: 'Amount',
+      dataIndex: 'amount',
+      render: (v) => formatCurrency(v),
+    },
+    { title: 'IPO', dataIndex: 'ipoName', render: (v) => v || '—' },
+    { title: 'Notes', dataIndex: 'notes', ellipsis: true, render: (v) => v || '—' },
+  ];
+
+  const groupMemberCols = [
+    {
+      title: 'Member',
+      dataIndex: 'displayName',
+      render: (v, row) => (
+        <Space size={6}>
+          <span style={{ fontWeight: row.isLeader ? 600 : 400 }}>{v}</span>
+          {row.isLeader && <Tag color="gold">You</Tag>}
+        </Space>
+      ),
+    },
+    { title: 'PAN', dataIndex: 'pan' },
+    {
+      title: 'IPOs',
+      dataIndex: 'iposApplied',
+      align: 'center',
+    },
+    {
+      title: 'Pending return',
+      dataIndex: 'pendingReturn',
+      render: (v) => (
+        <span className={Number(v) !== 0 ? 'amount-negative' : undefined}>
+          {formatCurrency(v)}
+        </span>
+      ),
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      render: (s) => (
+        <Tag color={s === 'ACTIVE' ? 'success' : 'default'}>
+          {s === 'ACTIVE' ? 'Active' : 'Inactive'}
+        </Tag>
+      ),
+    },
+  ];
+
+  const bulkPaymentCols = [
+    {
+      title: 'Date',
+      dataIndex: 'paidAt',
+      render: (v) => (v ? dayjs(v).format('DD MMM YYYY') : '—'),
+    },
+    { title: 'IPO', dataIndex: 'ipoName' },
+    {
+      title: 'Bulk transfer',
+      dataIndex: 'totalAmount',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      title: 'Members',
+      dataIndex: 'memberCount',
+      align: 'center',
+    },
+    {
+      title: 'Category',
+      dataIndex: 'investorCategory',
+      render: (v) => (v ? <Tag>{v}</Tag> : '—'),
+    },
+  ];
+
   const issueCols = [
     {
       title: 'Submitted',
@@ -194,12 +299,41 @@ export default function MemberPortalPage() {
     <div>
       <PageHeader
         title={`Hello, ${dashboard?.member?.displayName || 'Member'}`}
-        subtitle="Your IPO applications and profit summary"
+        subtitle="Your fund flow, IPO applications, and profit summary"
       />
 
-      {(dashboard?.member?.email || dashboard?.member?.upi || dashboard?.member?.pan) && (
+      {pendingReturn > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+          message={`${formatCurrency(pendingReturn)} pending to return to your manager`}
+          description="This is the difference between fund received from your team and what you have returned so far."
+        />
+      )}
+
+      {(dashboard?.member?.email || dashboard?.member?.upi || dashboard?.member?.pan || subGroup) && (
         <ContentCard title="Your profile" style={{ marginBottom: 24 }}>
           <Space direction="vertical" size={8}>
+            {subGroup && (
+              <Space wrap>
+                <span>
+                  Sub-group: <Tag color="blue">{subGroup.name}</Tag>
+                </span>
+                {isGroupLeader ? (
+                  <Tag color="gold" icon={<CrownOutlined />}>Sub-group leader</Tag>
+                ) : subGroup.leaderDisplayName ? (
+                  <span>
+                    Leader: <Typography.Text strong>{subGroup.leaderDisplayName}</Typography.Text>
+                    {subGroup.leaderPan ? (
+                      <> (<Typography.Text code>{subGroup.leaderPan}</Typography.Text>)</>
+                    ) : null}
+                  </span>
+                ) : (
+                  <Typography.Text type="secondary">No leader assigned yet</Typography.Text>
+                )}
+              </Space>
+            )}
             {dashboard.member.pan && (
               <Space>
                 <span>PAN: <Typography.Text code>{dashboard.member.pan}</Typography.Text></span>
@@ -248,41 +382,137 @@ export default function MemberPortalPage() {
         </ContentCard>
       )}
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="IPOs Applied"
-            value={stats.iposApplied ?? 0}
-            icon={<StockOutlined />}
-            variant="primary"
+      <ContentCard title="Fund summary" style={{ marginBottom: 24 }}>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Fund received"
+              value={formatCurrency(stats.totalGiven ?? 0)}
+              icon={<ArrowDownOutlined />}
+              variant="warning"
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Fund returned"
+              value={formatCurrency(stats.totalReceived ?? 0)}
+              icon={<ArrowUpOutlined />}
+              variant="success"
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Pending to return"
+              value={formatCurrency(pendingReturn)}
+              icon={<ClockCircleOutlined />}
+              variant={pendingReturn !== 0 ? 'danger' : 'primary'}
+              valueClassName={pendingReturn !== 0 ? 'stat-card-value--loss' : ''}
+            />
+          </Col>
+        </Row>
+      </ContentCard>
+
+      <ContentCard title="IPO summary" style={{ marginBottom: 24 }}>
+        <Row gutter={[16, 16]}>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="IPOs Applied"
+              value={stats.iposApplied ?? 0}
+              icon={<StockOutlined />}
+              variant="primary"
+            />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="Pending Allotment"
+              value={stats.iposPending ?? 0}
+              icon={<ClockCircleOutlined />}
+              variant="warning"
+            />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="Allotted"
+              value={stats.iposAlloted ?? 0}
+              icon={<CheckCircleOutlined />}
+              variant="info"
+            />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="Not Allotted"
+              value={stats.iposNotAlloted ?? 0}
+              icon={<CloseCircleOutlined />}
+              variant="danger"
+            />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="Total P&L"
+              value={formatCurrency(profit)}
+              icon={<RiseOutlined />}
+              variant={profit >= 0 ? 'success' : 'danger'}
+              valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+            />
+          </Col>
+          {(stats.bonus ?? 0) > 0 && (
+            <Col xs={12} sm={8} lg={4}>
+              <StatCard
+                title="Bonus"
+                value={formatCurrency(stats.bonus)}
+                icon={<FundOutlined />}
+                variant="success"
+              />
+            </Col>
+          )}
+        </Row>
+      </ContentCard>
+
+      {isGroupLeader && (
+        <ContentCard
+          title={
+            <Space>
+              <TeamOutlined />
+              Your sub-group — {subGroup.name}
+            </Space>
+          }
+          style={{ marginBottom: 24 }}
+        >
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="You are the sub-group leader"
+            description="Bulk IPO funds are paid to you on behalf of your group. Collect from members and return to your manager. Below is each member’s pending return (fund received minus returned)."
           />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="Pending Allotment"
-            value={stats.iposPending ?? 0}
-            icon={<ClockCircleOutlined />}
-            variant="warning"
+          <Typography.Title level={5} style={{ marginTop: 0 }}>
+            Members ({subGroup.memberCount ?? subGroup.members?.length ?? 0})
+          </Typography.Title>
+          <Table
+            rowKey="id"
+            columns={groupMemberCols}
+            dataSource={subGroup.members ?? []}
+            pagination={(subGroup.members?.length ?? 0) > 10 ? { pageSize: 10 } : false}
+            locale={{ emptyText: 'No members in this sub-group' }}
+            scroll={{ x: 'max-content' }}
+            style={{ marginBottom: 24 }}
+            {...tableDefaults}
           />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="Allotted"
-            value={stats.iposAlloted ?? 0}
-            icon={<CheckCircleOutlined />}
-            variant="info"
+          <Typography.Title level={5}>Bulk payments received</Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            One transfer per IPO when your manager uses bulk pay to owner on Distribute.
+          </Typography.Paragraph>
+          <Table
+            rowKey="id"
+            columns={bulkPaymentCols}
+            dataSource={subGroup.bulkPayments ?? []}
+            pagination={(subGroup.bulkPayments?.length ?? 0) > 10 ? { pageSize: 10 } : false}
+            locale={{ emptyText: 'No bulk payments yet' }}
+            scroll={{ x: 'max-content' }}
+            {...tableDefaults}
           />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="Total Profit"
-            value={formatCurrency(profit)}
-            icon={<RiseOutlined />}
-            variant={profit >= 0 ? 'success' : 'danger'}
-            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-          />
-        </Col>
-      </Row>
+        </ContentCard>
+      )}
 
       <ContentCard title="Your IPO Applications" style={{ marginBottom: 24 }}>
         {hasPendingAllotment && memberPan && (
@@ -326,6 +556,20 @@ export default function MemberPortalPage() {
           {...tableDefaults}
         />
       </ContentCard>
+
+      {(dashboard?.ledgerEntries ?? []).length > 0 && (
+        <ContentCard title="Your transactions" style={{ marginBottom: 24 }}>
+          <Table
+            rowKey="id"
+            columns={ledgerCols}
+            dataSource={dashboard.ledgerEntries}
+            pagination={dashboard.ledgerEntries.length > 10 ? { pageSize: 10 } : false}
+            locale={{ emptyText: 'No transactions yet' }}
+            scroll={{ x: 'max-content' }}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
