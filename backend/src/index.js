@@ -67,15 +67,31 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
 const isVercel = process.env.VERCEL === '1';
 
-if (isVercel) {
-  const distPath = path.resolve(fileURLToPath(new URL('../../frontend/dist', import.meta.url)));
-  const indexHtml = path.join(distPath, 'index.html');
+function resolveFrontendDist() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(here, '../frontend/dist'),
+    path.join(here, '../../frontend/dist'),
+    path.join(process.cwd(), 'frontend/dist'),
+    path.join(process.cwd(), 'dist'),
+  ];
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html')));
+}
 
-  if (fs.existsSync(indexHtml)) {
+if (isVercel) {
+  const distPath = resolveFrontendDist();
+  const indexHtml = distPath ? path.join(distPath, 'index.html') : null;
+
+  if (indexHtml) {
     app.use(express.static(distPath));
     app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
       res.sendFile(indexHtml);
     });
+  } else {
+    console.error('Frontend dist not found. Checked:', [
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../frontend/dist'),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../frontend/dist'),
+    ]);
   }
 }
 
