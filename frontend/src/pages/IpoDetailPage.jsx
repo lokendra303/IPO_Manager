@@ -10,6 +10,7 @@ import client from '../api/client';
 import { formatCurrency, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import {
+  categoryCompactOptionsForIpo,
   categoryOptionsForIpo,
   parseAllowedCategories,
   categoryTagColor,
@@ -428,55 +429,92 @@ export default function IpoDetailPage() {
   };
 
   const columns = [
-    { title: 'Member', dataIndex: 'display_name' },
-    { title: 'PAN', dataIndex: 'pan' },
+    {
+      title: 'Member',
+      dataIndex: 'display_name',
+      fixed: 'left',
+      width: 148,
+      ellipsis: true,
+      render: (v) => <span style={{ fontWeight: 500 }}>{v}</span>,
+    },
     {
       title: 'Payment',
-      width: 130,
+      width: 108,
+      ellipsis: true,
       render: (_, r) => {
         if (r.paid_to_member_id && r.paid_to_member_id !== r.member_id) {
-          return <Tag color="gold">To {r.paid_to_display_name}</Tag>;
+          return (
+            <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+              To {r.paid_to_display_name}
+            </Tag>
+          );
         }
         return <Typography.Text type="secondary">Direct</Typography.Text>;
       },
     },
     {
-      title: 'Category',
+      title: 'Cat.',
       dataIndex: 'investor_category',
-      width: 110,
-      render: (v, r) => (
-        <Select
-          size="small"
-          style={{ width: 100 }}
-          disabled={isClosed}
-          value={getRowVal(r, 'investorCategory', 'investor_category') || 'RII'}
-          onChange={(val) => updateRow(r.id, 'investorCategory', val)}
-          options={categoryOptionsForIpo(ipo)}
-        />
-      ),
+      width: 76,
+      align: 'center',
+      render: (v, r) => {
+        const value = getRowVal(r, 'investorCategory', 'investor_category') || 'RII';
+        return (
+          <Select
+            size="small"
+            style={{ width: 68 }}
+            disabled={isClosed}
+            value={value}
+            onChange={(val) => updateRow(r.id, 'investorCategory', val)}
+            options={categoryCompactOptionsForIpo(ipo)}
+            popupMatchSelectWidth={false}
+            title={INVESTOR_CATEGORY_LABELS[value]}
+          />
+        );
+      },
     },
     {
       title: 'Amount',
       dataIndex: 'amount',
+      width: 112,
       render: (v, r) => (
         <InputNumber
           size="small"
           min={1}
           disabled={isClosed}
+          style={{ width: '100%' }}
           value={getRowVal(r, 'amount', 'amount')}
           onChange={(val) => updateRow(r.id, 'amount', val)}
         />
       ),
     },
-    { title: 'Received', dataIndex: 'trns_received', render: (v) => v && <Tag color="green">{v}</Tag> },
-    { title: 'Given', dataIndex: 'trns_given', render: (v) => v && <Tag color="blue">{v}</Tag> },
+    {
+      title: 'Fund returned',
+      dataIndex: 'trns_received',
+      width: 118,
+      align: 'center',
+      render: (v) =>
+        v === 'Received' ? (
+          <Tag color="success" style={{ marginInlineEnd: 0 }}>Returned</Tag>
+        ) : (
+          <Tag style={{ marginInlineEnd: 0 }}>Pending</Tag>
+        ),
+    },
+    {
+      title: 'Given',
+      dataIndex: 'trns_given',
+      width: 80,
+      align: 'center',
+      render: (v) => (v ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>{v}</Tag> : '—'),
+    },
     {
       title: 'Allotment',
       dataIndex: 'allotment_status',
+      width: 132,
       render: (v, r) => (
         <Select
           size="small"
-          style={{ width: 130 }}
+          style={{ width: '100%', minWidth: 120 }}
           value={getRowVal(r, 'allotmentStatus', 'allotment_status')}
           onChange={(val) => {
             updateRow(r.id, 'allotmentStatus', val);
@@ -493,13 +531,15 @@ export default function IpoDetailPage() {
     {
       title: 'P&L',
       dataIndex: 'profit_loss',
+      width: 108,
       render: (v, r) => {
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         if (status !== 'ALLOTED') return '—';
         return (
           <InputNumber
             size="small"
-            placeholder="Profit + / Loss −"
+            style={{ width: '100%' }}
+            placeholder="+ / −"
             value={getRowVal(r, 'profitLoss', 'profit_loss')}
             onChange={(val) => updateRow(r.id, 'profitLoss', val)}
           />
@@ -508,10 +548,11 @@ export default function IpoDetailPage() {
     },
     {
       title: 'P&L share',
+      width: 96,
       render: (_, r) => {
         if (r.profit_share_distribution_id) {
           return (
-            <Tag color="purple" title={`Provider ${formatCurrency(r.share_provider_amount)} · Manager ${formatCurrency(r.share_manager_amount)}`}>
+            <Tag color="purple" style={{ marginInlineEnd: 0 }} title={`Provider ${formatCurrency(r.share_provider_amount)} · Manager ${formatCurrency(r.share_manager_amount)}`}>
               Split done
             </Tag>
           );
@@ -519,7 +560,7 @@ export default function IpoDetailPage() {
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         const pl = getRowVal(r, 'profitLoss', 'profit_loss');
         if (status === 'ALLOTED' && pl != null && Number(pl) !== 0) {
-          return <Tag color="gold">On save</Tag>;
+          return <Tag color="gold" style={{ marginInlineEnd: 0 }}>On save</Tag>;
         }
         return '—';
       },
@@ -527,6 +568,7 @@ export default function IpoDetailPage() {
     {
       title: 'Remarks',
       dataIndex: 'remarks',
+      width: 120,
       render: (v, r) => (
         <Input
           size="small"
@@ -536,13 +578,18 @@ export default function IpoDetailPage() {
       ),
     },
     {
-      title: 'Return',
+      title: 'Action',
+      fixed: 'right',
+      width: 104,
+      align: 'center',
       render: (_, r) =>
         r.trns_received === 'Received' ? (
-          <Tag color="green">Settled</Tag>
+          <Tag color="green" style={{ marginInlineEnd: 0 }}>Settled</Tag>
         ) : (
           <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
-            <Button size="small">Receive</Button>
+            <Button size="small" type="primary" ghost>
+              Receive
+            </Button>
           </Popconfirm>
         ),
     },
@@ -736,12 +783,13 @@ export default function IpoDetailPage() {
         <Table
           rowKey="id"
           loading={loading}
+          className="pro-table ipo-applications-table"
+          size="middle"
           columns={columns}
           dataSource={applications}
           pagination={false}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 'max-content' }}
           locale={{ emptyText: 'No applications yet — distribute funds to members' }}
-          {...tableDefaults}
         />
       </ContentCard>
 

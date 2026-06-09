@@ -12,6 +12,11 @@ export const INVESTOR_CATEGORY_LABELS = Object.fromEntries(
   INVESTOR_CATEGORY_OPTIONS.map((o) => [o.value, o.label])
 );
 
+export const INVESTOR_CATEGORY_SHORT_LABELS = {
+  RII: 'RII',
+  HNI: 'HNI',
+};
+
 export const DEFAULT_ALLOWED_CATEGORIES = ['RII'];
 
 export function parseAllowedCategories(ipo) {
@@ -33,6 +38,14 @@ export function categoryOptionsForIpo(ipo) {
     if (o.value === 'HNI' && !ipoHasHniLot(ipo)) return false;
     return true;
   });
+}
+
+export function categoryCompactOptionsForIpo(ipo) {
+  return categoryOptionsForIpo(ipo).map((o) => ({
+    value: o.value,
+    label: INVESTOR_CATEGORY_SHORT_LABELS[o.value] || o.value,
+    title: INVESTOR_CATEGORY_LABELS[o.value],
+  }));
 }
 
 export function categoryTagColor(cat) {

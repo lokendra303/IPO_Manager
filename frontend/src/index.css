@@ -1616,6 +1616,16 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+.ipo-applications-table .ant-table-thead > tr > th,
+.ipo-applications-table .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+
+.ipo-applications-table .ant-table-cell-fix-left,
+.ipo-applications-table .ant-table-cell-fix-right {
+  z-index: 2;
+}
+
 /* Modals & drawers: fit small screens */
 @media (max-width: 768px) {
   .ant-modal {
