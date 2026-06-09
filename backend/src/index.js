@@ -64,14 +64,24 @@ app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use(errorHandler);
 
-warmPool()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`IPO Team API running on http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error('Failed to connect to database:', err.message);
-    console.error('Start MySQL and run: npm run migrate');
-    process.exit(1);
+const isVercel = process.env.VERCEL === '1';
+
+if (isVercel) {
+  warmPool().catch((err) => {
+    console.error('Failed to warm database pool:', err.message);
   });
+} else {
+  warmPool()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`IPO Team API running on http://localhost:${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to connect to database:', err.message);
+      console.error('Start MySQL and run: npm run migrate');
+      process.exit(1);
+    });
+}
+
+export default app;
