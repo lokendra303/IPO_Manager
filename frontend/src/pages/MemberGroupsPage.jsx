@@ -20,7 +20,7 @@ import {
   PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
@@ -172,7 +172,7 @@ export default function MemberGroupsPage() {
     if (group.ownerMemberId && group.members?.length) {
       const owner = group.members.find((m) => m.id === group.ownerMemberId);
       if (owner) {
-        return owner.pan ? `${owner.displayName} (${owner.pan})` : owner.displayName;
+        return owner.pan ? `${owner.displayName} (${formatPan(owner.pan)})` : owner.displayName;
       }
     }
     return null;
@@ -320,7 +320,7 @@ export default function MemberGroupsPage() {
                   <Tag color="gold" icon={<UserOutlined />}>Owner</Tag>
                   <Typography.Text strong style={{ fontSize: 16 }}>{ownerName}</Typography.Text>
                   {ownerPan && (
-                    <Typography.Text type="secondary">PAN {ownerPan}</Typography.Text>
+                    <Typography.Text type="secondary">PAN {formatPan(ownerPan)}</Typography.Text>
                   )}
                 </Space>
               ) : (
@@ -371,7 +371,7 @@ export default function MemberGroupsPage() {
                     onChange={setViewOwnerId}
                     options={viewGroup.members.map((m) => ({
                       value: m.id,
-                      label: `${m.displayName} (${m.pan})`,
+                      label: `${m.displayName} (${formatPan(m.pan)})`,
                     }))}
                   />
                   <Button type="primary" loading={saving} onClick={onSaveViewOwner}>
@@ -403,7 +403,7 @@ export default function MemberGroupsPage() {
                         </Space>
                       ),
                     },
-                    { title: 'PAN', dataIndex: 'pan', width: 140 },
+                    { title: 'PAN', dataIndex: 'pan', width: 140, render: (v) => formatPan(v) || '—' },
                     {
                       title: 'Status',
                       dataIndex: 'status',
@@ -530,7 +530,7 @@ export default function MemberGroupsPage() {
               m.currentGroupId && assignGroup && m.currentGroupId !== assignGroup.id;
             return (
               <Checkbox key={m.id} value={m.id}>
-                {m.displayName} ({m.pan})
+                {m.displayName} ({formatPan(m.pan)})
                 {m.status === 'INACTIVE' && <Tag style={{ marginLeft: 8 }}>Inactive</Tag>}
                 {inOtherGroup && (
                   <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
@@ -560,7 +560,7 @@ export default function MemberGroupsPage() {
             onChange={setOwnerMemberId}
             options={selectedMemberIds.map((mid) => {
               const m = memberOptions.find((o) => o.id === mid);
-              return m ? { value: m.id, label: `${m.displayName} (${m.pan})` } : null;
+              return m ? { value: m.id, label: `${m.displayName} (${formatPan(m.pan)})` } : null;
             }).filter(Boolean)}
           />
         </Form.Item>

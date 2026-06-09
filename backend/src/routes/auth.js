@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { normalizeEmail, normalizePan } from '../utils/validate.js';
+import { normalizeEmail, normalizePan, formatPan } from '../utils/validate.js';
 import { writeAuditLog } from '../services/auditLogService.js';
 
 const router = Router();
@@ -171,7 +171,7 @@ router.post('/member-login', async (req, res, next) => {
         id: member.id,
         memberId: member.id,
         displayName: member.display_name,
-        pan: member.pan,
+        pan: formatPan(member.pan),
         tenantId: member.tenant_id,
         tenantName: member.tenant_name,
         role: 'member',
@@ -204,7 +204,7 @@ router.get('/me', async (req, res, next) => {
         id: m.id,
         memberId: m.id,
         displayName: m.display_name,
-        pan: m.pan,
+        pan: formatPan(m.pan),
         tenantId: m.tenant_id,
         tenantName: m.tenant_name,
         role: 'member',

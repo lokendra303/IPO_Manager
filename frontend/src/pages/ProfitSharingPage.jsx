@@ -8,7 +8,7 @@ import {
   TeamOutlined, BankOutlined, UserOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
-import { formatCurrency, pnlClassName } from '../utils/format';
+import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
@@ -711,7 +711,7 @@ export default function ProfitSharingPage() {
         </div>
       ),
     },
-    { title: 'PAN', dataIndex: 'pan', width: 108 },
+    { title: 'PAN', dataIndex: 'pan', width: 108, render: (v) => formatPan(v) || '—' },
     {
       title: 'Rules',
       width: 88,
@@ -810,7 +810,7 @@ export default function ProfitSharingPage() {
 
   const memberTotalCols = [
     { title: 'Member', dataIndex: 'displayName', fixed: 'left', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'PAN', dataIndex: 'pan' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     { title: 'IPOs', dataIndex: 'ipoCount', width: 70 },
     { title: 'Gross IPO P&L', dataIndex: 'grossIpoPnL', render: renderAmt },
     { title: 'Split (gross)', dataIndex: 'grossDistributed', render: renderAmt },

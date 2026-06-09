@@ -28,6 +28,7 @@ import MemberDetailDrawer from '../components/MemberDetailDrawer';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import { tableDefaults } from '../utils/table';
+import { formatPan } from '../utils/format';
 
 function memberMatchesSearch(member, query) {
   const needle = query.trim().toLowerCase();
@@ -205,7 +206,7 @@ export default function MembersPage() {
         </Tooltip>
       ),
     },
-    { title: 'PAN', dataIndex: 'pan' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     {
       title: 'Name',
       dataIndex: 'display_name',
@@ -368,7 +369,12 @@ export default function MembersPage() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="pan" label="PAN" rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}>
+              <Form.Item
+                name="pan"
+                label="PAN"
+                normalize={(v) => (v ? String(v).toUpperCase() : v)}
+                rules={[{ required: true, len: 10, message: 'PAN must be 10 characters' }]}
+              >
                 <Input maxLength={10} style={{ textTransform: 'uppercase' }} />
               </Form.Item>
             </Col>

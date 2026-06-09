@@ -15,7 +15,7 @@ import StatCard from './StatCard';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import client from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import NoteCell from './NoteCell';
 import { copyToClipboard } from '../utils/allotmentCheck';
@@ -159,7 +159,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
           )}
           <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
             <Descriptions.Item label="PAN">
-              <CopyableValue value={m.pan} label="PAN" />
+              <CopyableValue value={formatPan(m.pan)} label="PAN" />
             </Descriptions.Item>
             <Descriptions.Item label="Email">
               <CopyableValue value={m.email} label="Email">

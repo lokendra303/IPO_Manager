@@ -56,8 +56,13 @@ export function dedupeIds(ids) {
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/i;
 
+export function formatPan(pan) {
+  if (pan == null || pan === '') return null;
+  return String(pan).toUpperCase().trim();
+}
+
 export function normalizePan(pan) {
-  const p = String(pan).toUpperCase().trim();
+  const p = formatPan(pan);
   if (!PAN_REGEX.test(p)) throw new AppError('Invalid PAN format (e.g. ABCDE1234F)');
   return p;
 }

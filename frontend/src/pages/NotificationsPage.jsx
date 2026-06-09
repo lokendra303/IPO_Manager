@@ -7,6 +7,7 @@ import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
 import { getErrorMessage } from '../utils/errors';
+import { formatPan } from '../utils/format';
 
 export default function NotificationsPage() {
   const [issues, setIssues] = useState([]);
@@ -68,7 +69,7 @@ export default function NotificationsPage() {
       render: (name, row) => (
         <span>
           {name}
-          <Tag style={{ marginLeft: 8 }}>{row.member_pan}</Tag>
+          <Tag style={{ marginLeft: 8 }}>{formatPan(row.member_pan)}</Tag>
         </span>
       ),
     },

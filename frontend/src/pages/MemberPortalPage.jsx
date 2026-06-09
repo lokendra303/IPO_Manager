@@ -37,7 +37,7 @@ import {
   EXCHANGE_PORTALS,
 } from '../utils/allotmentCheck';
 import client from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatPan } from '../utils/format';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
@@ -125,7 +125,7 @@ export default function MemberPortalPage() {
   const subGroup = dashboard?.subGroup;
   const profit = stats.totalIpoProfit ?? 0;
   const pendingReturn = stats.pendingReturn ?? 0;
-  const memberPan = dashboard?.member?.pan;
+  const memberPan = formatPan(dashboard?.member?.pan);
   const isGroupLeader = subGroup?.isLeader === true;
   const hasPendingAllotment = (dashboard?.ipoApplications ?? []).some(
     (a) => a.allotmentStatus === 'PENDING'
@@ -188,6 +188,12 @@ export default function MemberPortalPage() {
     },
   ];
 
+  const ledgerTypeLabel = (t) => {
+    if (t === 'GIVEN') return 'IPO fund from manager';
+    if (t === 'RECEIVED') return 'Returned to manager';
+    return t;
+  };
+
   const ledgerCols = [
     {
       title: 'Date',
@@ -199,7 +205,7 @@ export default function MemberPortalPage() {
       dataIndex: 'type',
       render: (t) => (
         <Tag color={t === 'GIVEN' ? 'orange' : t === 'RECEIVED' ? 'green' : 'purple'}>
-          {t === 'GIVEN' ? 'Received from team' : t === 'RECEIVED' ? 'Returned to team' : t}
+          {ledgerTypeLabel(t)}
         </Tag>
       ),
     },
@@ -223,7 +229,7 @@ export default function MemberPortalPage() {
         </Space>
       ),
     },
-    { title: 'PAN', dataIndex: 'pan' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     {
       title: 'IPOs',
       dataIndex: 'iposApplied',
@@ -347,7 +353,7 @@ export default function MemberPortalPage() {
               {subGroup.leaderDisplayName ? (
                 <Space size={4} wrap>
                   <Typography.Text strong>{subGroup.leaderDisplayName}</Typography.Text>
-                  {subGroup.leaderPan && <Typography.Text code>{subGroup.leaderPan}</Typography.Text>}
+                  {subGroup.leaderPan && <Typography.Text code>{formatPan(subGroup.leaderPan)}</Typography.Text>}
                 </Space>
               ) : (
                 <Typography.Text type="secondary">No leader assigned yet</Typography.Text>
@@ -544,6 +550,17 @@ export default function MemberPortalPage() {
 
       {(dashboard?.ledgerEntries ?? []).length > 0 && (
         <ContentCard title="Your transactions" style={{ marginBottom: 24 }}>
+          {isGroupLeader ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              Your personal fund ledger — not collections from sub-group members. Each row is your own IPO
+              share from the manager. The combined bulk UPI paid to you for the whole group is listed above
+              under Bulk payments received.
+            </Typography.Paragraph>
+          ) : (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+              Fund the manager sent you for IPOs and what you have returned.
+            </Typography.Paragraph>
+          )}
           <Table
             rowKey="id"
             columns={ledgerCols}

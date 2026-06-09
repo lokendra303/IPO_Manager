@@ -1,5 +1,6 @@
 import { getMemberDetail } from './memberDetailService.js';
 import { listGroupBulkTransactions } from './memberGroupService.js';
+import { formatPan } from '../utils/validate.js';
 
 async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   if (!memberGroupId) return null;
@@ -22,7 +23,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
     name: group.name,
     isLeader,
     leaderDisplayName: group.owner_display_name ?? null,
-    leaderPan: group.owner_pan ?? null,
+    leaderPan: formatPan(group.owner_pan),
   };
 
   if (!isLeader) return base;
@@ -63,7 +64,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
     members: members.map((m) => ({
       id: m.id,
       displayName: m.display_name,
-      pan: m.pan,
+      pan: formatPan(m.pan),
       status: m.status,
       pendingReturn: Number(m.pending_return),
       iposApplied: Number(m.ipos_applied),
@@ -96,7 +97,7 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
     member: {
       id: member.id,
       displayName: member.display_name,
-      pan: member.pan,
+      pan: formatPan(member.pan),
       email: member.email ?? null,
       upi: member.upi ?? null,
       status: member.status,

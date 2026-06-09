@@ -32,7 +32,7 @@ export default function LoginPage() {
   const onMemberLogin = async (values) => {
     setLoading(true);
     try {
-      await memberLogin(values.pan?.trim());
+      await memberLogin(values.pan?.trim().toUpperCase());
       message.success('Welcome!');
       navigate('/portal');
     } catch (err) {
@@ -103,6 +103,7 @@ export default function LoginPage() {
                     <Form.Item
                       name="pan"
                       label="PAN Number"
+                      normalize={(v) => (v ? String(v).toUpperCase() : v)}
                       rules={[
                         { required: true, message: 'PAN is required' },
                         {

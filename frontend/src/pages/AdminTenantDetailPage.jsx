@@ -11,7 +11,7 @@ import adminClient from '../api/adminClient';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
-import { formatDateTime, formatCurrency, pnlClassName } from '../utils/format';
+import { formatDateTime, formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 
 const STATUS_COLORS = { PENDING: 'gold', APPROVED: 'green', REJECTED: 'red', DISABLED: 'default' };
@@ -164,7 +164,7 @@ export default function AdminTenantDetailPage() {
                     pagination={{ pageSize: 20 }}
                     columns={[
                       { title: 'Name', dataIndex: 'displayName' },
-                      { title: 'PAN', dataIndex: 'pan' },
+                      { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
                       { title: 'Status', dataIndex: 'status', render: (s) => <Tag color={s === 'ACTIVE' ? 'green' : 'default'}>{s}</Tag> },
                       { title: 'Given', dataIndex: 'totalGiven', render: formatCurrency },
                       { title: 'Received', dataIndex: 'totalReceived', render: formatCurrency },
@@ -265,7 +265,7 @@ export default function AdminTenantDetailPage() {
                     pagination={{ pageSize: 20 }}
                     columns={[
                       { title: 'Member', dataIndex: 'displayName' },
-                      { title: 'PAN', dataIndex: 'pan' },
+                      { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
                       { title: 'IPO P&L', dataIndex: 'grossIpoPnL', render: (v) => <span className={pnlClassName(v)}>{formatCurrency(v)}</span> },
                       { title: 'Distributed', dataIndex: 'grossDistributed', render: formatCurrency },
                       { title: 'Manager share', dataIndex: 'managerShare', render: formatCurrency },

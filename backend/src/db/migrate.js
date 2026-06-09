@@ -987,6 +987,16 @@ async function applyNotAppliedV30(conn) {
   }
 }
 
+async function applyUppercasePanV31(conn) {
+  if (!(await tableExists(conn, 'members'))) return;
+  const [result] = await conn.query(
+    `UPDATE members SET pan = UPPER(TRIM(pan)) WHERE pan <> UPPER(TRIM(pan))`
+  );
+  if (result.affectedRows) {
+    console.log(`Uppercased ${result.affectedRows} member PAN(s)`);
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -1030,6 +1040,7 @@ async function migrate() {
   await applyTimestampCompatV28(conn);
   await applyEmailIndexCompatV29(conn);
   await applyNotAppliedV30(conn);
+  await applyUppercasePanV31(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

@@ -2,6 +2,7 @@ import { Layout, Typography, Button, Avatar } from 'antd';
 import { LogoutOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { formatPan } from '../utils/format';
 
 const { Header, Content } = Layout;
 
@@ -26,7 +27,7 @@ export default function MemberLayout({ children }) {
               <Avatar size={40} icon={<UserOutlined />} className="app-header-avatar" />
               <div className="app-header-user-text">
                 <span className="app-header-user-role">Member</span>
-                <span className="app-header-user-email">{user?.displayName || user?.pan}</span>
+                <span className="app-header-user-email">{user?.displayName || formatPan(user?.pan)}</span>
               </div>
             </div>
             <div className="app-header-divider" aria-hidden />

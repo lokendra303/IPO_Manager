@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatPan } from '../utils/format';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
@@ -75,7 +75,7 @@ export default function DashboardPage() {
 
   const pendingCols = [
     { title: 'Member', dataIndex: 'displayName' },
-    { title: 'PAN', dataIndex: 'pan' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     {
       title: 'Pending return',
       dataIndex: 'willReceiveFromTeam',

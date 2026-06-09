@@ -21,6 +21,7 @@ import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
 import { openAllotmentPortal, copyToClipboard, REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
 import { tableDefaults } from '../utils/table';
+import { formatPan } from '../utils/format';
 
 const statusColors = {
   PENDING: 'processing',
@@ -61,7 +62,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
   };
 
   const copyPan = async (pan) => {
-    const ok = await copyToClipboard(pan);
+    const ok = await copyToClipboard(formatPan(pan));
     message[ok ? 'success' : 'error'](ok ? 'PAN copied' : 'Could not copy');
   };
 
@@ -72,7 +73,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
       dataIndex: 'pan',
       render: (pan) => (
         <Space>
-          <Typography.Text code>{pan}</Typography.Text>
+          <Typography.Text code>{formatPan(pan)}</Typography.Text>
           <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyPan(pan)} />
         </Space>
       ),

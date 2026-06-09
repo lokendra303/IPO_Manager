@@ -1,3 +1,8 @@
+export function formatPan(pan) {
+  if (pan == null || pan === '') return '';
+  return String(pan).toUpperCase().trim();
+}
+
 export function formatDateTime(value) {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-IN');

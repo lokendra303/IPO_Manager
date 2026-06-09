@@ -10,7 +10,7 @@ import {
   FundOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
-import { formatCurrency, pnlClassName } from '../utils/format';
+import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
@@ -123,7 +123,7 @@ export default function SummaryPage() {
 
   const columns = [
     { title: 'Member', dataIndex: 'displayName', fixed: 'left', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'PAN', dataIndex: 'pan' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     {
       title: 'Status',
       dataIndex: 'status',

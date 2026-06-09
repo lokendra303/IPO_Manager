@@ -7,7 +7,7 @@ import {
 import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
-import { formatCurrency, pnlClassName } from '../utils/format';
+import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import {
   categoryCompactOptionsForIpo,
@@ -1153,7 +1153,7 @@ export default function IpoDetailPage() {
                                       disabled={!available}
                                       onChange={() => toggleMemberSelection(m.id, group.id)}
                                     >
-                                      {m.displayName} ({m.pan})
+                                      {m.displayName} ({formatPan(m.pan)})
                                       {m.id === group.ownerMemberId && (
                                         <Tag color="gold" style={{ marginLeft: 6 }}>Owner</Tag>
                                       )}
@@ -1184,7 +1184,7 @@ export default function IpoDetailPage() {
                           value={selectedIds}
                           onChange={setSelectedIds}
                           options={ungroupedAvailable.map((m) => ({
-                            label: `${m.display_name} (${m.pan})`,
+                            label: `${m.display_name} (${formatPan(m.pan)})`,
                             value: m.id,
                           }))}
                         />
@@ -1197,7 +1197,7 @@ export default function IpoDetailPage() {
                       style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
                       value={selectedIds}
                       onChange={setSelectedIds}
-                      options={availableMembers.map((m) => ({ label: `${m.display_name} (${m.pan})`, value: m.id }))}
+                      options={availableMembers.map((m) => ({ label: `${m.display_name} (${formatPan(m.pan)})`, value: m.id }))}
                     />
                     <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>
                       Select all
