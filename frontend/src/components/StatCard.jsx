@@ -12,7 +12,7 @@ export default function StatCard({ title, value, icon, variant = 'primary', valu
   return (
     <Card className="stat-card" bordered={false}>
       <div className={`stat-card-icon ${iconClass[variant] || iconClass.primary}`}>{icon}</div>
-      <div>
+      <div className="stat-card-content">
         <div className="stat-card-label">{title}</div>
         <div className={`stat-card-value ${valueClassName}`}>{value}</div>
       </div>

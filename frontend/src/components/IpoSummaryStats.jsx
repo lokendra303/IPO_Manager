@@ -28,8 +28,8 @@ export default function IpoSummaryStats({ summary, loading }) {
         </Link>
       }
     >
-      <Row gutter={[16, 16]} style={{ marginBottom: summary ? 12 : 0 }}>
-        <Col xs={12} sm={8} lg={4}>
+      <Row gutter={[16, 16]} className="ipo-summary-stats" style={{ marginBottom: summary ? 12 : 0 }}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Members"
             value={summary ? summary.applicationCount : '—'}
@@ -37,7 +37,7 @@ export default function IpoSummaryStats({ summary, loading }) {
             variant="info"
           />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Distributed"
             value={summary ? formatCurrency(summary.totalDistributed) : '—'}
@@ -45,7 +45,7 @@ export default function IpoSummaryStats({ summary, loading }) {
             variant="primary"
           />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Returned"
             value={summary ? formatCurrency(summary.totalReturned) : '—'}
@@ -53,7 +53,7 @@ export default function IpoSummaryStats({ summary, loading }) {
             variant="success"
           />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Pending return"
             value={summary ? formatCurrency(summary.pendingReturn) : '—'}
@@ -61,7 +61,7 @@ export default function IpoSummaryStats({ summary, loading }) {
             variant="warning"
           />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Gross P&L"
             value={summary ? formatCurrency(pl) : '—'}
@@ -70,7 +70,7 @@ export default function IpoSummaryStats({ summary, loading }) {
             valueClassName={pnlClassName(pl)}
           />
         </Col>
-        <Col xs={12} sm={8} lg={4}>
+        <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Manager share"
             value={summary ? formatCurrency(summary.shareManagerTotal) : '—'}

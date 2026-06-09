@@ -614,7 +614,7 @@ body {
 .stat-card {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   transition: box-shadow 0.2s, transform 0.2s;
   height: 100%;
 }
@@ -628,6 +628,11 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 16px;
+}
+
+.stat-card-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .stat-card-icon {
@@ -674,11 +679,23 @@ body {
 }
 
 .stat-card-value {
-  font-size: 24px;
+  font-size: clamp(17px, 2.4vw, 22px);
   font-weight: 700;
   color: #0f172a;
-  line-height: 1.2;
+  line-height: 1.25;
   letter-spacing: -0.02em;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
+
+.ipo-summary-stats .stat-card .ant-card-body {
+  padding: 16px !important;
+  gap: 12px;
+}
+
+.ipo-summary-stats .stat-card-value {
+  font-size: clamp(16px, 1.8vw, 20px);
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-card-value--profit {
