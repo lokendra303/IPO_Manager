@@ -4,7 +4,13 @@ import { pool, withTransaction } from '../db/pool.js';
 
 import { AppError } from '../middleware/errorHandler.js';
 
-import { creditWallet, debitWallet, creditWalletFromAccounts, debitWalletFromAccounts } from '../services/walletService.js';
+import {
+  creditWallet,
+  debitWallet,
+  creditWalletFromAccounts,
+  debitWalletFromAccounts,
+  applyWalletDelta,
+} from '../services/walletService.js';
 import { requireBankAccountId, getBankAccount, assertAccountAllocations, syncOwnerWalletTotal } from '../services/bankAccountService.js';
 
 import { parsePositiveInt, parseDate } from '../utils/validate.js';
@@ -442,6 +448,68 @@ router.post('/:id/transactions', async (req, res, next) => {
 });
 
 
+
+router.delete('/:id/transactions/:txnId', async (req, res, next) => {
+  try {
+    const providerId = parsePositiveInt(req.params.id, 'provider id');
+    const txnId = parsePositiveInt(req.params.txnId, 'transaction id');
+
+    const result = await withTransaction(async (conn) => {
+      const [existing] = await conn.query(
+        `SELECT * FROM provider_transactions
+         WHERE id = ? AND fund_provider_id = ? AND tenant_id = ?`,
+        [txnId, providerId, req.tenantId]
+      );
+      if (!existing.length) throw new AppError('Transaction not found', 404);
+
+      const txn = existing[0];
+      const label = txn.account_label || '';
+      if (label === 'P&L Share' || label === 'P&L Share (Loss)') {
+        throw new AppError(
+          'This entry was created by IPO P&L split. Change allotment/P&L on the IPO page to reverse it.',
+          400
+        );
+      }
+
+      const [walletTxns] = await conn.query(
+        `SELECT id, bank_account_id, amount FROM wallet_transactions
+         WHERE tenant_id = ? AND ref_type = 'provider_transaction' AND ref_id = ?`,
+        [req.tenantId, txnId]
+      );
+
+      const now = new Date();
+      for (const wt of walletTxns) {
+        const amount = Number(wt.amount);
+        if (!amount) continue;
+        await applyWalletDelta(conn, {
+          tenantId: req.tenantId,
+          delta: -amount,
+          bankAccountId: wt.bank_account_id,
+          type: 'ADJUSTMENT',
+          refType: 'provider_transaction_reversal',
+          refId: txnId,
+          txnDate: now,
+          notes: `Rollback — ${txn.notes?.trim() || 'provider transaction'}`,
+          userId: req.user.userId,
+          allowNegativeBalance: true,
+        });
+      }
+
+      await conn.query('DELETE FROM provider_transactions WHERE id = ?', [txnId]);
+      const walletBalance = await syncOwnerWalletTotal(conn, req.tenantId);
+      return { walletBalance, amount: Number(txn.amount) };
+    });
+
+    res.json({
+      rolledBack: true,
+      transactionId: txnId,
+      amount: result.amount,
+      walletBalance: result.walletBalance,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.patch('/:id/transactions/:txnId', async (req, res, next) => {
 

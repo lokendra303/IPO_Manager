@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Col, Row, Table, Tag, Button } from 'antd';
+import { Alert, Col, Row, Table, Tag, Button, Typography } from 'antd';
 import {
   WalletOutlined,
   RiseOutlined,
@@ -7,10 +7,14 @@ import {
   ArrowRightOutlined,
   BellOutlined,
   ClockCircleOutlined,
+  UserOutlined,
+  FallOutlined,
+  BankOutlined,
+  PercentageOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
-import { formatCurrency, formatPan } from '../utils/format';
+import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
@@ -30,6 +34,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState(null);
   const [txns, setTxns] = useState([]);
   const [openIssueCount, setOpenIssueCount] = useState(0);
+  const [pnlTotals, setPnlTotals] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,12 +43,14 @@ export default function DashboardPage() {
       client.get('/summary'),
       client.get('/wallet/transactions'),
       client.get('/member-issues/count'),
+      client.get('/profit-shares/totals').catch(() => ({ data: null })),
     ])
-      .then(([w, s, t, issues]) => {
+      .then(([w, s, t, issues, pnl]) => {
         setWallet(w.data);
         setSummary(s.data);
         setTxns(t.data.slice(0, 8));
         setOpenIssueCount(issues.data.openCount ?? 0);
+        setPnlTotals(pnl.data);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -56,7 +63,11 @@ export default function DashboardPage() {
 
   if (loading) return <PageLoading />;
 
-  const profit = summary?.totals?.totalIpoProfit ?? 0;
+  const overall = pnlTotals?.overall ?? {};
+  const managerNet = overall.managerShare ?? 0;
+  const managerProfit = overall.managerProfit ?? 0;
+  const managerLoss = overall.managerLoss ?? 0;
+  const grossIpoPnL = overall.grossIpoPnL ?? summary?.totals?.totalIpoProfit ?? 0;
   const activeMembers = summary?.rows?.filter((r) => r.status === 'ACTIVE').length ?? 0;
 
   const txnCols = [
@@ -124,35 +135,86 @@ export default function DashboardPage() {
           style={{ marginBottom: 24 }}
         />
       )}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={8}>
+      <ContentCard
+        title="P&L overview"
+        extra={(
+          <Link to="/profit-sharing" className="content-card-extra-link">
+            Profit sharing details <ArrowRightOutlined />
+          </Link>
+        )}
+        padded
+        className="dashboard-manager-card"
+        style={{ marginBottom: 24 }}
+      >
+        <div className="dashboard-stat-grid">
           <StatCard
-            title="Wallet Balance"
+            title="Wallet balance"
             value={formatCurrency(wallet?.balance ?? 0)}
             icon={<WalletOutlined />}
             variant="primary"
           />
-        </Col>
-        <Col xs={24} sm={8}>
           <StatCard
-            title="Total IPO Profit"
-            value={formatCurrency(profit)}
-            icon={<RiseOutlined />}
-            variant={profit >= 0 ? 'success' : 'danger'}
-            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+            title="Your net share"
+            value={formatCurrency(managerNet)}
+            icon={<UserOutlined />}
+            variant={managerNet >= 0 ? 'success' : 'danger'}
+            valueClassName={pnlClassName(managerNet)}
           />
-        </Col>
-        <Col xs={24} sm={8}>
+          <StatCard
+            title="Your profit share"
+            value={formatCurrency(managerProfit)}
+            icon={<RiseOutlined />}
+            variant="success"
+            valueClassName="stat-card-value--profit"
+          />
+          <StatCard
+            title="Your loss share"
+            value={formatCurrency(managerLoss)}
+            icon={<FallOutlined />}
+            variant="danger"
+            valueClassName="stat-card-value--loss"
+          />
+          <StatCard
+            title="Gross IPO P&L"
+            value={formatCurrency(grossIpoPnL)}
+            icon={<PercentageOutlined />}
+            variant={grossIpoPnL >= 0 ? 'success' : 'danger'}
+            valueClassName={pnlClassName(grossIpoPnL)}
+          />
+          <StatCard
+            title="Provider share (given)"
+            value={formatCurrency(overall.providerShare ?? 0)}
+            icon={<BankOutlined />}
+            variant="info"
+          />
+          <StatCard
+            title="Member share (kept)"
+            value={formatCurrency(overall.memberShare ?? 0)}
+            icon={<TeamOutlined />}
+            variant="default"
+          />
           <Link to="/members" className="stat-card-link">
             <StatCard
-              title="Active Members"
+              title="Active members"
               value={activeMembers}
               icon={<TeamOutlined />}
               variant="info"
             />
           </Link>
-        </Col>
-      </Row>
+        </div>
+        {(overall.pendingCount > 0 || overall.distributionCount > 0) && (
+          <Typography.Text type="secondary" className="dashboard-stat-footnote">
+            P&L splits done: {overall.distributionCount ?? 0}
+            {(overall.pendingCount ?? 0) > 0 && (
+              <>
+                {' · '}
+                Pending split: {formatCurrency(overall.grossPending ?? 0)} ({overall.pendingCount} application
+                {overall.pendingCount === 1 ? '' : 's'})
+              </>
+            )}
+          </Typography.Text>
+        )}
+      </ContentCard>
       {pendingReturns.length > 0 && (
         <ContentCard
           title="Pending fund returns"

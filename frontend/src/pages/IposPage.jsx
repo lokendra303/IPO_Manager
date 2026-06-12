@@ -111,6 +111,7 @@ export default function IposPage() {
           {r.status === 'OPEN' ? (
             <Popconfirm
               title="Close this IPO?"
+              description="Status only — does not return funds to providers or members."
               onConfirm={async () => {
                 try {
                   await client.post(`/ipos/${r.id}/close`);

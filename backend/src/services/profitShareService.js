@@ -685,6 +685,14 @@ export async function revokeProfitShareDistribution(conn, { tenantId, applicatio
   return { revoked: true, applicationId, distributionId: distribution.id };
 }
 
+export async function isIpoFinancialsFrozen(conn, tenantId, ipoId) {
+  const [rows] = await conn.query(
+    'SELECT status FROM ipos WHERE id = ? AND tenant_id = ?',
+    [ipoId, tenantId]
+  );
+  return rows[0]?.status === 'CLOSED';
+}
+
 /** Auto-apply member share rules when app is ALLOTED with non-zero P&L (skips if already distributed). */
 export async function tryAutoDistributeApplication(conn, { tenantId, applicationId, userId }) {
   const [app] = await conn.query(
@@ -693,6 +701,10 @@ export async function tryAutoDistributeApplication(conn, { tenantId, application
     [applicationId, tenantId]
   );
   if (!app.length) return { applicationId, skipped: true, reason: 'Application not found' };
+
+  if (await isIpoFinancialsFrozen(conn, tenantId, app[0].ipo_id)) {
+    return { applicationId, skipped: true, reason: 'IPO is closed — reopen to run P&L splits' };
+  }
 
   const existing = await getDistributionForApplication(conn, tenantId, applicationId);
   if (existing && app[0].allotment_status !== 'ALLOTED') {
@@ -725,12 +737,17 @@ export async function tryAutoDistributeApplication(conn, { tenantId, application
 }
 
 export async function distributeProfitShares(conn, { tenantId, ipoId, applicationIds, userId }) {
+  if (ipoId && (await isIpoFinancialsFrozen(conn, tenantId, ipoId))) {
+    throw new AppError('Cannot distribute P&L for a closed IPO. Reopen the IPO first.');
+  }
+
   let query = `
-    SELECT a.*, i.name as ipo_name, m.display_name
+    SELECT a.*, i.name as ipo_name, m.display_name, i.status AS ipo_status
     FROM ipo_applications a
     JOIN ipos i ON i.id = a.ipo_id
     JOIN members m ON m.id = a.member_id
     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL
+      AND i.status = 'OPEN'
   `;
   const params = [tenantId];
 
@@ -975,7 +992,9 @@ export async function getProfitTotalsReport(pool, tenantId) {
        COALESCE(SUM(manager_amount), 0) as manager_share,
        COALESCE(SUM(member_amount), 0) as member_share,
        COALESCE(SUM(CASE WHEN pnl_type = 'PROFIT' THEN gross_profit_loss ELSE 0 END), 0) as gross_profit,
-       COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN gross_profit_loss ELSE 0 END), 0) as gross_loss
+       COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN gross_profit_loss ELSE 0 END), 0) as gross_loss,
+       COALESCE(SUM(CASE WHEN pnl_type = 'PROFIT' THEN manager_amount ELSE 0 END), 0) as manager_profit,
+       COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN manager_amount ELSE 0 END), 0) as manager_loss
      FROM profit_share_distributions WHERE tenant_id = ?`,
     [tenantId]
   );
@@ -1077,9 +1096,13 @@ export async function getProfitTotalsReport(pool, tenantId) {
       distributionCount: Number(dist.distribution_count ?? 0),
       distributedProfit: num(dist.gross_profit),
       distributedLoss: num(dist.gross_loss),
+      managerProfit: num(dist.manager_profit),
+      managerLoss: num(dist.manager_loss),
     },
     manager: {
       totalShare: num(dist.manager_share),
+      profitShare: num(dist.manager_profit),
+      lossShare: num(dist.manager_loss),
       label: 'Manager (you)',
     },
     byMember: byMember.map((r) => ({

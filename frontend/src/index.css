@@ -203,11 +203,18 @@ body {
 }
 
 .stat-card-link {
-  display: block;
+  display: flex;
+  height: 100%;
+  min-height: 0;
   text-decoration: none;
   color: inherit;
-  border-radius: 16px;
+  border-radius: 12px;
   transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.stat-card-link .stat-card {
+  flex: 1;
+  width: 100%;
 }
 
 .stat-card-link:hover {
@@ -626,8 +633,10 @@ body {
 .stat-card .ant-card-body {
   padding: 20px !important;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .stat-card-content {
@@ -669,6 +678,11 @@ body {
 .stat-card-icon--info {
   background: #e0f2fe;
   color: #0284c7;
+}
+
+.stat-card-icon--default {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .stat-card-label {
@@ -719,10 +733,29 @@ body {
   padding: 0 20px;
 }
 
+.content-card .ant-card-head-wrapper {
+  align-items: center;
+}
+
+.content-card-extra-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #0d9488;
+  white-space: nowrap;
+}
+
+.content-card-extra-link:hover {
+  color: #0f766e;
+}
+
 .content-card .ant-card-head-title {
   font-weight: 600;
   font-size: 15px;
   color: #0f172a;
+  padding: 14px 0;
 }
 
 .content-card .ant-card-body {
@@ -730,6 +763,35 @@ body {
 }
 
 .content-card .ant-card-body--padded {
+  padding: 20px !important;
+}
+
+.dashboard-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.dashboard-stat-grid .stat-card {
+  min-width: 0;
+  min-height: 96px;
+}
+
+.dashboard-stat-grid .stat-card-value {
+  font-size: clamp(16px, 1.5vw, 20px);
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-stat-footnote {
+  display: block;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 13px;
+}
+
+.dashboard-manager-card .ant-card-body--padded {
   padding: 20px !important;
 }
 
@@ -1467,6 +1529,11 @@ body {
     padding: 12px 16px;
   }
 
+  .dashboard-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
   .content-card .ant-card-head-wrapper {
     flex-direction: column;
     align-items: flex-start;
@@ -1832,6 +1899,10 @@ body {
 @media (max-width: 480px) {
   .member-portal-stat-grid--3,
   .member-portal-stat-grid--ipo {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-stat-grid {
     grid-template-columns: 1fr;
   }
 }

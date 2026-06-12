@@ -6,6 +6,7 @@ const iconClass = {
   warning: 'stat-card-icon--warning',
   danger: 'stat-card-icon--danger',
   info: 'stat-card-icon--info',
+  default: 'stat-card-icon--default',
 };
 
 export default function StatCard({ title, value, icon, variant = 'primary', valueClassName = '' }) {

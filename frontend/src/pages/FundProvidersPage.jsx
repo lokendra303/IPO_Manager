@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   Table, Button, Tag, Modal, Form, Input, InputNumber, DatePicker, Space,
-  message, Drawer, Switch, Row, Col, Select, Typography,
+  message, Drawer, Switch, Row, Col, Select, Typography, Popconfirm,
 } from 'antd';
-import { PlusOutlined, TransactionOutlined, BankOutlined, EditOutlined } from '@ant-design/icons';
+import { PlusOutlined, TransactionOutlined, BankOutlined, EditOutlined, UndoOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency, amountToWordsInr } from '../utils/format';
@@ -23,6 +23,9 @@ export default function FundProvidersPage() {
   const [editTxnModal, setEditTxnModal] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
   const [savingTxnEdit, setSavingTxnEdit] = useState(false);
+  const [savingTxn, setSavingTxn] = useState(false);
+  const [savingProvider, setSavingProvider] = useState(false);
+  const [rollingBackTxnId, setRollingBackTxnId] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -33,6 +36,7 @@ export default function FundProvidersPage() {
   const [creditMode, setCreditMode] = useState('single');
   const [creditSplits, setCreditSplits] = useState({});
   const [txnAmount, setTxnAmount] = useState(null);
+  const [txnType, setTxnType] = useState('funds');
 
   const load = () => {
     setLoading(true);
@@ -55,15 +59,23 @@ export default function FundProvidersPage() {
     setTransactions(data);
   };
 
-  const openTxnModal = () => {
+  const openTxnModal = (type = 'funds') => {
+    setTxnType(type);
     setCreditMode('single');
     setCreditSplits({});
     setTxnAmount(null);
-    txnForm.setFieldsValue({ creditToWallet: true, txnDate: dayjs(), bankAccountId: undefined });
+    txnForm.setFieldsValue({
+      creditToWallet: type === 'funds',
+      txnDate: dayjs(),
+      bankAccountId: undefined,
+      providerProfit: undefined,
+    });
     setTxnModal(true);
   };
 
   const onSaveProvider = async (values) => {
+    if (savingProvider) return;
+    setSavingProvider(true);
     try {
       await client.post('/fund-providers', values);
       message.success('Fund provider added');
@@ -72,6 +84,8 @@ export default function FundProvidersPage() {
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
+    } finally {
+      setSavingProvider(false);
     }
   };
 
@@ -110,14 +124,38 @@ export default function FundProvidersPage() {
     }
   };
 
+  const onRollbackTxn = async (txn) => {
+    if (!selected || rollingBackTxnId) return;
+    setRollingBackTxnId(txn.id);
+    try {
+      const { data } = await client.delete(`/fund-providers/${selected.id}/transactions/${txn.id}`);
+      message.success(
+        `Transaction rolled back — ${formatCurrency(data.amount)} removed from provider ledger${
+          txn.account_label ? ' and wallet adjusted' : ''
+        }`
+      );
+      load();
+      loadAccounts();
+      openLedger(selected);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to roll back transaction'));
+    } finally {
+      setRollingBackTxnId(null);
+    }
+  };
+
   const onSaveTxn = async (values) => {
+    if (savingTxn) return;
+
     const amount = Number(values.amount);
     const splitEntries = Object.entries(creditSplits)
       .map(([bankAccountId, amt]) => ({ bankAccountId: Number(bankAccountId), amount: Number(amt) || 0 }))
       .filter((e) => e.amount > 0);
     const splitTotal = splitEntries.reduce((s, e) => s + e.amount, 0);
 
-    if (values.creditToWallet && creditMode === 'split') {
+    const isShareOnly = txnType === 'share';
+
+    if (!isShareOnly && values.creditToWallet && creditMode === 'split') {
       if (Math.abs(splitTotal - Math.abs(amount)) > 0.001) {
         message.error(`Split amounts (${formatCurrency(splitTotal)}) must equal transaction amount (${formatCurrency(Math.abs(amount))})`);
         return;
@@ -127,39 +165,50 @@ export default function FundProvidersPage() {
         return;
       }
     }
-    if (values.creditToWallet && creditMode === 'single' && !values.bankAccountId && bankAccounts.length > 1) {
+    if (!isShareOnly && values.creditToWallet && creditMode === 'single' && !values.bankAccountId && bankAccounts.length > 1) {
       message.error('Select which bank account received the funds');
       return;
     }
-    if (values.creditToWallet && creditMode === 'single' && !values.bankAccountId && bankAccounts.length === 0) {
+    if (!isShareOnly && values.creditToWallet && creditMode === 'single' && !values.bankAccountId && bankAccounts.length === 0) {
       message.error('Add a bank account under Wallet first');
       return;
     }
 
+    setSavingTxn(true);
     try {
       const body = {
         amount: values.amount,
         txnDate: values.txnDate?.toISOString(),
         notes: values.notes,
-        providerProfit: values.providerProfit,
-        creditToWallet: values.creditToWallet,
+        providerProfit: isShareOnly ? (values.providerProfit ?? values.amount) : values.providerProfit,
+        creditToWallet: isShareOnly ? false : values.creditToWallet,
       };
-      if (creditMode === 'split' && splitEntries.length) {
+      if (!isShareOnly && creditMode === 'split' && splitEntries.length) {
         body.accountCredits = amount < 0 ? undefined : splitEntries;
         body.accountDebits = amount < 0 ? splitEntries : undefined;
-      } else if (values.bankAccountId) {
+      } else if (!isShareOnly && values.bankAccountId) {
         body.bankAccountId = values.bankAccountId;
       }
       await client.post(`/fund-providers/${selected.id}/transactions`, body);
-      message.success('Transaction recorded');
       setTxnModal(false);
       txnForm.resetFields();
       setCreditSplits({});
+      setTxnAmount(null);
+      setTxnType('funds');
+      message.success(
+        isShareOnly
+          ? `P&L share recorded for provider — ${formatCurrency(amount)}`
+          : amount >= 0
+            ? `Funds added successfully — ${formatCurrency(amount)}`
+            : `Repayment recorded — ${formatCurrency(Math.abs(amount))}`
+      );
       load();
       loadAccounts();
       if (drawerOpen) openLedger(selected);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Failed'));
+      message.error(getErrorMessage(err, 'Failed to record transaction'));
+    } finally {
+      setSavingTxn(false);
     }
   };
 
@@ -228,12 +277,35 @@ export default function FundProvidersPage() {
     },
     {
       title: '',
-      width: 80,
-      render: (_, r) => (
-        <Button size="small" icon={<EditOutlined />} onClick={() => openEditTxn(r)}>
-          Edit
-        </Button>
-      ),
+      width: 150,
+      render: (_, r) => {
+        const isAutoPnL = r.account_label === 'P&L Share' || r.account_label === 'P&L Share (Loss)';
+        return (
+          <Space size="small">
+            <Button size="small" icon={<EditOutlined />} onClick={() => openEditTxn(r)}>
+              Edit
+            </Button>
+            {!isAutoPnL && (
+              <Popconfirm
+                title="Roll back this entry?"
+                description="Removes it from the provider ledger and reverses any wallet change."
+                okText="Roll back"
+                okButtonProps={{ danger: true, loading: rollingBackTxnId === r.id }}
+                onConfirm={() => onRollbackTxn(r)}
+              >
+                <Button
+                  size="small"
+                  danger
+                  icon={<UndoOutlined />}
+                  loading={rollingBackTxnId === r.id}
+                >
+                  Roll back
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -267,7 +339,15 @@ export default function FundProvidersPage() {
         <Table rowKey="id" loading={loading} columns={columns} dataSource={providers} {...tableDefaults} />
       </ContentCard>
 
-      <Modal title="Add Fund Provider" open={providerModal} onCancel={() => setProviderModal(false)} onOk={() => form.submit()} destroyOnClose>
+      <Modal
+        title="Add Fund Provider"
+        open={providerModal}
+        onCancel={() => !savingProvider && setProviderModal(false)}
+        onOk={() => form.submit()}
+        confirmLoading={savingProvider}
+        maskClosable={!savingProvider}
+        destroyOnClose
+      >
         <Form form={form} layout="vertical" onFinish={onSaveProvider}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}>
             <Input placeholder="Sagar Gupta" />
@@ -275,19 +355,61 @@ export default function FundProvidersPage() {
         </Form>
       </Modal>
 
-      <Modal title={`Transaction — ${selected?.name}`} open={txnModal} onCancel={() => setTxnModal(false)} onOk={() => txnForm.submit()} destroyOnClose width={520}>
+      <Modal
+        title={txnType === 'share' ? `P&L Share — ${selected?.name}` : `Transaction — ${selected?.name}`}
+        open={txnModal}
+        onCancel={() => {
+          if (savingTxn) return;
+          setTxnModal(false);
+          setTxnType('funds');
+        }}
+        onOk={() => txnForm.submit()}
+        confirmLoading={savingTxn}
+        maskClosable={!savingTxn}
+        destroyOnClose
+        width={520}
+      >
         <Form form={txnForm} layout="vertical" onFinish={onSaveTxn} initialValues={{ creditToWallet: true }}>
-          <Form.Item name="amount" label="Amount (+ receive / − repay)" rules={[{ required: true }]}>
+          <Form.Item label="Transaction type">
+            <Select
+              value={txnType}
+              onChange={(v) => {
+                setTxnType(v);
+                if (v === 'share') {
+                  txnForm.setFieldsValue({ creditToWallet: false, bankAccountId: undefined });
+                  setCreditSplits({});
+                } else {
+                  txnForm.setFieldsValue({ creditToWallet: true });
+                }
+              }}
+              options={[
+                { value: 'funds', label: 'Add / repay funds (updates wallet)' },
+                { value: 'share', label: 'P&L share to provider (ledger only)' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="amount"
+            label={txnType === 'share' ? 'Share amount' : 'Amount (+ receive / − repay)'}
+            rules={[{ required: true }]}
+          >
             <InputNumber style={{ width: '100%' }} onChange={(v) => setTxnAmount(v)} />
           </Form.Item>
           <Form.Item name="txnDate" label="Date">
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="creditToWallet" label="Update wallet balances" valuePropName="checked">
-            <Switch />
-          </Form.Item>
+          {txnType === 'funds' && (
+            <Form.Item name="creditToWallet" label="Update wallet balances" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+          )}
+          {txnType === 'share' && (
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+              Provider ledger only — your wallet bank accounts are not used for P&L share entries.
+            </Typography.Text>
+          )}
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.creditToWallet !== cur.creditToWallet}>
-            {({ getFieldValue }) => getFieldValue('creditToWallet') && (
+            {({ getFieldValue }) => txnType === 'funds' && getFieldValue('creditToWallet') && (
               <>
                 <Typography.Text strong>Which account(s) received / paid funds?</Typography.Text>
                 <Select
@@ -354,9 +476,11 @@ export default function FundProvidersPage() {
               </>
             )}
           </Form.Item>
-          <Form.Item name="providerProfit" label="Provider Profit">
-            <InputNumber style={{ width: '100%' }} />
-          </Form.Item>
+          {txnType === 'funds' && (
+            <Form.Item name="providerProfit" label="Provider Profit (optional)">
+              <InputNumber style={{ width: '100%' }} />
+            </Form.Item>
+          )}
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
           </Form.Item>
@@ -395,9 +519,10 @@ export default function FundProvidersPage() {
         width={920}
         className="member-drawer fund-provider-ledger-drawer"
         extra={(
-          <Button type="primary" onClick={() => { setSelected(selected); openTxnModal(); }}>
-            Add Transaction
-          </Button>
+          <Space>
+            <Button onClick={() => openTxnModal('share')}>Record P&L Share</Button>
+            <Button type="primary" onClick={() => openTxnModal('funds')}>Add Transaction</Button>
+          </Space>
         )}
       >
         <Row gutter={16} style={{ marginBottom: 20 }}>

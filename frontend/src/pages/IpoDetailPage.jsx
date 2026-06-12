@@ -265,7 +265,7 @@ export default function IpoDetailPage() {
     try {
       const { data } = await client.post(`/ipos/${id}/close`);
       setIpo(data);
-      message.success('IPO closed — fund distribution is disabled until you reopen');
+      message.success('IPO closed — no wallet or provider transactions will run until you reopen');
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to close IPO'));
     } finally {
@@ -776,7 +776,12 @@ export default function IpoDetailPage() {
                 Check allotment (PAN)
               </Button>
             )}
-            <Button icon={<PercentageOutlined />} onClick={onPreviewProfitShare} loading={profitLoading}>
+            <Button
+              icon={<PercentageOutlined />}
+              onClick={onPreviewProfitShare}
+              loading={profitLoading}
+              disabled={isClosed}
+            >
               Distribute pending P&L
             </Button>
             {isClosed ? (
@@ -792,7 +797,7 @@ export default function IpoDetailPage() {
             ) : (
               <Popconfirm
                 title="Close this IPO?"
-                description="After close, Distribute Funds is disabled until you reopen. You can still update allotments and P&L."
+                description="Close updates status only — no wallet or fund-provider transactions. Reopen to distribute funds or run P&L splits."
                 onConfirm={onCloseIpo}
               >
                 <Button icon={<LockOutlined />} danger loading={statusLoading}>
@@ -837,19 +842,21 @@ export default function IpoDetailPage() {
         />
       )}
 
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="P&L share runs automatically on save"
-        description="When you set Alloted and enter profit or loss (e.g. ₹4,000), Save Changes splits it by that member's rules and adds a row in Profit Sharing → History."
-      />
+      {!isClosed && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="P&L share runs automatically on save"
+          description="When you set Alloted and enter profit or loss (e.g. ₹4,000), Save Changes splits it by that member's rules and adds a row in Profit Sharing → History."
+        />
+      )}
 
       {isClosed && (
         <Alert
           type="warning"
           message="IPO is closed"
-          description="Distribute Funds is disabled for closed IPOs. You can still edit allotments, profit/loss, and mark returns. Reopen IPO to add more members."
+          description="Closing only locks the IPO — it does not return money to fund providers. Wallet and provider ledger entries are frozen (no P&L splits or reversals on save). You can still mark member returns when funds come back. Reopen the IPO to distribute to more members or run P&L splits."
           style={{ marginBottom: 16 }}
           showIcon
         />

@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsePositiveInt, parseOptionalAmount, validateAllotmentStatus } from '../utils/validate.js';
-import { tryAutoDistributeApplication, revokeProfitShareDistribution } from '../services/profitShareService.js';
+import {
+  tryAutoDistributeApplication,
+  revokeProfitShareDistribution,
+  isIpoFinancialsFrozen,
+} from '../services/profitShareService.js';
 import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 
 const router = Router();
@@ -35,6 +39,7 @@ router.patch('/bulk', async (req, res, next) => {
         }
 
         const row = existing[0];
+        const ipoClosed = await isIpoFinancialsFrozen(conn, req.tenantId, row.ipo_id);
         validateAllotmentStatus(u.allotmentStatus);
 
         const fields = [];
@@ -103,7 +108,7 @@ router.patch('/bulk', async (req, res, next) => {
         );
         ids.push(appId);
 
-        if (willClearPnL) {
+        if (willClearPnL && !ipoClosed) {
           await revokeProfitShareDistribution(conn, {
             tenantId: req.tenantId,
             applicationId: appId,
@@ -112,7 +117,7 @@ router.patch('/bulk', async (req, res, next) => {
         }
 
         const mayTriggerShare =
-          !willClearPnL && (u.profitLoss !== undefined || u.allotmentStatus === 'ALLOTED');
+          !ipoClosed && !willClearPnL && (u.profitLoss !== undefined || u.allotmentStatus === 'ALLOTED');
 
         if (mayTriggerShare) {
           const result = await tryAutoDistributeApplication(conn, {

@@ -123,7 +123,8 @@ export default function MemberPortalPage() {
 
   const stats = dashboard?.stats ?? {};
   const subGroup = dashboard?.subGroup;
-  const profit = stats.totalIpoProfit ?? 0;
+  const memberProfit = stats.totalMemberShare ?? 0;
+  const grossIpoPnL = stats.grossIpoPnL ?? 0;
   const pendingReturn = stats.pendingReturn ?? 0;
   const memberPan = formatPan(dashboard?.member?.pan);
   const isGroupLeader = subGroup?.isLeader === true;
@@ -165,14 +166,27 @@ export default function MemberPortalPage() {
       render: (s) => <Tag color={allotmentColors[s]}>{s.replace(/_/g, ' ')}</Tag>,
     },
     {
-      title: 'P&L',
-      dataIndex: 'profitLoss',
-      render: (v) =>
-        v == null ? '—' : (
+      title: 'IPO gross P&L',
+      dataIndex: 'grossProfitLoss',
+      render: (v, row) =>
+        row.allotmentStatus !== 'ALLOTED' || v == null ? '—' : (
           <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
             {formatCurrency(v)}
           </span>
         ),
+    },
+    {
+      title: 'Your profit share',
+      dataIndex: 'memberShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return <Tag color="warning">Pending split</Tag>;
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        );
+      },
     },
     {
       title: 'Check status',
@@ -447,11 +461,11 @@ export default function MemberPortalPage() {
             variant="danger"
           />
           <StatCard
-            title="Total P&L"
-            value={formatCurrency(profit)}
+            title="Your profit share"
+            value={formatCurrency(memberProfit)}
             icon={<RiseOutlined />}
-            variant={profit >= 0 ? 'success' : 'danger'}
-            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+            variant={memberProfit >= 0 ? 'success' : 'danger'}
+            valueClassName={memberProfit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
           />
           {(stats.bonus ?? 0) > 0 && (
             <StatCard
@@ -462,6 +476,13 @@ export default function MemberPortalPage() {
             />
           )}
         </div>
+        {grossIpoPnL !== 0 && Math.abs(grossIpoPnL - memberProfit) > 0.01 && (
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12, fontSize: 13 }}>
+            Total IPO profit before your team split: {formatCurrency(grossIpoPnL)}
+            {' · '}
+            Your share is based on rules set by your manager.
+          </Typography.Text>
+        )}
       </ContentCard>
 
       {isGroupLeader && (
