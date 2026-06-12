@@ -7,7 +7,18 @@ import { normalizeEmail } from '../utils/validate.js';
 import { systemAdminMiddleware } from '../middleware/systemAdmin.js';
 import { ACTION_LABELS, labelForAction } from '../constants/auditActions.js';
 import { getTenantFullDetails } from '../services/adminTenantService.js';
-import { writeAuditLog } from '../services/auditLogService.js';
+import {
+  AUDIT_LOG_RETENTION_DAYS,
+  countAuditLogsOlderThan,
+  deleteAuditLogsOlderThan,
+  writeAuditLog,
+} from '../services/auditLogService.js';
+
+function parseRetentionDays(value) {
+  const days = Number(value) || AUDIT_LOG_RETENTION_DAYS;
+  if (!Number.isInteger(days) || days < 1 || days > 365) return AUDIT_LOG_RETENTION_DAYS;
+  return days;
+}
 
 const router = Router();
 
@@ -230,6 +241,50 @@ router.get('/audit-logs/stats', systemAdminMiddleware, async (req, res, next) =>
       member: actorMap.member ?? 0,
       tenantCount: Number(tenantCount[0].cnt),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/audit-logs/purge-preview', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const days = parseRetentionDays(req.query.days);
+    const tenantId = req.query.tenantId ? Number(req.query.tenantId) : null;
+    const count = await countAuditLogsOlderThan({ tenantId, days });
+    res.json({ count, days, tenantId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/audit-logs/purge', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const days = parseRetentionDays(req.query.days);
+    const tenantId = req.query.tenantId ? Number(req.query.tenantId) : null;
+    const pending = await countAuditLogsOlderThan({ tenantId, days });
+    if (pending === 0) {
+      return res.json({ deleted: 0, days, tenantId, message: `No audit logs older than ${days} days` });
+    }
+
+    const deleted = await deleteAuditLogsOlderThan({ tenantId, days });
+
+    if (tenantId) {
+      const [tenantRows] = await pool.query('SELECT name FROM tenants WHERE id = ?', [tenantId]);
+      await writeAuditLog({
+        tenantId,
+        actorType: 'manager',
+        actorId: 0,
+        actorLabel: req.admin.email,
+        action: 'ADMIN_AUDIT_PURGE',
+        entityType: 'tenant',
+        entityId: tenantId,
+        summary: `Admin deleted ${deleted} audit log${deleted === 1 ? '' : 's'} older than ${days} days`,
+        metadata: { deleted, days },
+        ipAddress: req.ip,
+      });
+    }
+
+    res.json({ deleted, days, tenantId });
   } catch (err) {
     next(err);
   }

@@ -269,7 +269,31 @@ function resolveRule(req) {
   return RULES.find((r) => r.method === req.method && r.pattern.test(apiPath));
 }
 
-async function resolveActor(user) {
+export const AUDIT_LOG_RETENTION_DAYS = 5;
+
+export async function countAuditLogsOlderThan({ tenantId = null, days = AUDIT_LOG_RETENTION_DAYS } = {}) {
+  const params = [days];
+  let where = 'WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)';
+  if (tenantId != null) {
+    where += ' AND tenant_id = ?';
+    params.push(tenantId);
+  }
+  const [rows] = await pool.query(`SELECT COUNT(*) AS cnt FROM audit_logs ${where}`, params);
+  return Number(rows[0].cnt);
+}
+
+export async function deleteAuditLogsOlderThan({ tenantId = null, days = AUDIT_LOG_RETENTION_DAYS } = {}) {
+  const params = [days];
+  let where = 'WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)';
+  if (tenantId != null) {
+    where += ' AND tenant_id = ?';
+    params.push(tenantId);
+  }
+  const [result] = await pool.query(`DELETE FROM audit_logs ${where}`, params);
+  return Number(result.affectedRows ?? 0);
+}
+
+export async function resolveActor(user) {
   if (!user) return { actorType: 'manager', actorId: 0, actorLabel: 'System' };
 
   if (user.role === 'member') {

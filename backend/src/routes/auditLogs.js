@@ -1,6 +1,19 @@
 import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { ACTION_LABELS, labelForAction } from '../constants/auditActions.js';
+import {
+  AUDIT_LOG_RETENTION_DAYS,
+  countAuditLogsOlderThan,
+  deleteAuditLogsOlderThan,
+  resolveActor,
+  writeAuditLog,
+} from '../services/auditLogService.js';
+
+function parseRetentionDays(value) {
+  const days = Number(value) || AUDIT_LOG_RETENTION_DAYS;
+  if (!Number.isInteger(days) || days < 1 || days > 365) return AUDIT_LOG_RETENTION_DAYS;
+  return days;
+}
 
 const router = Router();
 
@@ -37,6 +50,41 @@ router.get('/actions', (_req, res) => {
   res.json(
     Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }))
   );
+});
+
+router.get('/purge-preview', async (req, res, next) => {
+  try {
+    const days = parseRetentionDays(req.query.days);
+    const count = await countAuditLogsOlderThan({ tenantId: req.tenantId, days });
+    res.json({ count, days });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/purge', async (req, res, next) => {
+  try {
+    const days = parseRetentionDays(req.query.days);
+    const pending = await countAuditLogsOlderThan({ tenantId: req.tenantId, days });
+    if (pending === 0) {
+      return res.json({ deleted: 0, days, message: `No audit logs older than ${days} days` });
+    }
+
+    const deleted = await deleteAuditLogsOlderThan({ tenantId: req.tenantId, days });
+    const actor = await resolveActor(req.user);
+    await writeAuditLog({
+      tenantId: req.tenantId,
+      ...actor,
+      action: 'AUDIT_PURGE',
+      summary: `Deleted ${deleted} audit log${deleted === 1 ? '' : 's'} older than ${days} days`,
+      metadata: { deleted, days },
+      ipAddress: req.ip || req.headers['x-forwarded-for']?.split(',')[0]?.trim(),
+    });
+
+    res.json({ deleted, days });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get('/', async (req, res, next) => {

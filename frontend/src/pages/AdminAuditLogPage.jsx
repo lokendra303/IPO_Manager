@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Button, Col, Descriptions, Empty, Input, Row, Segmented, Select, Table, Tag, Tooltip, Typography,
+  Button, Col, Descriptions, Empty, Input, Modal, Row, Segmented, Select, Space, Table, Tag, Tooltip, Typography, message,
 } from 'antd';
-import { ReloadOutlined, HistoryOutlined, UserOutlined, TeamOutlined, ClockCircleOutlined, FilterOutlined } from '@ant-design/icons';
+import {
+  ReloadOutlined, HistoryOutlined, UserOutlined, TeamOutlined, ClockCircleOutlined, FilterOutlined, DeleteOutlined,
+} from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import adminClient from '../api/adminClient';
 import PageHeader from '../components/PageHeader';
@@ -52,6 +54,9 @@ export default function AdminAuditLogPage() {
   const [filters, setFilters] = useState({ search: '', action: undefined, actorType: 'all', tenantId: undefined });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
+  const [purging, setPurging] = useState(false);
+
+  const RETENTION_DAYS = 5;
 
   useEffect(() => {
     Promise.all([
@@ -94,6 +99,65 @@ export default function AdminAuditLogPage() {
     () => Boolean(filters.search || filters.action || filters.tenantId || filters.actorType !== 'all'),
     [filters]
   );
+
+  const selectedTenantName = useMemo(
+    () => tenants.find((t) => t.id === filters.tenantId)?.name,
+    [tenants, filters.tenantId]
+  );
+
+  const purgeOldLogs = async () => {
+    try {
+      const previewParams = { days: RETENTION_DAYS };
+      if (filters.tenantId) previewParams.tenantId = filters.tenantId;
+
+      const { data: preview } = await adminClient.get('/admin/audit-logs/purge-preview', {
+        params: previewParams,
+      });
+      if (preview.count === 0) {
+        message.info(`No audit logs older than ${RETENTION_DAYS} days to delete`);
+        return;
+      }
+
+      const scopeLabel = filters.tenantId
+        ? `team "${selectedTenantName || filters.tenantId}"`
+        : 'all teams';
+
+      Modal.confirm({
+        title: 'Delete old audit logs?',
+        content: (
+          <Typography.Text>
+            This will permanently delete{' '}
+            <strong>{preview.count.toLocaleString('en-IN')}</strong> event
+            {preview.count === 1 ? '' : 's'} older than {RETENTION_DAYS} days from {scopeLabel}.
+            This cannot be undone.
+          </Typography.Text>
+        ),
+        okText: 'Delete',
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          setPurging(true);
+          try {
+            const { data } = await adminClient.delete('/admin/audit-logs/purge', {
+              params: previewParams,
+            });
+            if (data.deleted) {
+              message.success(
+                `Deleted ${data.deleted.toLocaleString('en-IN')} audit log${data.deleted === 1 ? '' : 's'}`
+              );
+            } else {
+              message.info(data.message || 'Nothing to delete');
+            }
+            setPage(1);
+            await load();
+          } finally {
+            setPurging(false);
+          }
+        },
+      });
+    } catch (err) {
+      message.error(err.response?.data?.error || 'Failed to check audit logs');
+    }
+  };
 
   const cols = [
     {
@@ -161,9 +225,15 @@ export default function AdminAuditLogPage() {
         title="Platform Audit Log"
         subtitle="Activity across all manager teams — sign-ins, IPO actions, wallet changes, and more"
         extra={
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            Refresh
-          </Button>
+          <Space wrap>
+            <Button danger icon={<DeleteOutlined />} onClick={purgeOldLogs} loading={purging}>
+              Delete logs older than {RETENTION_DAYS} days
+              {filters.tenantId ? ' (filtered team)' : ''}
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+              Refresh
+            </Button>
+          </Space>
         }
       />
 

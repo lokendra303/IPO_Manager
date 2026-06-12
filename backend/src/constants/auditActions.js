@@ -32,6 +32,8 @@ export const ACTION_LABELS = {
   AUTH_REGISTER: 'Team registered',
   ADMIN_DISABLE: 'Team disabled by admin',
   ADMIN_ENABLE: 'Team re-enabled by admin',
+  AUDIT_PURGE: 'Audit log cleanup',
+  ADMIN_AUDIT_PURGE: 'Platform audit log cleanup',
 };
 
 export function labelForAction(action) {

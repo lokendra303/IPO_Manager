@@ -5,13 +5,16 @@ import {
   Descriptions,
   Empty,
   Input,
+  Modal,
   Row,
   Segmented,
   Select,
+  Space,
   Table,
   Tag,
   Tooltip,
   Typography,
+  message,
 } from 'antd';
 import {
   ReloadOutlined,
@@ -20,6 +23,7 @@ import {
   TeamOutlined,
   ClockCircleOutlined,
   FilterOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
 import PageHeader from '../components/PageHeader';
@@ -77,6 +81,9 @@ export default function AuditLogPage() {
   });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
+  const [purging, setPurging] = useState(false);
+
+  const RETENTION_DAYS = 5;
 
   useEffect(() => {
     Promise.all([
@@ -121,6 +128,53 @@ export default function AuditLogPage() {
   const clearFilters = () => {
     setFilters({ search: '', action: undefined, actorType: 'all' });
     setPage(1);
+  };
+
+  const purgeOldLogs = async () => {
+    try {
+      const { data: preview } = await client.get('/audit-logs/purge-preview', {
+        params: { days: RETENTION_DAYS },
+      });
+      if (preview.count === 0) {
+        message.info(`No audit logs older than ${RETENTION_DAYS} days to delete`);
+        return;
+      }
+
+      Modal.confirm({
+        title: 'Delete old audit logs?',
+        content: (
+          <Typography.Text>
+            This will permanently delete{' '}
+            <strong>{preview.count.toLocaleString('en-IN')}</strong> event
+            {preview.count === 1 ? '' : 's'} older than {RETENTION_DAYS} days from your team.
+            This cannot be undone.
+          </Typography.Text>
+        ),
+        okText: 'Delete',
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          setPurging(true);
+          try {
+            const { data } = await client.delete('/audit-logs/purge', {
+              params: { days: RETENTION_DAYS },
+            });
+            if (data.deleted) {
+              message.success(
+                `Deleted ${data.deleted.toLocaleString('en-IN')} audit log${data.deleted === 1 ? '' : 's'}`
+              );
+            } else {
+              message.info(data.message || 'Nothing to delete');
+            }
+            setPage(1);
+            await refreshAll();
+          } finally {
+            setPurging(false);
+          }
+        },
+      });
+    } catch (err) {
+      message.error(err.response?.data?.error || 'Failed to check audit logs');
+    }
   };
 
   const cols = [
@@ -198,9 +252,19 @@ export default function AuditLogPage() {
         title="Audit Log"
         subtitle="Complete history of changes, distributions, and sign-ins across your team"
         extra={
-          <Button icon={<ReloadOutlined />} onClick={refreshAll} loading={loading}>
-            Refresh
-          </Button>
+          <Space wrap>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              onClick={purgeOldLogs}
+              loading={purging}
+            >
+              Delete logs older than {RETENTION_DAYS} days
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={refreshAll} loading={loading}>
+              Refresh
+            </Button>
+          </Space>
         }
       />
 
