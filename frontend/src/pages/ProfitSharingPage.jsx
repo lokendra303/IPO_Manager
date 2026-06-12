@@ -79,7 +79,12 @@ function SharePercentForm({ form, prefix }) {
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
-          <Form.Item name={`${prefix}ManagerPercent`} label="Manager (you) %" rules={[{ required: true }]}>
+          <Form.Item
+            name={`${prefix}ManagerPercent`}
+            label="Manager (you) %"
+            rules={[{ required: true }]}
+            extra="Your cut only — member share is the remainder below."
+          >
             <InputNumber min={0} max={100} style={{ width: '100%' }} addonAfter="%" />
           </Form.Item>
         </Col>

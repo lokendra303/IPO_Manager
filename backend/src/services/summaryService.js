@@ -60,7 +60,10 @@ export async function getIpoSummaryById(pool, tenantId, ipoId) {
        COALESCE(SUM(psd.member_amount), 0) AS share_member_total
      FROM profit_share_distributions psd
      JOIN ipo_applications a ON a.id = psd.ipo_application_id
-     WHERE psd.tenant_id = ? AND a.ipo_id = ?`,
+     WHERE psd.tenant_id = ? AND a.ipo_id = ?
+       AND a.allotment_status = 'ALLOTED'
+       AND a.profit_loss IS NOT NULL
+       AND ABS(a.profit_loss - psd.gross_profit_loss) < 0.01`,
     [tenantId, ipoId]
   );
 
@@ -86,6 +89,9 @@ async function getIpoWiseSummary(pool, tenantId) {
      FROM profit_share_distributions psd
      JOIN ipo_applications a ON a.id = psd.ipo_application_id
      WHERE psd.tenant_id = ?
+       AND a.allotment_status = 'ALLOTED'
+       AND a.profit_loss IS NOT NULL
+       AND ABS(a.profit_loss - psd.gross_profit_loss) < 0.01
      GROUP BY a.ipo_id`,
     [tenantId]
   );

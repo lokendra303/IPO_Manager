@@ -122,7 +122,7 @@ export async function reconcileBalancesFromLedger(conn, tenantId) {
 }
 
 export async function listBankAccounts(conn, tenantId, { activeOnly = true } = {}) {
-  let query = `SELECT id, tenant_id, label, bank_name, account_number, is_active, balance, sort_order
+  let query = `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, balance, sort_order
      FROM manager_bank_accounts WHERE tenant_id = ?`;
   const params = [tenantId];
   if (activeOnly) {
@@ -133,6 +133,7 @@ export async function listBankAccounts(conn, tenantId, { activeOnly = true } = {
   return rows.map((r) => ({
     ...r,
     is_active: Boolean(r.is_active),
+    is_default: Boolean(r.is_default),
     balance: Number(r.balance),
   }));
 }
@@ -140,7 +141,7 @@ export async function listBankAccounts(conn, tenantId, { activeOnly = true } = {
 export async function getBankAccount(conn, tenantId, accountId) {
   const id = parsePositiveInt(accountId, 'bank account id');
   const [rows] = await conn.query(
-    `SELECT id, tenant_id, label, bank_name, account_number, is_active, balance, sort_order
+    `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, balance, sort_order
      FROM manager_bank_accounts WHERE id = ? AND tenant_id = ?`,
     [id, tenantId]
   );
@@ -149,6 +150,7 @@ export async function getBankAccount(conn, tenantId, accountId) {
   return {
     ...r,
     is_active: Boolean(r.is_active),
+    is_default: Boolean(r.is_default),
     balance: Number(r.balance),
   };
 }
@@ -171,7 +173,7 @@ export async function syncOwnerWalletTotal(conn, tenantId) {
   return total;
 }
 
-/** Manager must pick an account when several exist; only one active account can be implied. */
+/** Resolve bank account: explicit id, sole active account, default account, or first by sort order. */
 export async function requireBankAccountId(conn, tenantId, bankAccountId) {
   if (bankAccountId != null && bankAccountId !== '') {
     const account = await getBankAccount(conn, tenantId, bankAccountId);
@@ -186,7 +188,13 @@ export async function requireBankAccountId(conn, tenantId, bankAccountId) {
   if (accounts.length === 1) {
     return accounts[0].id;
   }
-  throw new AppError('Select which bank account to use');
+
+  const defaults = accounts.filter((a) => a.is_default);
+  if (defaults.length === 1) {
+    return defaults[0].id;
+  }
+
+  return accounts[0].id;
 }
 
 export async function assertAccountAllocations(conn, tenantId, allocations, totalRequired, actionLabel = 'allocation') {

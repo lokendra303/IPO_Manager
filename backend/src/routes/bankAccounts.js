@@ -33,15 +33,22 @@ router.post('/', async (req, res, next) => {
     if (!label?.trim()) throw new AppError('Account label is required');
 
     const row = await withTransaction(async (conn) => {
+      const [existing] = await conn.query(
+        'SELECT id FROM manager_bank_accounts WHERE tenant_id = ? LIMIT 1',
+        [req.tenantId]
+      );
+      const isDefault = existing.length === 0 ? 1 : 0;
+
       const [result] = await conn.query(
         `INSERT INTO manager_bank_accounts
          (tenant_id, label, bank_name, account_number, is_default, is_active, balance, sort_order)
-         VALUES (?, ?, ?, ?, 0, 1, 0, ?)`,
+         VALUES (?, ?, ?, ?, ?, 1, 0, ?)`,
         [
           req.tenantId,
           label.trim(),
           bankName?.trim() || null,
           accountNumber?.trim() || null,
+          isDefault,
           sortOrder ?? 0,
         ]
       );
@@ -58,10 +65,17 @@ router.post('/', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const accountId = parsePositiveInt(req.params.id, 'bank account id');
-    const { label, bankName, accountNumber, isActive, sortOrder } = req.body;
+    const { label, bankName, accountNumber, isActive, isDefault, sortOrder } = req.body;
 
     const row = await withTransaction(async (conn) => {
       await getBankAccount(conn, req.tenantId, accountId);
+
+      if (isDefault === true) {
+        await conn.query(
+          'UPDATE manager_bank_accounts SET is_default = 0 WHERE tenant_id = ?',
+          [req.tenantId]
+        );
+      }
 
       const fields = [];
       const values = [];
@@ -81,6 +95,10 @@ router.patch('/:id', async (req, res, next) => {
       if (isActive !== undefined) {
         fields.push('is_active = ?');
         values.push(isActive ? 1 : 0);
+      }
+      if (isDefault !== undefined) {
+        fields.push('is_default = ?');
+        values.push(isDefault ? 1 : 0);
       }
       if (sortOrder !== undefined) {
         fields.push('sort_order = ?');

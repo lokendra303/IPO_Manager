@@ -70,6 +70,7 @@ export default function WalletPage() {
       bankName: record.bank_name || undefined,
       accountNumber: record.account_number || undefined,
       isActive: record.is_active,
+      isDefault: record.is_default,
     });
     setAccountModal(true);
   };
@@ -84,6 +85,9 @@ export default function WalletPage() {
       };
       if (editingAccount) {
         body.isActive = values.isActive;
+        if (activeAccounts.length > 1) {
+          body.isDefault = values.isDefault;
+        }
         await client.patch(`/bank-accounts/${editingAccount.id}`, body);
         message.success('Bank details updated');
       } else {
@@ -169,6 +173,7 @@ export default function WalletPage() {
         <Space direction="vertical" size={0}>
           <Space>
             <span style={{ fontWeight: 500 }}>{r.label}</span>
+            {r.is_default && r.is_active && <Tag color="blue">Default</Tag>}
             {!r.is_active && <Tag>Inactive</Tag>}
           </Space>
           {(r.bank_name || r.account_number) && (
@@ -284,6 +289,20 @@ export default function WalletPage() {
                   ]}
                 />
               </Form.Item>
+              {activeAccounts.length > 1 && (
+                <Form.Item
+                  name="isDefault"
+                  label="Default account"
+                  extra="Used for automatic wallet entries (e.g. profit share) when no account is selected."
+                >
+                  <Select
+                    options={[
+                      { value: true, label: 'Yes — use for automatic entries' },
+                      { value: false, label: 'No' },
+                    ]}
+                  />
+                </Form.Item>
+              )}
             </>
           )}
         </Form>

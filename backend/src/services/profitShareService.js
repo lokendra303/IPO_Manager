@@ -577,18 +577,143 @@ export async function getMemberShareRule(conn, tenantId, memberId) {
   };
 }
 
+function amountsMatch(a, b) {
+  return Math.abs(Number(a) - Number(b)) < 0.01;
+}
+
+async function getDistributionForApplication(conn, tenantId, applicationId) {
+  const [rows] = await conn.query(
+    `SELECT psd.*, a.profit_loss, a.allotment_status, a.ipo_id, a.member_id,
+            m.display_name, i.name AS ipo_name
+     FROM profit_share_distributions psd
+     JOIN ipo_applications a ON a.id = psd.ipo_application_id
+     JOIN members m ON m.id = a.member_id
+     JOIN ipos i ON i.id = a.ipo_id
+     WHERE psd.ipo_application_id = ? AND psd.tenant_id = ?`,
+    [applicationId, tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function distributionNeedsUpdate(conn, tenantId, app, distribution) {
+  const gross = Number(app.profit_loss);
+  if (!amountsMatch(distribution.gross_profit_loss, gross)) return true;
+
+  const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
+  const rules = resolveRulesForIpo(allRules, app.ipo_id);
+  if (!rules.length) return false;
+
+  const split = calculateMultiRuleSplit(gross, rules);
+  return (
+    !amountsMatch(distribution.provider_amount, split.totalProvider)
+    || !amountsMatch(distribution.manager_amount, split.totalManager)
+    || !amountsMatch(distribution.member_amount, split.memberAmount)
+  );
+}
+
+/** Undo wallet/provider entries and remove a profit share distribution. */
+export async function revokeProfitShareDistribution(conn, { tenantId, applicationId, userId }) {
+  const distribution = await getDistributionForApplication(conn, tenantId, applicationId);
+  if (!distribution) return { revoked: false, applicationId };
+
+  const now = new Date();
+  const managerAmount = Number(distribution.manager_amount ?? 0);
+
+  if (managerAmount !== 0) {
+    const { applyWalletDelta } = await import('./walletService.js');
+    await applyWalletDelta(conn, {
+      tenantId,
+      delta: -managerAmount,
+      type: 'ADJUSTMENT',
+      refType: 'profit_share_reversal',
+      refId: applicationId,
+      txnDate: now,
+      notes: `Reversal — manager share (${distribution.display_name}, ${distribution.ipo_name})`,
+      userId,
+      allowNegativeBalance: true,
+    });
+  }
+
+  const [ruleLines] = await conn.query(
+    `SELECT psdr.*, fp.name AS provider_name
+     FROM profit_share_distribution_rules psdr
+     LEFT JOIN fund_providers fp ON fp.id = psdr.fund_provider_id
+     WHERE psdr.distribution_id = ?`,
+    [distribution.id]
+  );
+
+  for (const line of ruleLines) {
+    const providerAmount = Number(line.provider_amount ?? 0);
+    if (!line.fund_provider_id || providerAmount === 0) continue;
+
+    const noteSuffix = `${distribution.display_name} (${distribution.ipo_name})`;
+    const [providerTxns] = await conn.query(
+      `SELECT id FROM provider_transactions
+       WHERE tenant_id = ? AND fund_provider_id = ?
+         AND ABS(amount - ?) < 0.01
+         AND notes LIKE ?
+       ORDER BY id DESC LIMIT 1`,
+      [tenantId, line.fund_provider_id, providerAmount, `%${noteSuffix}%`]
+    );
+
+    if (providerTxns.length) {
+      await conn.query('DELETE FROM provider_transactions WHERE id = ?', [providerTxns[0].id]);
+    } else {
+      await conn.query(
+        `INSERT INTO provider_transactions
+         (fund_provider_id, tenant_id, amount, txn_date, account_label, notes, provider_profit, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          line.fund_provider_id,
+          tenantId,
+          -providerAmount,
+          now,
+          'P&L Share Reversal',
+          `Reversal — ${line.rule_name} — ${noteSuffix}`,
+          -providerAmount,
+          userId,
+        ]
+      );
+    }
+  }
+
+  await conn.query(
+    'DELETE FROM profit_share_distributions WHERE id = ? AND tenant_id = ?',
+    [distribution.id, tenantId]
+  );
+
+  return { revoked: true, applicationId, distributionId: distribution.id };
+}
+
 /** Auto-apply member share rules when app is ALLOTED with non-zero P&L (skips if already distributed). */
 export async function tryAutoDistributeApplication(conn, { tenantId, applicationId, userId }) {
   const [app] = await conn.query(
-    `SELECT allotment_status, profit_loss FROM ipo_applications WHERE id = ? AND tenant_id = ?`,
+    `SELECT allotment_status, profit_loss, member_id, ipo_id
+     FROM ipo_applications WHERE id = ? AND tenant_id = ?`,
     [applicationId, tenantId]
   );
   if (!app.length) return { applicationId, skipped: true, reason: 'Application not found' };
+
+  const existing = await getDistributionForApplication(conn, tenantId, applicationId);
+  if (existing && app[0].allotment_status !== 'ALLOTED') {
+    await revokeProfitShareDistribution(conn, { tenantId, applicationId, userId });
+    return { applicationId, skipped: true, reason: 'Not allotted — prior share reversed' };
+  }
+  if (existing && (app[0].profit_loss == null || Number(app[0].profit_loss) === 0)) {
+    await revokeProfitShareDistribution(conn, { tenantId, applicationId, userId });
+    return { applicationId, skipped: true, reason: 'No P&L set — prior share reversed' };
+  }
   if (app[0].allotment_status !== 'ALLOTED') {
     return { applicationId, skipped: true, reason: 'Not allotted' };
   }
   if (app[0].profit_loss == null || Number(app[0].profit_loss) === 0) {
     return { applicationId, skipped: true, reason: 'No P&L set' };
+  }
+  if (existing && !(await distributionNeedsUpdate(conn, tenantId, app[0], existing))) {
+    return { applicationId, skipped: true, reason: 'Already distributed' };
+  }
+  if (existing) {
+    await revokeProfitShareDistribution(conn, { tenantId, applicationId, userId });
   }
 
   const results = await distributeProfitShares(conn, {
@@ -624,13 +749,13 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
   const now = new Date();
 
   for (const app of apps) {
-    const [existing] = await conn.query(
-      'SELECT id FROM profit_share_distributions WHERE ipo_application_id = ?',
-      [app.id]
-    );
-    if (existing.length) {
+    const existing = await getDistributionForApplication(conn, tenantId, app.id);
+    if (existing && !(await distributionNeedsUpdate(conn, tenantId, app, existing))) {
       results.push({ applicationId: app.id, memberName: app.display_name, skipped: true, reason: 'Already distributed' });
       continue;
+    }
+    if (existing) {
+      await revokeProfitShareDistribution(conn, { tenantId, applicationId: app.id, userId });
     }
 
     const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);

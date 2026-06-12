@@ -10,6 +10,7 @@ import {
   FundOutlined,
   ClockCircleOutlined,
   CopyOutlined,
+  WalletOutlined,
 } from '@ant-design/icons';
 import StatCard from './StatCard';
 import { Link } from 'react-router-dom';
@@ -109,12 +110,27 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
       render: (v) => <Tag color={allotmentColors[v]}>{allotmentLabels[v] || v}</Tag>,
     },
     {
-      title: 'P&L',
+      title: 'Gross P&L',
       dataIndex: 'profit_loss',
       render: (v, r) => {
         if (r.allotment_status !== 'ALLOTED') return '—';
         const n = Number(v ?? 0);
         return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
+      },
+    },
+    {
+      title: 'Member share',
+      dataIndex: 'member_share',
+      render: (v, r) => {
+        if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
+        if (v == null) return <Tag color="warning">No rules</Tag>;
+        const n = Number(v);
+        return (
+          <Space size={4}>
+            <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>
+            {r.share_status === 'pending' && <Tag color="orange">Pending split</Tag>}
+          </Space>
+        );
       },
     },
     { title: 'Remarks', dataIndex: 'remarks', ellipsis: true },
@@ -189,13 +205,13 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
                         {rule.ipoId ? (rule.ipoName || 'IPO') : 'All IPOs'}
                       </Tag>
                       {' '}{rule.providerName}
-                      {' · '}Profit: {rule.profitProviderPercent}% / {rule.profitManagerPercent}%
-                      {' · '}Loss: {rule.lossProviderPercent}% / {rule.lossManagerPercent}%
+                      {' · '}Profit: Provider {rule.profitProviderPercent}% · Member {rule.profitMemberPercent}% · Manager {rule.profitManagerPercent}%
+                      {' · '}Loss: Provider {rule.lossProviderPercent}% · Member {rule.lossMemberPercent}% · Manager {rule.lossManagerPercent}%
                     </div>
                   ))}
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                    Combined — Profit: {data.profitShare.profitProviderPercent}% + {data.profitShare.profitManagerPercent}% manager
-                    {' · '}Loss: {data.profitShare.lossProviderPercent}% + {data.profitShare.lossManagerPercent}% manager
+                    Combined — Profit: Provider {data.profitShare.profitProviderPercent}% · Member {data.profitShare.profitMemberPercent}% · Manager {data.profitShare.profitManagerPercent}%
+                    {' · '}Loss: Provider {data.profitShare.lossProviderPercent}% · Member {data.profitShare.lossMemberPercent}% · Manager {data.profitShare.lossManagerPercent}%
                   </div>
                 </div>
               ) : (
@@ -232,13 +248,38 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
             <Col xs={12} sm={6}>
               <StatCard title="Pending IPOs" value={s.iposPending} variant="primary" icon={<ClockCircleOutlined />} />
             </Col>
-            <Col xs={24}>
+            <Col xs={12} sm={6}>
               <StatCard
-                title="Total IPO P&L"
+                title="Gross IPO P&L"
                 value={formatCurrency(s.totalIpoProfit)}
                 variant={s.totalIpoProfit >= 0 ? 'success' : 'danger'}
                 valueClassName={s.totalIpoProfit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
                 icon={<FundOutlined />}
+              />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard
+                title="Member share"
+                value={formatCurrency(s.totalMemberShare ?? 0)}
+                variant={(s.totalMemberShare ?? 0) >= 0 ? 'success' : 'danger'}
+                valueClassName={(s.totalMemberShare ?? 0) >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
+                icon={<ArrowDownOutlined />}
+              />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard
+                title="Provider share"
+                value={formatCurrency(s.totalProviderShare ?? 0)}
+                variant="info"
+                icon={<FundOutlined />}
+              />
+            </Col>
+            <Col xs={12} sm={6}>
+              <StatCard
+                title="Manager share"
+                value={formatCurrency(s.totalManagerShare ?? 0)}
+                variant="primary"
+                icon={<WalletOutlined />}
               />
             </Col>
           </Row>
@@ -254,7 +295,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
                     columns={ipoColumns}
                     dataSource={data.ipoApplications}
                     pagination={{ pageSize: 10 }}
-                    scroll={{ x: 800 }}
+                    scroll={{ x: 960 }}
                     className="pro-table"
                     size="middle"
                   />

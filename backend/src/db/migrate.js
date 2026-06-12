@@ -243,10 +243,6 @@ async function applyBankAccountsV5(conn) {
     console.log(`Migrated tenant ${tenantId} wallet to bank account ${accountId}`);
   }
 
-  if (await tableExists(conn, 'manager_bank_accounts')) {
-    await conn.query('UPDATE manager_bank_accounts SET is_default = 0');
-    console.log('Cleared default flags on bank accounts');
-  }
 }
 
 async function applyBankTransfersV6(conn) {
@@ -997,6 +993,88 @@ async function applyUppercasePanV31(conn) {
   }
 }
 
+async function applyOrphanedProfitShareCleanupV33(conn) {
+  if (!(await tableExists(conn, 'profit_share_distributions'))) return;
+
+  const { revokeProfitShareDistribution } = await import('../services/profitShareService.js');
+
+  const [orphans] = await conn.query(
+    `SELECT psd.ipo_application_id, psd.tenant_id
+     FROM profit_share_distributions psd
+     JOIN ipo_applications a ON a.id = psd.ipo_application_id
+     WHERE a.allotment_status <> 'ALLOTED'
+        OR a.profit_loss IS NULL
+        OR ABS(a.profit_loss - psd.gross_profit_loss) >= 0.01`
+  );
+
+  let cleaned = 0;
+  for (const row of orphans) {
+    const result = await revokeProfitShareDistribution(conn, {
+      tenantId: row.tenant_id,
+      applicationId: row.ipo_application_id,
+      userId: null,
+    });
+    if (result.revoked) cleaned += 1;
+  }
+
+  if (cleaned) {
+    console.log(`Reversed ${cleaned} orphaned profit share distribution(s)`);
+  }
+}
+
+async function applyBankAccountDefaultV32(conn) {
+  if (!(await tableExists(conn, 'manager_bank_accounts'))) return;
+
+  const [tenants] = await conn.query(
+    'SELECT DISTINCT tenant_id FROM manager_bank_accounts WHERE is_active = 1'
+  );
+
+  let fixed = 0;
+  for (const { tenant_id: tenantId } of tenants) {
+    const [defaults] = await conn.query(
+      `SELECT id FROM manager_bank_accounts
+       WHERE tenant_id = ? AND is_active = 1 AND is_default = 1
+       ORDER BY sort_order, id`,
+      [tenantId]
+    );
+
+    if (defaults.length === 1) continue;
+
+    if (defaults.length > 1) {
+      const keepId = defaults[0].id;
+      await conn.query(
+        'UPDATE manager_bank_accounts SET is_default = 0 WHERE tenant_id = ? AND id <> ?',
+        [tenantId, keepId]
+      );
+      fixed += 1;
+      continue;
+    }
+
+    const [first] = await conn.query(
+      `SELECT id FROM manager_bank_accounts
+       WHERE tenant_id = ? AND is_active = 1
+       ORDER BY sort_order, id
+       LIMIT 1`,
+      [tenantId]
+    );
+    if (!first.length) continue;
+
+    await conn.query(
+      'UPDATE manager_bank_accounts SET is_default = 0 WHERE tenant_id = ?',
+      [tenantId]
+    );
+    await conn.query(
+      'UPDATE manager_bank_accounts SET is_default = 1 WHERE id = ?',
+      [first[0].id]
+    );
+    fixed += 1;
+  }
+
+  if (fixed) {
+    console.log(`Set default bank account for ${fixed} tenant(s)`);
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -1041,6 +1119,8 @@ async function migrate() {
   await applyEmailIndexCompatV29(conn);
   await applyNotAppliedV30(conn);
   await applyUppercasePanV31(conn);
+  await applyBankAccountDefaultV32(conn);
+  await applyOrphanedProfitShareCleanupV33(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

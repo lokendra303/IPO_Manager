@@ -1,5 +1,6 @@
 import { parsePositiveInt } from '../utils/validate.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
 
 export async function getMemberDetail(pool, tenantId, memberId) {
   const id = parsePositiveInt(memberId, 'member id');
@@ -36,16 +37,27 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     lossProviderPercent: Number(row.loss_provider_percent ?? 0),
     lossManagerPercent: Number(row.loss_manager_percent ?? 0),
   }));
+  const profitProviderPercent = rules.reduce((s, r) => s + r.profitProviderPercent, 0);
+  const profitManagerPercent = rules.reduce((s, r) => s + r.profitManagerPercent, 0);
+  const lossProviderPercent = rules.reduce((s, r) => s + r.lossProviderPercent, 0);
+  const lossManagerPercent = rules.reduce((s, r) => s + r.lossManagerPercent, 0);
+
   const profitShare = rules.length
     ? {
         configured: true,
-        rules,
+        rules: rules.map((rule) => ({
+          ...rule,
+          profitMemberPercent: Math.max(0, 100 - rule.profitProviderPercent - rule.profitManagerPercent),
+          lossMemberPercent: Math.max(0, 100 - rule.lossProviderPercent - rule.lossManagerPercent),
+        })),
         ruleCount: rules.length,
         providerName: [...new Set(rules.map((r) => r.providerName).filter(Boolean))].join(', ') || null,
-        profitProviderPercent: rules.reduce((s, r) => s + r.profitProviderPercent, 0),
-        profitManagerPercent: rules.reduce((s, r) => s + r.profitManagerPercent, 0),
-        lossProviderPercent: rules.reduce((s, r) => s + r.lossProviderPercent, 0),
-        lossManagerPercent: rules.reduce((s, r) => s + r.lossManagerPercent, 0),
+        profitProviderPercent,
+        profitManagerPercent,
+        profitMemberPercent: Math.max(0, 100 - profitProviderPercent - profitManagerPercent),
+        lossProviderPercent,
+        lossManagerPercent,
+        lossMemberPercent: Math.max(0, 100 - lossProviderPercent - lossManagerPercent),
       }
     : { configured: false, rules: [], ruleCount: 0 };
 
@@ -64,9 +76,14 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     `SELECT a.id, a.amount, a.date_received, a.trns_received, a.date_given, a.trns_given,
             a.allotment_status, a.investor_category, a.profit_loss, a.remarks, a.created_at,
             i.id as ipo_id, i.name as ipo_name, i.lot_amount_rii, i.lot_amount_hni, i.lot_amount,
-            i.status as ipo_status
+            i.status as ipo_status,
+            psd.id AS profit_share_distribution_id,
+            psd.member_amount AS distributed_member_amount,
+            psd.provider_amount AS distributed_provider_amount,
+            psd.manager_amount AS distributed_manager_amount
      FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
+     LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
      WHERE a.member_id = ? AND a.tenant_id = ?
      ORDER BY a.created_at DESC`,
     [id, tenantId]
@@ -84,17 +101,62 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   let iposNotAlloted = 0;
   let iposPending = 0;
   let totalIpoProfit = 0;
+  let totalMemberShare = 0;
+  let totalProviderShare = 0;
+  let totalManagerShare = 0;
+  let pendingShareGross = 0;
 
-  for (const app of applications) {
+  const ipoApplications = applications.map((app) => {
+    const gross = app.allotment_status === 'ALLOTED' ? Number(app.profit_loss ?? 0) : 0;
+    let memberShare = null;
+    let providerShare = null;
+    let managerShare = null;
+    let shareStatus = null;
+
+    if (app.allotment_status === 'ALLOTED' && app.profit_loss != null && gross !== 0) {
+      totalIpoProfit += gross;
+
+      if (app.profit_share_distribution_id) {
+        memberShare = Number(app.distributed_member_amount ?? 0);
+        providerShare = Number(app.distributed_provider_amount ?? 0);
+        managerShare = Number(app.distributed_manager_amount ?? 0);
+        shareStatus = 'distributed';
+        totalMemberShare += memberShare;
+        totalProviderShare += providerShare;
+        totalManagerShare += managerShare;
+      } else if (rules.length) {
+        const applicableRules = resolveRulesForIpo(rules, app.ipo_id);
+        if (applicableRules.length) {
+          const split = calculateMultiRuleSplit(gross, applicableRules);
+          memberShare = split.memberAmount;
+          providerShare = split.totalProvider;
+          managerShare = split.totalManager;
+          shareStatus = 'pending';
+          totalMemberShare += memberShare;
+          totalProviderShare += providerShare;
+          totalManagerShare += managerShare;
+          pendingShareGross += gross;
+        }
+      }
+    }
+
     if (app.allotment_status === 'ALLOTED') {
       iposAlloted += 1;
-      totalIpoProfit += Number(app.profit_loss ?? 0);
     } else if (app.allotment_status === 'NOT_ALLOTED') {
       iposNotAlloted += 1;
     } else if (app.allotment_status !== 'NOT_APPLIED') {
       iposPending += 1;
     }
-  }
+
+    const { distributed_member_amount, distributed_provider_amount, distributed_manager_amount, ...rest } = app;
+    return {
+      ...rest,
+      member_share: memberShare,
+      provider_share: providerShare,
+      manager_share: managerShare,
+      share_status: shareStatus,
+    };
+  });
 
   return {
     member,
@@ -108,9 +170,13 @@ export async function getMemberDetail(pool, tenantId, memberId) {
       iposNotAlloted,
       iposPending,
       totalIpoProfit,
+      totalMemberShare,
+      totalProviderShare,
+      totalManagerShare,
+      pendingShareGross,
       willReceiveFromTeam: ledgerTotals.given - ledgerTotals.received,
     },
-    ipoApplications: applications,
+    ipoApplications,
     ledgerEntries: ledger,
   };
 }
