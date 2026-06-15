@@ -3,22 +3,65 @@ import nodemailer from 'nodemailer';
 
 let transporter;
 
+function stripEnvQuotes(value) {
+  if (!value || typeof value !== 'string') return '';
+  let v = value.trim();
+  while (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  return v;
+}
+
 function getFrontendUrl() {
   const url = (process.env.FRONTEND_URL || 'http://localhost:5173').trim();
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+/** Build a nodemailer-compatible From header (works with Vercel env vars). */
 function getFromAddress() {
-  return process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@ipo-manager.local';
+  const user = stripEnvQuotes(process.env.SMTP_USER);
+  const appName = stripEnvQuotes(process.env.APP_NAME) || 'IPO Team Manager';
+  const fromName = stripEnvQuotes(process.env.SMTP_FROM_NAME);
+  const rawFrom = stripEnvQuotes(process.env.SMTP_FROM);
+
+  if (rawFrom) {
+    const bracketMatch = rawFrom.match(/^(.+?)\s*<([^<>@\s]+@[^<>@\s]+)>$/);
+    if (bracketMatch) {
+      return {
+        name: stripEnvQuotes(bracketMatch[1]) || appName,
+        address: bracketMatch[2].trim(),
+      };
+    }
+    if (rawFrom.includes('@')) {
+      return { name: fromName || appName, address: rawFrom };
+    }
+    if (user) {
+      return { name: rawFrom, address: user };
+    }
+    return rawFrom;
+  }
+
+  if (fromName && user) {
+    return { name: fromName, address: user };
+  }
+
+  if (user) {
+    return { name: appName, address: user };
+  }
+
+  return 'noreply@ipo-manager.local';
 }
 
 function getTransporter() {
   if (transporter) return transporter;
 
-  const host = process.env.SMTP_HOST;
+  const host = process.env.SMTP_HOST?.trim();
   const port = Number(process.env.SMTP_PORT) || 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const user = stripEnvQuotes(process.env.SMTP_USER);
+  const pass = stripEnvQuotes(process.env.SMTP_PASS);
 
   if (!host || !user || !pass) {
     throw new Error(
@@ -31,6 +74,7 @@ function getTransporter() {
     port,
     secure: port === 465,
     auth: { user, pass },
+    ...(port === 587 ? { requireTLS: true } : {}),
   });
 
   return transporter;
