@@ -4,6 +4,7 @@ import { MailOutlined, SafetyOutlined, SafetyCertificateOutlined } from '@ant-de
 import adminClient from '../api/adminClient';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { getErrorMessage } from '../utils/errors';
+import ProfileOtpFields, { verifyAndPatch } from '../components/ProfileOtpFields';
 import PageHeader from '../components/PageHeader';
 import SettingsSection from '../components/SettingsSection';
 
@@ -21,6 +22,7 @@ export default function AdminSettingsPage() {
   const { admin, setAdmin } = useAdminAuth();
   const [emailLoading, setEmailLoading] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
+  const [otpSendLoading, setOtpSendLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('email');
   const [emailForm] = Form.useForm();
   const [passForm] = Form.useForm();
@@ -31,37 +33,51 @@ export default function AdminSettingsPage() {
     }
   }, [admin, emailForm]);
 
-  const onEmailSave = async (values) => {
-    setEmailLoading(true);
+  const sendProfileOtp = async () => {
+    setOtpSendLoading(true);
     try {
-      const { data } = await adminClient.patch('/admin/profile/email', {
-        email: values.email?.trim(),
-      });
-      setAdmin(data);
-      message.success('Email updated');
-      emailForm.setFieldsValue({ email: data.email });
+      const { data } = await adminClient.post('/admin/profile/send-otp');
+      message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Update failed'));
+      message.error(getErrorMessage(err, 'Could not send verification code'));
     } finally {
-      setEmailLoading(false);
+      setOtpSendLoading(false);
     }
   };
 
+  const onEmailSave = async (values) => {
+    await verifyAndPatch({
+      verifyOtp: (body) => adminClient.post('/admin/profile/verify-otp', body),
+      patch: (body) => adminClient.patch('/admin/profile/email', body),
+      otp: values.otp,
+      patchBody: { email: values.email?.trim() },
+      setLoading: setEmailLoading,
+      onSuccess: (data) => {
+        setAdmin(data);
+        message.success('Email updated');
+        emailForm.setFieldsValue({ email: data.email, otp: '' });
+      },
+      onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
+    });
+  };
+
   const onPasswordSave = async (values) => {
-    setPassLoading(true);
-    try {
-      await adminClient.patch('/admin/profile/password', {
+    await verifyAndPatch({
+      verifyOtp: (body) => adminClient.post('/admin/profile/verify-otp', body),
+      patch: (body) => adminClient.patch('/admin/profile/password', body),
+      otp: values.otp,
+      patchBody: {
         currentPassword: values.currentPassword,
         newPassword: values.newPassword,
         confirmPassword: values.confirmPassword,
-      });
-      message.success('Password updated');
-      passForm.resetFields();
-    } catch (err) {
-      message.error(getErrorMessage(err, 'Update failed'));
-    } finally {
-      setPassLoading(false);
-    }
+      },
+      setLoading: setPassLoading,
+      onSuccess: () => {
+        message.success('Password updated');
+        passForm.resetFields();
+      },
+      onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
+    });
   };
 
   const tabItems = [
@@ -79,10 +95,15 @@ export default function AdminSettingsPage() {
           description="You will use this email address to sign in to the admin panel."
           alert={{
             type: 'info',
-            message: 'After changing email, use the new address on your next login.',
+            message: 'Send a verification code to your current email, then save your new address.',
           }}
         >
           <Form form={emailForm} layout="vertical" onFinish={onEmailSave} requiredMark={false} size="large">
+            <ProfileOtpFields
+              email={admin?.email}
+              onSendOtp={sendProfileOtp}
+              sendLoading={otpSendLoading}
+            />
             <Form.Item
               name="email"
               label="Email address"
@@ -106,9 +127,14 @@ export default function AdminSettingsPage() {
         <SettingsSection
           icon={<SafetyOutlined />}
           title="Change password"
-          description="Use at least 6 characters. Choose something you do not use elsewhere."
+          description="Use at least 6 characters. Verify with the code sent to your email before saving."
         >
           <Form form={passForm} layout="vertical" onFinish={onPasswordSave} requiredMark={false} size="large">
+            <ProfileOtpFields
+              email={admin?.email}
+              onSendOtp={sendProfileOtp}
+              sendLoading={otpSendLoading}
+            />
             <Form.Item
               name="currentPassword"
               label="Current password"

@@ -3,7 +3,16 @@ CREATE TABLE IF NOT EXISTS system_admins (
   email VARCHAR(191) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255) DEFAULT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  password_reset_otp_hash VARCHAR(255) DEFAULT NULL,
+  password_reset_otp_expires DATETIME DEFAULT NULL,
+  password_reset_token VARCHAR(64) DEFAULT NULL,
+  password_reset_expires DATETIME DEFAULT NULL,
+  profile_otp_hash VARCHAR(255) DEFAULT NULL,
+  profile_otp_expires DATETIME DEFAULT NULL,
+  profile_action_token VARCHAR(64) DEFAULT NULL,
+  profile_action_expires DATETIME DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_system_admins_password_reset_token (password_reset_token)
 );
 
 CREATE TABLE IF NOT EXISTS tenants (
@@ -31,8 +40,14 @@ CREATE TABLE IF NOT EXISTS users (
   email_verified_at DATETIME DEFAULT NULL,
   email_verification_token VARCHAR(64) DEFAULT NULL,
   email_verification_expires DATETIME DEFAULT NULL,
+  password_reset_otp_hash VARCHAR(255) DEFAULT NULL,
+  password_reset_otp_expires DATETIME DEFAULT NULL,
   password_reset_token VARCHAR(64) DEFAULT NULL,
   password_reset_expires DATETIME DEFAULT NULL,
+  profile_otp_hash VARCHAR(255) DEFAULT NULL,
+  profile_otp_expires DATETIME DEFAULT NULL,
+  profile_action_token VARCHAR(64) DEFAULT NULL,
+  profile_action_expires DATETIME DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   INDEX idx_users_email_verification_token (email_verification_token),

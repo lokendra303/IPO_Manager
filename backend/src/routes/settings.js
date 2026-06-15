@@ -3,6 +3,13 @@ import bcrypt from 'bcryptjs';
 import { pool } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeEmail } from '../utils/validate.js';
+import { sendProfileChangeOtpEmail } from '../services/emailService.js';
+import { createOtp, expiryFromNowMinutes } from '../utils/tokens.js';
+import {
+  storeProfileOtp,
+  verifyProfileOtp,
+  consumeProfileActionToken,
+} from '../services/otpService.js';
 
 const router = Router();
 
@@ -53,11 +60,44 @@ router.patch('/team', async (req, res, next) => {
   }
 });
 
+router.post('/send-otp', async (req, res, next) => {
+  try {
+    const user = await getUserWithTenant(req.user.userId, req.tenantId);
+    const otp = createOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+
+    await storeProfileOtp('manager', user.id, otpHash, otpExpires);
+    await sendProfileChangeOtpEmail(user.email, otp);
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${user.email}`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/verify-otp', async (req, res, next) => {
+  try {
+    const actionToken = await verifyProfileOtp('manager', req.user.userId, req.body.otp);
+    res.json({
+      success: true,
+      actionToken,
+      message: 'Code verified. You can save your changes now.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.patch('/email', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body.email);
-
     const user = await getUserWithTenant(req.user.userId, req.tenantId);
+
+    await consumeProfileActionToken('manager', user.id, req.body.actionToken);
 
     if (email === user.email) {
       throw new AppError('New email is the same as your current email');
@@ -99,6 +139,7 @@ router.patch('/password', async (req, res, next) => {
     }
 
     const user = await getUserWithTenant(req.user.userId, req.tenantId);
+    await consumeProfileActionToken('manager', user.id, req.body.actionToken);
     await verifyPassword(user.password_hash, currentPassword);
 
     const hash = await bcrypt.hash(newPassword, 10);

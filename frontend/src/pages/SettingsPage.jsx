@@ -9,6 +9,7 @@ import {
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/errors';
+import ProfileOtpFields, { verifyAndPatch } from '../components/ProfileOtpFields';
 import PageHeader from '../components/PageHeader';
 import SettingsSection from '../components/SettingsSection';
 
@@ -27,6 +28,7 @@ export default function SettingsPage() {
   const [teamLoading, setTeamLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
+  const [otpSendLoading, setOtpSendLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('team');
   const [teamForm] = Form.useForm();
   const [emailForm] = Form.useForm();
@@ -55,36 +57,50 @@ export default function SettingsPage() {
     }
   };
 
-  const onEmailSave = async (values) => {
-    setEmailLoading(true);
+  const sendProfileOtp = async () => {
+    setOtpSendLoading(true);
     try {
-      const { data } = await client.patch('/settings/email', {
-        email: values.email,
-      });
-      setSessionUser(data);
-      message.success('Email updated');
-      emailForm.setFieldsValue({ email: data.email });
+      const { data } = await client.post('/settings/send-otp');
+      message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Update failed'));
+      message.error(getErrorMessage(err, 'Could not send verification code'));
     } finally {
-      setEmailLoading(false);
+      setOtpSendLoading(false);
     }
   };
 
+  const onEmailSave = async (values) => {
+    await verifyAndPatch({
+      verifyOtp: (body) => client.post('/settings/verify-otp', body),
+      patch: (body) => client.patch('/settings/email', body),
+      otp: values.otp,
+      patchBody: { email: values.email },
+      setLoading: setEmailLoading,
+      onSuccess: (data) => {
+        setSessionUser(data);
+        message.success('Email updated');
+        emailForm.setFieldsValue({ email: data.email, otp: '' });
+      },
+      onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
+    });
+  };
+
   const onPasswordSave = async (values) => {
-    setPassLoading(true);
-    try {
-      await client.patch('/settings/password', {
+    await verifyAndPatch({
+      verifyOtp: (body) => client.post('/settings/verify-otp', body),
+      patch: (body) => client.patch('/settings/password', body),
+      otp: values.otp,
+      patchBody: {
         currentPassword: values.currentPassword,
         newPassword: values.newPassword,
-      });
-      message.success('Password updated');
-      passForm.resetFields();
-    } catch (err) {
-      message.error(getErrorMessage(err, 'Update failed'));
-    } finally {
-      setPassLoading(false);
-    }
+      },
+      setLoading: setPassLoading,
+      onSuccess: () => {
+        message.success('Password updated');
+        passForm.resetFields();
+      },
+      onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
+    });
   };
 
   const tabItems = [
@@ -128,10 +144,15 @@ export default function SettingsPage() {
           description="You will use this email address to sign in."
           alert={{
             type: 'info',
-            message: 'After changing email, use the new address on your next login.',
+            message: 'Send a verification code to your current email, then save your new address.',
           }}
         >
           <Form form={emailForm} layout="vertical" onFinish={onEmailSave} requiredMark={false} size="large">
+            <ProfileOtpFields
+              email={user?.email}
+              onSendOtp={sendProfileOtp}
+              sendLoading={otpSendLoading}
+            />
             <Form.Item
               name="email"
               label="Email address"
@@ -155,9 +176,14 @@ export default function SettingsPage() {
         <SettingsSection
           icon={<SafetyOutlined />}
           title="Change password"
-          description="Use at least 6 characters. Choose something you do not use elsewhere."
+          description="Use at least 6 characters. Verify with the code sent to your email before saving."
         >
           <Form form={passForm} layout="vertical" onFinish={onPasswordSave} requiredMark={false} size="large">
+            <ProfileOtpFields
+              email={user?.email}
+              onSendOtp={sendProfileOtp}
+              sendLoading={otpSendLoading}
+            />
             <Form.Item
               name="currentPassword"
               label="Current password"

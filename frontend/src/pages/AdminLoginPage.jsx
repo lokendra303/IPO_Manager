@@ -53,6 +53,9 @@ export default function AdminLoginPage() {
             <Form.Item name="password" label="Password" rules={[{ required: true }]}>
               <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Password" />
             </Form.Item>
+            <div style={{ marginBottom: 16, textAlign: 'right' }}>
+              <Link to="/admin/forgot-password">Forgot password?</Link>
+            </div>
             <Button type="primary" htmlType="submit" block loading={loading} size="large" className="admin-login-btn">
               Sign in as Admin
             </Button>

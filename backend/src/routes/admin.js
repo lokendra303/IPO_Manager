@@ -13,12 +13,26 @@ import {
   deleteAuditLogsOlderThan,
   writeAuditLog,
 } from '../services/auditLogService.js';
+import { sendAdminPasswordOtpEmail, sendProfileChangeOtpEmail } from '../services/emailService.js';
+import { createOtp, expiryFromNowMinutes } from '../utils/tokens.js';
+import {
+  storePasswordResetOtp,
+  verifyPasswordResetOtp,
+  consumePasswordResetToken,
+  clearPasswordResetFields,
+  storeProfileOtp,
+  verifyProfileOtp,
+  consumeProfileActionToken,
+} from '../services/otpService.js';
 
 function parseRetentionDays(value) {
   const days = Number(value) || AUDIT_LOG_RETENTION_DAYS;
   if (!Number.isInteger(days) || days < 1 || days > 365) return AUDIT_LOG_RETENTION_DAYS;
   return days;
 }
+
+const GENERIC_ADMIN_RESET_MESSAGE =
+  'If an administrator account exists for that email, a verification code has been sent.';
 
 const router = Router();
 
@@ -58,6 +72,64 @@ router.post('/auth/login', async (req, res, next) => {
   }
 });
 
+router.post('/auth/forgot-password', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const [rows] = await pool.query('SELECT id FROM system_admins WHERE email = ?', [email]);
+
+    if (rows.length) {
+      const otp = createOtp();
+      const otpHash = await bcrypt.hash(otp, 10);
+      const otpExpires = expiryFromNowMinutes(10);
+      await storePasswordResetOtp('admin', rows[0].id, otpHash, otpExpires);
+      await sendAdminPasswordOtpEmail(email, otp);
+    }
+
+    res.json({ success: true, message: GENERIC_ADMIN_RESET_MESSAGE });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/auth/verify-otp', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const { resetToken } = await verifyPasswordResetOtp('admin', email, req.body.otp);
+
+    res.json({
+      success: true,
+      resetToken,
+      message: 'Verification successful. You can now set a new password.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/auth/reset-password', async (req, res, next) => {
+  try {
+    const resetToken = String(req.body.resetToken || '').trim();
+    const { password, confirmPassword } = req.body;
+
+    if (!password || !confirmPassword) {
+      throw new AppError('New password and confirmation are required', 400);
+    }
+    if (password !== confirmPassword) {
+      throw new AppError('New password and confirmation do not match', 400);
+    }
+    if (password.length < 6) throw new AppError('Password must be at least 6 characters', 400);
+
+    const adminId = await consumePasswordResetToken('admin', resetToken);
+    const hash = await bcrypt.hash(password, 10);
+    await pool.query('UPDATE system_admins SET password_hash = ? WHERE id = ?', [hash, adminId]);
+    await clearPasswordResetFields('admin', adminId);
+
+    res.json({ success: true, message: 'Password updated successfully. You can now sign in.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 async function getAdminById(adminId) {
   const [rows] = await pool.query(
     'SELECT id, email, password_hash, display_name FROM system_admins WHERE id = ?',
@@ -85,10 +157,44 @@ router.get('/auth/me', systemAdminMiddleware, async (req, res, next) => {
   }
 });
 
+router.post('/profile/send-otp', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const admin = await getAdminById(req.admin.adminId);
+    const otp = createOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+
+    await storeProfileOtp('admin', admin.id, otpHash, otpExpires);
+    await sendProfileChangeOtpEmail(admin.email, otp);
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${admin.email}`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/profile/verify-otp', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const actionToken = await verifyProfileOtp('admin', req.admin.adminId, req.body.otp);
+    res.json({
+      success: true,
+      actionToken,
+      message: 'Code verified. You can save your changes now.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.patch('/profile/email', systemAdminMiddleware, async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body.email);
     const admin = await getAdminById(req.admin.adminId);
+
+    await consumeProfileActionToken('admin', admin.id, req.body.actionToken);
 
     if (email === admin.email) {
       throw new AppError('New email is the same as your current email');
@@ -125,6 +231,7 @@ router.patch('/profile/password', systemAdminMiddleware, async (req, res, next) 
     }
 
     const admin = await getAdminById(req.admin.adminId);
+    await consumeProfileActionToken('admin', admin.id, req.body.actionToken);
     const valid = await bcrypt.compare(currentPassword, admin.password_hash);
     if (!valid) throw new AppError('Current password is incorrect', 401);
 

@@ -1105,6 +1105,58 @@ async function applyEmailAuthV34(conn) {
   );
 }
 
+async function applyAdminPasswordOtpV35(conn) {
+  if (!(await tableExists(conn, 'system_admins'))) return;
+
+  if (!(await columnExists(conn, 'system_admins', 'password_reset_otp_hash'))) {
+    await conn.query('ALTER TABLE system_admins ADD COLUMN password_reset_otp_hash VARCHAR(255) DEFAULT NULL');
+    console.log('Added system_admins.password_reset_otp_hash');
+  }
+  if (!(await columnExists(conn, 'system_admins', 'password_reset_otp_expires'))) {
+    await conn.query('ALTER TABLE system_admins ADD COLUMN password_reset_otp_expires DATETIME DEFAULT NULL');
+    console.log('Added system_admins.password_reset_otp_expires');
+  }
+  if (!(await columnExists(conn, 'system_admins', 'password_reset_token'))) {
+    await conn.query('ALTER TABLE system_admins ADD COLUMN password_reset_token VARCHAR(64) DEFAULT NULL');
+    console.log('Added system_admins.password_reset_token');
+  }
+  if (!(await columnExists(conn, 'system_admins', 'password_reset_expires'))) {
+    await conn.query('ALTER TABLE system_admins ADD COLUMN password_reset_expires DATETIME DEFAULT NULL');
+    console.log('Added system_admins.password_reset_expires');
+  }
+}
+
+async function applyProfileOtpV36(conn) {
+  for (const table of ['users', 'system_admins']) {
+    if (!(await tableExists(conn, table))) continue;
+
+    if (!(await columnExists(conn, table, 'password_reset_otp_hash'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN password_reset_otp_hash VARCHAR(255) DEFAULT NULL`);
+      console.log(`Added ${table}.password_reset_otp_hash`);
+    }
+    if (!(await columnExists(conn, table, 'password_reset_otp_expires'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN password_reset_otp_expires DATETIME DEFAULT NULL`);
+      console.log(`Added ${table}.password_reset_otp_expires`);
+    }
+    if (!(await columnExists(conn, table, 'profile_otp_hash'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_otp_hash VARCHAR(255) DEFAULT NULL`);
+      console.log(`Added ${table}.profile_otp_hash`);
+    }
+    if (!(await columnExists(conn, table, 'profile_otp_expires'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_otp_expires DATETIME DEFAULT NULL`);
+      console.log(`Added ${table}.profile_otp_expires`);
+    }
+    if (!(await columnExists(conn, table, 'profile_action_token'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_action_token VARCHAR(64) DEFAULT NULL`);
+      console.log(`Added ${table}.profile_action_token`);
+    }
+    if (!(await columnExists(conn, table, 'profile_action_expires'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_action_expires DATETIME DEFAULT NULL`);
+      console.log(`Added ${table}.profile_action_expires`);
+    }
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -1152,6 +1204,8 @@ async function migrate() {
   await applyBankAccountDefaultV32(conn);
   await applyOrphanedProfitShareCleanupV33(conn);
   await applyEmailAuthV34(conn);
+  await applyAdminPasswordOtpV35(conn);
+  await applyProfileOtpV36(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

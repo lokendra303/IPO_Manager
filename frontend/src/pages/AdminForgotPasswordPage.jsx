@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Card, Form, Input, Button, Typography, message, Steps } from 'antd';
 import { MailOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
-import client from '../api/client';
+import adminClient from '../api/adminClient';
 import { getErrorMessage } from '../utils/errors';
 
 const STEPS = [{ title: 'Email' }, { title: 'Verify OTP' }, { title: 'New password' }];
 
-export default function ForgotPasswordPage() {
+export default function AdminForgotPasswordPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -18,7 +18,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     try {
       const normalizedEmail = values.email?.trim();
-      const { data } = await client.post('/auth/forgot-password', { email: normalizedEmail });
+      const { data } = await adminClient.post('/admin/auth/forgot-password', { email: normalizedEmail });
       setEmail(normalizedEmail);
       setStep(1);
       message.success(data.message);
@@ -32,7 +32,7 @@ export default function ForgotPasswordPage() {
   const verifyOtp = async (values) => {
     setLoading(true);
     try {
-      const { data } = await client.post('/auth/verify-otp', {
+      const { data } = await adminClient.post('/admin/auth/verify-otp', {
         email,
         otp: values.otp?.trim(),
       });
@@ -49,13 +49,13 @@ export default function ForgotPasswordPage() {
   const resetPassword = async (values) => {
     setLoading(true);
     try {
-      const { data } = await client.post('/auth/reset-password', {
+      const { data } = await adminClient.post('/admin/auth/reset-password', {
         resetToken,
         password: values.password,
         confirmPassword: values.confirmPassword,
       });
       message.success(data.message);
-      navigate('/login');
+      navigate('/admin/login');
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not reset password'));
     } finally {
@@ -67,7 +67,7 @@ export default function ForgotPasswordPage() {
     if (!email) return;
     setLoading(true);
     try {
-      const { data } = await client.post('/auth/forgot-password', { email });
+      const { data } = await adminClient.post('/admin/auth/forgot-password', { email });
       message.success(data.message);
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not resend verification code'));
@@ -77,11 +77,11 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="login-page">
+    <div className="login-page admin-login-page">
       <div className="login-form-panel" style={{ margin: '0 auto', maxWidth: 480 }}>
         <Card className="login-card" bordered={false}>
           <Typography.Title level={3} className="login-card-title">
-            Forgot password
+            Reset admin password
           </Typography.Title>
           <Typography.Text className="login-card-sub" type="secondary">
             We will email you a 6-digit code to verify your identity.
@@ -91,10 +91,10 @@ export default function ForgotPasswordPage() {
 
           {step === 0 && (
             <Form layout="vertical" onFinish={sendOtp} size="large">
-              <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
-                <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
+              <Form.Item name="email" label="Admin email" rules={[{ required: true, type: 'email' }]}>
+                <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="admin@example.com" />
               </Form.Item>
-              <Button type="primary" htmlType="submit" block loading={loading} size="large">
+              <Button type="primary" htmlType="submit" block loading={loading} size="large" className="admin-login-btn">
                 Send verification code
               </Button>
             </Form>
@@ -120,7 +120,7 @@ export default function ForgotPasswordPage() {
                   inputMode="numeric"
                 />
               </Form.Item>
-              <Button type="primary" htmlType="submit" block loading={loading} size="large">
+              <Button type="primary" htmlType="submit" block loading={loading} size="large" className="admin-login-btn">
                 Verify code
               </Button>
               <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16, textAlign: 'center' }}>
@@ -160,14 +160,14 @@ export default function ForgotPasswordPage() {
               >
                 <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Repeat password" />
               </Form.Item>
-              <Button type="primary" htmlType="submit" block loading={loading} size="large">
+              <Button type="primary" htmlType="submit" block loading={loading} size="large" className="admin-login-btn">
                 Update password
               </Button>
             </Form>
           )}
 
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 20, textAlign: 'center' }}>
-            <Link to="/login">Back to sign in</Link>
+            <Link to="/admin/login">Back to admin sign in</Link>
           </Typography.Text>
         </Card>
       </div>

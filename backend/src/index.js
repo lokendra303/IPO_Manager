@@ -1,6 +1,6 @@
+import './env.js';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -25,8 +25,6 @@ import memberIssuesRoutes from './routes/memberIssues.js';
 import memberGroupsRoutes from './routes/memberGroups.js';
 import auditLogsRoutes from './routes/auditLogs.js';
 import { warmPool } from './db/pool.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;

@@ -1,3 +1,4 @@
+import '../env.js';
 import nodemailer from 'nodemailer';
 
 let transporter;
@@ -69,6 +70,55 @@ export async function sendVerificationEmail(email, token) {
       <p>This link expires in 24 hours.</p>
       <p>If you did not create an account, you can ignore this email.</p>
     `,
+  });
+}
+
+export async function sendOtpEmail(email, otp, { subject, plainIntro, htmlIntro }) {
+  const introText = plainIntro || htmlIntro?.replace(/<[^>]+>/g, '') || '';
+  const introHtml = htmlIntro || plainIntro || '';
+
+  await sendMail({
+    to: email,
+    subject,
+    text: [
+      introText,
+      '',
+      `Your one-time verification code is: ${otp}`,
+      '',
+      'This code expires in 10 minutes.',
+      'If you did not request this, you can ignore this email.',
+    ].join('\n'),
+    html: `
+      <p>${introHtml}</p>
+      <p>Your one-time verification code is:</p>
+      <p style="font-size: 28px; font-weight: bold; letter-spacing: 4px;">${otp}</p>
+      <p>This code expires in 10 minutes.</p>
+      <p>If you did not request this, you can ignore this email.</p>
+    `,
+  });
+}
+
+export async function sendAdminPasswordOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
+    subject: 'Your admin password reset code',
+    plainIntro: 'We received a request to reset your IPO Team Manager administrator password.',
+    htmlIntro: 'We received a request to reset your <strong>IPO Team Manager</strong> administrator password.',
+  });
+}
+
+export async function sendManagerPasswordOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
+    subject: 'Your password reset code',
+    plainIntro: 'We received a request to reset your IPO Team Manager password.',
+    htmlIntro: 'We received a request to reset your <strong>IPO Team Manager</strong> password.',
+  });
+}
+
+export async function sendProfileChangeOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
+    subject: 'Verify your profile change',
+    plainIntro: 'Use this code to confirm a change to your IPO Team Manager account settings.',
+    htmlIntro: 'Use this code to confirm a change to your <strong>IPO Team Manager</strong> account settings.',
   });
 }
 

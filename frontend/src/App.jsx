@@ -7,9 +7,9 @@ import MemberLayout from './components/MemberLayout';
 import AdminLayout from './components/AdminLayout';
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import ResetPasswordPage from './pages/ResetPasswordPage';
 import VerifyEmailPage from './pages/VerifyEmailPage';
 import AdminLoginPage from './pages/AdminLoginPage';
+import AdminForgotPasswordPage from './pages/AdminForgotPasswordPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminRegistrationsPage from './pages/AdminRegistrationsPage';
 import AdminTenantDetailPage from './pages/AdminTenantDetailPage';
@@ -56,6 +56,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/admin/login" element={<AdminLoginPage />} />
+      <Route path="/admin/forgot-password" element={<AdminForgotPasswordPage />} />
       <Route path="/admin" element={<AdminRoute><AdminDashboardPage /></AdminRoute>} />
       <Route path="/admin/registrations" element={<AdminRoute><AdminRegistrationsPage /></AdminRoute>} />
       <Route path="/admin/tenants/:id" element={<AdminRoute><AdminTenantDetailPage /></AdminRoute>} />
@@ -63,7 +64,7 @@ function AppRoutes() {
       <Route path="/admin/settings" element={<AdminRoute><AdminSettingsPage /></AdminRoute>} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/reset-password" element={<Navigate to="/forgot-password" replace />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/portal" element={<MemberRoute><MemberPortalPage /></MemberRoute>} />
       <Route path="/" element={<ManagerRoute><DashboardPage /></ManagerRoute>} />
