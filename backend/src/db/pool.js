@@ -1,7 +1,12 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const backendRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const isServerless = process.env.VERCEL === '1' || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
 
@@ -15,7 +20,25 @@ function resolveConnectionLimit() {
   return isServerless ? 2 : 10;
 }
 
+function resolveSsl() {
+  const raw = process.env.DB_SSL_CA?.trim();
+  if (!raw) return undefined;
+
+  if (raw.startsWith('-----BEGIN')) {
+    return { ca: raw, rejectUnauthorized: true };
+  }
+
+  const caPath = path.isAbsolute(raw) ? raw : path.join(backendRoot, raw);
+  if (!fs.existsSync(caPath)) {
+    console.warn(`DB_SSL_CA file not found (${caPath}); connecting without SSL`);
+    return undefined;
+  }
+
+  return { ca: fs.readFileSync(caPath), rejectUnauthorized: true };
+}
+
 const connectionLimit = resolveConnectionLimit();
+const ssl = resolveSsl();
 
 export const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -31,6 +54,7 @@ export const pool = mysql.createPool({
   maxIdle: isServerless ? 1 : connectionLimit,
   enableKeepAlive: !isServerless,
   keepAliveInitialDelay: 10_000,
+  ...(ssl ? { ssl } : {}),
 });
 
 export async function warmPool() {
