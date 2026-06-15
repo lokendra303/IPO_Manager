@@ -3,7 +3,8 @@ import { Card, Form, Input, Button, Tabs, Typography, message, Modal } from 'ant
 import { MailOutlined, LockOutlined, TeamOutlined, IdcardOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getAuthErrorModal } from '../utils/errors';
+import client from '../api/client';
+import { getAuthErrorModal, getErrorMessage } from '../utils/errors';
 
 function showAuthErrorModal(err, context) {
   const { title, content } = getAuthErrorModal(err, context);
@@ -19,7 +20,9 @@ function showAuthErrorModal(err, context) {
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState('');
   const [managerForm] = Form.useForm();
   const [registerForm] = Form.useForm();
   const { login, memberLogin, register, isAuthenticated, user } = useAuth();
@@ -44,14 +47,32 @@ export default function LoginPage() {
 
   const onLogin = async (values) => {
     setLoading(true);
+    setPendingVerifyEmail('');
     try {
       await login(values.email?.trim(), values.password);
       message.success('Welcome back!');
       navigate('/');
     } catch (err) {
+      const raw = err?.response?.data?.error || '';
+      if (raw.toLowerCase().includes('confirm your email')) {
+        setPendingVerifyEmail(values.email?.trim() || '');
+      }
       showAuthErrorModal(err, 'manager');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onResendVerification = async () => {
+    if (!pendingVerifyEmail) return;
+    setResendLoading(true);
+    try {
+      const { data } = await client.post('/auth/resend-verification', { email: pendingVerifyEmail });
+      message.success(data.message);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not resend confirmation email'));
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -63,7 +84,7 @@ export default function LoginPage() {
       registerForm.resetFields();
       managerForm.setFieldsValue({ email });
       setActiveTab('login');
-      message.success('Registration submitted. Sign in once an administrator approves your account.');
+      message.success('Registration submitted. Check your email to confirm your address before signing in.');
     } catch (err) {
       showAuthErrorModal(err, 'register');
     } finally {
@@ -140,6 +161,17 @@ export default function LoginPage() {
                     <Form.Item name="password" label="Password" rules={[{ required: true }]}>
                       <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Password" />
                     </Form.Item>
+                    <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                      <Link to="/forgot-password">Forgot password?</Link>
+                    </div>
+                    {pendingVerifyEmail ? (
+                      <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                        Need a new confirmation email?{' '}
+                        <Button type="link" size="small" loading={resendLoading} onClick={onResendVerification} style={{ padding: 0 }}>
+                          Resend verification email
+                        </Button>
+                      </Typography.Text>
+                    ) : null}
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
                       Sign in
                     </Button>
@@ -161,7 +193,7 @@ export default function LoginPage() {
                       <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Min. 6 characters" />
                     </Form.Item>
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                      New teams require administrator approval before you can sign in.
+                      New teams require email confirmation and administrator approval before you can sign in.
                     </Typography.Text>
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
                       Submit registration

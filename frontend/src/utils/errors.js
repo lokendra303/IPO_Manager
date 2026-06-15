@@ -46,6 +46,14 @@ export function getAuthErrorModal(err, context = 'manager') {
     };
   }
 
+  if (lower.includes('confirm your email') || lower.includes('email not verified')) {
+    return {
+      title: 'Email not confirmed',
+      content:
+        'Please confirm your email before signing in. Check your inbox for the confirmation link, or use "Resend verification email" below.',
+    };
+  }
+
   if (lower.includes('pending administrator approval') || lower.includes('pending approval')) {
     return {
       title: 'Account pending approval',

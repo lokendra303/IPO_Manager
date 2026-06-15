@@ -6,6 +6,9 @@ import AppLayout from './components/AppLayout';
 import MemberLayout from './components/MemberLayout';
 import AdminLayout from './components/AdminLayout';
 import LoginPage from './pages/LoginPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AdminRegistrationsPage from './pages/AdminRegistrationsPage';
@@ -59,6 +62,9 @@ function AppRoutes() {
       <Route path="/admin/audit-log" element={<AdminRoute><AdminAuditLogPage /></AdminRoute>} />
       <Route path="/admin/settings" element={<AdminRoute><AdminSettingsPage /></AdminRoute>} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/portal" element={<MemberRoute><MemberPortalPage /></MemberRoute>} />
       <Route path="/" element={<ManagerRoute><DashboardPage /></ManagerRoute>} />
       <Route path="/notifications" element={<ManagerRoute><NotificationsPage /></ManagerRoute>} />

@@ -1075,6 +1075,36 @@ async function applyBankAccountDefaultV32(conn) {
   }
 }
 
+async function applyEmailAuthV34(conn) {
+  if (!(await tableExists(conn, 'users'))) return;
+
+  if (!(await columnExists(conn, 'users', 'email_verified_at'))) {
+    await conn.query('ALTER TABLE users ADD COLUMN email_verified_at DATETIME DEFAULT NULL');
+    console.log('Added users.email_verified_at');
+  }
+  if (!(await columnExists(conn, 'users', 'email_verification_token'))) {
+    await conn.query('ALTER TABLE users ADD COLUMN email_verification_token VARCHAR(64) DEFAULT NULL');
+    console.log('Added users.email_verification_token');
+  }
+  if (!(await columnExists(conn, 'users', 'email_verification_expires'))) {
+    await conn.query('ALTER TABLE users ADD COLUMN email_verification_expires DATETIME DEFAULT NULL');
+    console.log('Added users.email_verification_expires');
+  }
+  if (!(await columnExists(conn, 'users', 'password_reset_token'))) {
+    await conn.query('ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(64) DEFAULT NULL');
+    console.log('Added users.password_reset_token');
+  }
+  if (!(await columnExists(conn, 'users', 'password_reset_expires'))) {
+    await conn.query('ALTER TABLE users ADD COLUMN password_reset_expires DATETIME DEFAULT NULL');
+    console.log('Added users.password_reset_expires');
+  }
+
+  await conn.query(
+    `UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at)
+     WHERE email_verified_at IS NULL`
+  );
+}
+
 async function migrate() {
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST || 'localhost',
@@ -1121,6 +1151,7 @@ async function migrate() {
   await applyUppercasePanV31(conn);
   await applyBankAccountDefaultV32(conn);
   await applyOrphanedProfitShareCleanupV33(conn);
+  await applyEmailAuthV34(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

@@ -28,8 +28,15 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(191) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('owner', 'super_admin') NOT NULL DEFAULT 'owner',
+  email_verified_at DATETIME DEFAULT NULL,
+  email_verification_token VARCHAR(64) DEFAULT NULL,
+  email_verification_expires DATETIME DEFAULT NULL,
+  password_reset_token VARCHAR(64) DEFAULT NULL,
+  password_reset_expires DATETIME DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_users_email_verification_token (email_verification_token),
+  INDEX idx_users_password_reset_token (password_reset_token)
 );
 
 CREATE TABLE IF NOT EXISTS members (
