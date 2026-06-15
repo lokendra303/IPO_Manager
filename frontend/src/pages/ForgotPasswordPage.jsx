@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Card, Form, Input, Button, Typography, message, Steps } from 'antd';
+import { Card, Form, Input, Button, Typography, message, Steps, Alert } from 'antd';
 import { MailOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage, getForgotPasswordError } from '../utils/errors';
 
 const STEPS = [{ title: 'Email' }, { title: 'Verify OTP' }, { title: 'New password' }];
 
@@ -11,21 +11,46 @@ export default function ForgotPasswordPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [resendVerifyLoading, setResendVerifyLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
+  const [formError, setFormError] = useState(null);
+  const [form] = Form.useForm();
+
+  const showSendError = (err) => {
+    const info = getForgotPasswordError(err, 'manager');
+    setFormError(info);
+    message.error(info.title);
+  };
 
   const sendOtp = async (values) => {
     setLoading(true);
+    setFormError(null);
     try {
       const normalizedEmail = values.email?.trim();
       const { data } = await client.post('/auth/forgot-password', { email: normalizedEmail });
       setEmail(normalizedEmail);
       setStep(1);
+      setFormError(null);
       message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not send verification code'));
+      showSendError(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resendVerification = async () => {
+    const targetEmail = email || form.getFieldValue('email')?.trim();
+    if (!targetEmail) return;
+    setResendVerifyLoading(true);
+    try {
+      const { data } = await client.post('/auth/resend-verification', { email: targetEmail });
+      message.success(data.message);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not resend confirmation email'));
+    } finally {
+      setResendVerifyLoading(false);
     }
   };
 
@@ -66,11 +91,12 @@ export default function ForgotPasswordPage() {
   const resendOtp = async () => {
     if (!email) return;
     setLoading(true);
+    setFormError(null);
     try {
       const { data } = await client.post('/auth/forgot-password', { email });
       message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not resend verification code'));
+      showSendError(err);
     } finally {
       setLoading(false);
     }
@@ -84,20 +110,51 @@ export default function ForgotPasswordPage() {
             Forgot password
           </Typography.Title>
           <Typography.Text className="login-card-sub" type="secondary">
-            We will email you a 6-digit code to verify your identity.
+            Enter the email on your active manager account. A code is sent only if the email is registered,
+            verified, and your team is approved.
           </Typography.Text>
 
           <Steps current={step} items={STEPS} size="small" style={{ margin: '24px 0' }} />
 
           {step === 0 && (
-            <Form layout="vertical" onFinish={sendOtp} size="large">
-              <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
-                <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
-              </Form.Item>
-              <Button type="primary" htmlType="submit" block loading={loading} size="large">
-                Send verification code
-              </Button>
-            </Form>
+            <>
+              {formError && (
+                <Alert
+                  type={formError.type}
+                  showIcon
+                  message={formError.title}
+                  description={
+                    <>
+                      <Typography.Paragraph style={{ marginBottom: formError.showResendVerification ? 8 : 0 }}>
+                        {formError.message}
+                      </Typography.Paragraph>
+                      {formError.showResendVerification && (
+                        <Button
+                          type="link"
+                          size="small"
+                          loading={resendVerifyLoading}
+                          onClick={resendVerification}
+                          style={{ padding: 0, height: 'auto' }}
+                        >
+                          Resend email confirmation
+                        </Button>
+                      )}
+                    </>
+                  }
+                  style={{ marginBottom: 16 }}
+                  closable
+                  onClose={() => setFormError(null)}
+                />
+              )}
+              <Form form={form} layout="vertical" onFinish={sendOtp} size="large">
+                <Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}>
+                  <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="you@email.com" />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" block loading={loading} size="large">
+                  Send verification code
+                </Button>
+              </Form>
+            </>
           )}
 
           {step === 1 && (
@@ -128,7 +185,14 @@ export default function ForgotPasswordPage() {
                   Resend code
                 </Button>
                 {' · '}
-                <Button type="link" onClick={() => setStep(0)} style={{ padding: 0 }}>
+                <Button
+                  type="link"
+                  onClick={() => {
+                    setStep(0);
+                    setFormError(null);
+                  }}
+                  style={{ padding: 0 }}
+                >
                   Change email
                 </Button>
               </Typography.Text>

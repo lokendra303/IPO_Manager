@@ -89,3 +89,82 @@ export function getAuthErrorModal(err, context = 'manager') {
     content: raw || 'Something went wrong. Please try again.',
   };
 }
+
+/** Forgot-password / resend OTP errors with title and optional UI hints. */
+export function getForgotPasswordError(err, context = 'manager') {
+  const raw = getErrorMessage(err, '');
+  const lower = raw.toLowerCase();
+  const status = err?.response?.status;
+
+  if (context === 'admin') {
+    if (status === 404 || lower.includes('no administrator account')) {
+      return {
+        title: 'Email not registered',
+        message:
+          'No system administrator account exists with this email. Check the spelling or contact your platform admin.',
+        type: 'error',
+      };
+    }
+    return {
+      title: 'Could not send code',
+      message: raw || 'Something went wrong. Please try again.',
+      type: 'error',
+    };
+  }
+
+  if (status === 404 || lower.includes('no manager account is registered')) {
+    return {
+      title: 'Email not registered',
+      message:
+        'No manager account exists with this email. Check the spelling, or register a new team from the sign-in page.',
+      type: 'error',
+    };
+  }
+
+  if (lower.includes('confirm your email')) {
+    return {
+      title: 'Email not verified',
+      message: raw,
+      type: 'warning',
+      showResendVerification: true,
+    };
+  }
+
+  if (lower.includes('pending administrator approval') || lower.includes('pending approval')) {
+    return {
+      title: 'Account not active yet',
+      message: raw,
+      type: 'warning',
+    };
+  }
+
+  if (lower.includes('rejected')) {
+    return {
+      title: 'Registration rejected',
+      message: raw,
+      type: 'error',
+    };
+  }
+
+  if (lower.includes('disabled')) {
+    return {
+      title: 'Account disabled',
+      message: raw,
+      type: 'error',
+    };
+  }
+
+  if (lower.includes('not active')) {
+    return {
+      title: 'Account not active',
+      message: raw,
+      type: 'warning',
+    };
+  }
+
+  return {
+    title: 'Could not send code',
+    message: raw || 'Something went wrong. Please try again.',
+    type: 'error',
+  };
+}

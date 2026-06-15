@@ -177,6 +177,31 @@ export async function assertGroupNameUnique(pool, tenantId, name, excludeId = nu
   if (rows.length) throw new AppError('A group with this name already exists', 409);
 }
 
+/** Members already in a different sub-group must be unassigned there before joining another. */
+export async function assertMembersNotInOtherGroup(conn, tenantId, targetGroupId, memberIds) {
+  if (!memberIds.length) return;
+
+  const uniqueIds = [...new Set(memberIds.map((id) => parsePositiveInt(id, 'member id')))];
+  const placeholders = uniqueIds.map(() => '?').join(',');
+  const [rows] = await conn.query(
+    `SELECT m.id, m.display_name, g.name AS group_name
+     FROM members m
+     JOIN member_groups g ON g.id = m.member_group_id AND g.tenant_id = m.tenant_id
+     WHERE m.tenant_id = ? AND m.id IN (${placeholders})
+       AND m.member_group_id IS NOT NULL
+       AND m.member_group_id != ?`,
+    [tenantId, ...uniqueIds, targetGroupId]
+  );
+
+  if (!rows.length) return;
+
+  const list = rows.map((r) => `${r.display_name} (“${r.group_name}”)`).join(', ');
+  throw new AppError(
+    `Cannot assign — already in another sub-group: ${list}. Unassign from their current group first.`,
+    409
+  );
+}
+
 export async function assignMembersToGroup(conn, tenantId, groupId, memberIds) {
   const uniqueIds = [...new Set(memberIds.map((id) => parsePositiveInt(id, 'member id')))];
   const [groupRows] = await conn.query(
@@ -194,6 +219,7 @@ export async function assignMembersToGroup(conn, tenantId, groupId, memberIds) {
     if (found.length !== uniqueIds.length) {
       throw new AppError('One or more members not found');
     }
+    await assertMembersNotInOtherGroup(conn, tenantId, groupId, uniqueIds);
   }
 
   await conn.query(

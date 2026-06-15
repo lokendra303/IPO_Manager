@@ -16,8 +16,7 @@ import {
 
 const router = Router();
 
-const GENERIC_RESET_MESSAGE =
-  'If an account exists for that email, a verification code has been sent.';
+const RESET_OTP_SENT_MESSAGE = 'A verification code has been sent to your email.';
 
 async function findUserByEmail(email) {
   const [rows] = await pool.query(
@@ -29,6 +28,38 @@ async function findUserByEmail(email) {
     [email]
   );
   return rows[0] || null;
+}
+
+/** Password reset is allowed only when the manager could sign in (verified email + approved team). */
+function assertManagerPasswordResetEligible(user) {
+  if (!user) {
+    throw new AppError('No manager account is registered with this email address.', 404);
+  }
+  if (!user.email_verified_at) {
+    throw new AppError(
+      'Please confirm your email before resetting your password. Check your inbox or resend the confirmation email from the sign-in page.',
+      403
+    );
+  }
+  if (user.tenant_status === 'PENDING') {
+    throw new AppError(
+      'Your team registration is pending administrator approval. You can reset your password after your account is approved.',
+      403
+    );
+  }
+  if (user.tenant_status === 'REJECTED') {
+    const reason = user.rejection_reason || 'Contact the system administrator for details.';
+    throw new AppError(`Your registration was rejected: ${reason}`, 403);
+  }
+  if (user.tenant_status === 'DISABLED') {
+    throw new AppError(
+      'Your team account has been disabled by the system administrator. Password reset is not available.',
+      403
+    );
+  }
+  if (user.tenant_status !== 'APPROVED') {
+    throw new AppError('Your account is not active. Contact the system administrator.', 403);
+  }
 }
 
 router.post('/register', async (req, res, next) => {
@@ -173,16 +204,15 @@ router.post('/forgot-password', async (req, res, next) => {
   try {
     const email = normalizeEmail(req.body.email);
     const user = await findUserByEmail(email);
+    assertManagerPasswordResetEligible(user);
 
-    if (user) {
-      const otp = createOtp();
-      const otpHash = await bcrypt.hash(otp, 10);
-      const otpExpires = expiryFromNowMinutes(10);
-      await storePasswordResetOtp('manager', user.id, otpHash, otpExpires);
-      await sendManagerPasswordOtpEmail(email, otp);
-    }
+    const otp = createOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+    await storePasswordResetOtp('manager', user.id, otpHash, otpExpires);
+    await sendManagerPasswordOtpEmail(email, otp);
 
-    res.json({ success: true, message: GENERIC_RESET_MESSAGE });
+    res.json({ success: true, message: RESET_OTP_SENT_MESSAGE });
   } catch (err) {
     next(err);
   }

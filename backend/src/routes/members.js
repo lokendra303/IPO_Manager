@@ -350,6 +350,14 @@ router.patch('/:id', async (req, res, next) => {
 
           if (!grp.length) throw new AppError('Member group not found', 404);
 
+          const currentGroupId = existing[0].member_group_id;
+          if (currentGroupId && Number(currentGroupId) !== gid) {
+            throw new AppError(
+              'Member is already in a sub-group. Clear sub-group first, then assign to another.',
+              409
+            );
+          }
+
           fields.push(`${col} = ?`);
 
           values.push(gid);

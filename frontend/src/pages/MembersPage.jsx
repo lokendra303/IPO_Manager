@@ -433,11 +433,24 @@ export default function MembersPage() {
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item name="memberGroupId" label="Sub-Group">
+              <Form.Item
+                name="memberGroupId"
+                label="Sub-Group"
+                extra={
+                  editing?.member_group_id
+                    ? 'To change groups: clear this field and save, then assign the new group.'
+                    : undefined
+                }
+              >
                 <Select
                   allowClear
                   placeholder="None — or pick e.g. Rinku"
-                  options={memberGroups.map((g) => ({ value: g.id, label: g.name }))}
+                  options={memberGroups
+                    .filter((g) => {
+                      if (!editing?.member_group_id) return true;
+                      return g.id === editing.member_group_id;
+                    })
+                    .map((g) => ({ value: g.id, label: g.name }))}
                 />
               </Form.Item>
             </Col>

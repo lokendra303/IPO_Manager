@@ -518,7 +518,8 @@ export default function MemberGroupsPage() {
         destroyOnClose
       >
         <Typography.Paragraph type="secondary">
-          A member can belong to one group only. Assigning here moves them into this group.
+          A member can belong to one sub-group only. To move someone from another group, unassign them there first
+          (uncheck in that group, or clear Sub-Group on the member).
         </Typography.Paragraph>
         <Checkbox.Group
           style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflow: 'auto' }}
@@ -529,12 +530,12 @@ export default function MemberGroupsPage() {
             const inOtherGroup =
               m.currentGroupId && assignGroup && m.currentGroupId !== assignGroup.id;
             return (
-              <Checkbox key={m.id} value={m.id}>
+              <Checkbox key={m.id} value={m.id} disabled={inOtherGroup}>
                 {m.displayName} ({formatPan(m.pan)})
                 {m.status === 'INACTIVE' && <Tag style={{ marginLeft: 8 }}>Inactive</Tag>}
                 {inOtherGroup && (
-                  <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
-                    currently in {m.currentGroupName}
+                  <Typography.Text type="danger" style={{ marginLeft: 8 }}>
+                    in “{m.currentGroupName}” — unassign first
                   </Typography.Text>
                 )}
               </Checkbox>
@@ -544,9 +545,15 @@ export default function MemberGroupsPage() {
         <Button
           type="link"
           style={{ paddingLeft: 0, marginTop: 8 }}
-          onClick={() => setSelectedMemberIds(memberOptions.map((m) => m.id))}
+          onClick={() =>
+            setSelectedMemberIds(
+              memberOptions
+                .filter((m) => !m.currentGroupId || m.currentGroupId === assignGroup?.id)
+                .map((m) => m.id)
+            )
+          }
         >
-          Select all members
+          Select all available members
         </Button>
         <Form.Item
           label="Group owner"

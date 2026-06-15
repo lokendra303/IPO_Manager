@@ -39,8 +39,7 @@ function parseRetentionDays(value) {
   return days;
 }
 
-const GENERIC_ADMIN_RESET_MESSAGE =
-  'If an administrator account exists for that email, a verification code has been sent.';
+const ADMIN_RESET_OTP_SENT_MESSAGE = 'A verification code has been sent to your email.';
 
 const router = Router();
 
@@ -85,15 +84,17 @@ router.post('/auth/forgot-password', async (req, res, next) => {
     const email = normalizeEmail(req.body.email);
     const [rows] = await pool.query('SELECT id FROM system_admins WHERE email = ?', [email]);
 
-    if (rows.length) {
-      const otp = createOtp();
-      const otpHash = await bcrypt.hash(otp, 10);
-      const otpExpires = expiryFromNowMinutes(10);
-      await storePasswordResetOtp('admin', rows[0].id, otpHash, otpExpires);
-      await sendAdminPasswordOtpEmail(email, otp);
+    if (!rows.length) {
+      throw new AppError('No administrator account is registered with this email address.', 404);
     }
 
-    res.json({ success: true, message: GENERIC_ADMIN_RESET_MESSAGE });
+    const otp = createOtp();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+    await storePasswordResetOtp('admin', rows[0].id, otpHash, otpExpires);
+    await sendAdminPasswordOtpEmail(email, otp);
+
+    res.json({ success: true, message: ADMIN_RESET_OTP_SENT_MESSAGE });
   } catch (err) {
     next(err);
   }

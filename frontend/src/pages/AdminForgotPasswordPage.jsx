@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Card, Form, Input, Button, Typography, message, Steps } from 'antd';
+import { Card, Form, Input, Button, Typography, message, Steps, Alert } from 'antd';
 import { MailOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { Link, useNavigate } from 'react-router-dom';
 import adminClient from '../api/adminClient';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage, getForgotPasswordError } from '../utils/errors';
 
 const STEPS = [{ title: 'Email' }, { title: 'Verify OTP' }, { title: 'New password' }];
 
@@ -13,17 +13,26 @@ export default function AdminForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [resetToken, setResetToken] = useState('');
+  const [formError, setFormError] = useState(null);
+
+  const showSendError = (err) => {
+    const info = getForgotPasswordError(err, 'admin');
+    setFormError(info);
+    message.error(info.title);
+  };
 
   const sendOtp = async (values) => {
     setLoading(true);
+    setFormError(null);
     try {
       const normalizedEmail = values.email?.trim();
       const { data } = await adminClient.post('/admin/auth/forgot-password', { email: normalizedEmail });
       setEmail(normalizedEmail);
       setStep(1);
+      setFormError(null);
       message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not send verification code'));
+      showSendError(err);
     } finally {
       setLoading(false);
     }
@@ -66,11 +75,12 @@ export default function AdminForgotPasswordPage() {
   const resendOtp = async () => {
     if (!email) return;
     setLoading(true);
+    setFormError(null);
     try {
       const { data } = await adminClient.post('/admin/auth/forgot-password', { email });
       message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not resend verification code'));
+      showSendError(err);
     } finally {
       setLoading(false);
     }
@@ -84,13 +94,25 @@ export default function AdminForgotPasswordPage() {
             Reset admin password
           </Typography.Title>
           <Typography.Text className="login-card-sub" type="secondary">
-            We will email you a 6-digit code to verify your identity.
+            Enter the email registered with your administrator account. We will send a 6-digit verification code.
           </Typography.Text>
 
           <Steps current={step} items={STEPS} size="small" style={{ margin: '24px 0' }} />
 
           {step === 0 && (
-            <Form layout="vertical" onFinish={sendOtp} size="large">
+            <>
+              {formError && (
+                <Alert
+                  type={formError.type}
+                  showIcon
+                  message={formError.title}
+                  description={formError.message}
+                  style={{ marginBottom: 16 }}
+                  closable
+                  onClose={() => setFormError(null)}
+                />
+              )}
+              <Form layout="vertical" onFinish={sendOtp} size="large">
               <Form.Item name="email" label="Admin email" rules={[{ required: true, type: 'email' }]}>
                 <Input prefix={<MailOutlined style={{ color: '#94a3b8' }} />} placeholder="admin@example.com" />
               </Form.Item>
@@ -98,6 +120,7 @@ export default function AdminForgotPasswordPage() {
                 Send verification code
               </Button>
             </Form>
+            </>
           )}
 
           {step === 1 && (
