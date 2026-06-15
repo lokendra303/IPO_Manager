@@ -9,7 +9,12 @@ import {
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/errors';
-import ProfileOtpFields, { verifyAndPatch } from '../components/ProfileOtpFields';
+import {
+  ProfilePasswordOtpFields,
+  ProfileEmailChangeFields,
+  verifyPasswordAndPatch,
+  verifyEmailChangeAndPatch,
+} from '../components/ProfileOtpFields';
 import PageHeader from '../components/PageHeader';
 import SettingsSection from '../components/SettingsSection';
 
@@ -29,6 +34,8 @@ export default function SettingsPage() {
   const [emailLoading, setEmailLoading] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
   const [otpSendLoading, setOtpSendLoading] = useState(false);
+  const [emailCodesSent, setEmailCodesSent] = useState(false);
+  const [pendingNewEmail, setPendingNewEmail] = useState('');
   const [activeTab, setActiveTab] = useState('team');
   const [teamForm] = Form.useForm();
   const [emailForm] = Form.useForm();
@@ -37,9 +44,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user) {
       teamForm.setFieldsValue({ tenantName: user.tenantName });
-      emailForm.setFieldsValue({ email: user.email });
     }
-  }, [user, teamForm, emailForm]);
+  }, [user, teamForm]);
 
   const onTeamSave = async (values) => {
     setTeamLoading(true);
@@ -57,10 +63,10 @@ export default function SettingsPage() {
     }
   };
 
-  const sendProfileOtp = async () => {
+  const sendPasswordOtp = async () => {
     setOtpSendLoading(true);
     try {
-      const { data } = await client.post('/settings/send-otp');
+      const { data } = await client.post('/settings/send-password-otp');
       message.success(data.message);
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not send verification code'));
@@ -69,25 +75,51 @@ export default function SettingsPage() {
     }
   };
 
+  const sendEmailChangeCodes = async () => {
+    const newEmail = emailForm.getFieldValue('email')?.trim();
+    if (!newEmail) {
+      message.error('Enter your new email address first');
+      return;
+    }
+    setOtpSendLoading(true);
+    try {
+      const { data } = await client.post('/settings/send-email-change-otp', { newEmail });
+      setEmailCodesSent(true);
+      setPendingNewEmail(data.newEmail);
+      message.success(data.message);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not send verification codes'));
+    } finally {
+      setOtpSendLoading(false);
+    }
+  };
+
   const onEmailSave = async (values) => {
-    await verifyAndPatch({
-      verifyOtp: (body) => client.post('/settings/verify-otp', body),
+    if (!emailCodesSent) {
+      message.error('Send verification codes to both emails first');
+      return;
+    }
+    await verifyEmailChangeAndPatch({
+      verifyOtp: (body) => client.post('/settings/verify-email-change-otp', body),
       patch: (body) => client.patch('/settings/email', body),
-      otp: values.otp,
-      patchBody: { email: values.email },
+      newEmail: values.email,
+      currentOtp: values.currentOtp,
+      newOtp: values.newOtp,
       setLoading: setEmailLoading,
       onSuccess: (data) => {
         setSessionUser(data);
         message.success('Email updated');
-        emailForm.setFieldsValue({ email: data.email, otp: '' });
+        setEmailCodesSent(false);
+        setPendingNewEmail('');
+        emailForm.setFieldsValue({ email: data.email, currentOtp: '', newOtp: '' });
       },
       onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
     });
   };
 
   const onPasswordSave = async (values) => {
-    await verifyAndPatch({
-      verifyOtp: (body) => client.post('/settings/verify-otp', body),
+    await verifyPasswordAndPatch({
+      verifyOtp: (body) => client.post('/settings/verify-password-otp', body),
       patch: (body) => client.patch('/settings/password', body),
       otp: values.otp,
       patchBody: {
@@ -144,22 +176,17 @@ export default function SettingsPage() {
           description="You will use this email address to sign in."
           alert={{
             type: 'info',
-            message: 'Send a verification code to your current email, then save your new address.',
+            message: 'Enter a new email, send codes to both addresses, then enter both codes to save.',
           }}
         >
           <Form form={emailForm} layout="vertical" onFinish={onEmailSave} requiredMark={false} size="large">
-            <ProfileOtpFields
-              email={user?.email}
-              onSendOtp={sendProfileOtp}
+            <ProfileEmailChangeFields
+              currentEmail={user?.email}
+              onSendCodes={sendEmailChangeCodes}
               sendLoading={otpSendLoading}
+              codesSent={emailCodesSent}
+              pendingNewEmail={pendingNewEmail}
             />
-            <Form.Item
-              name="email"
-              label="Email address"
-              rules={[{ required: true, type: 'email', message: 'Enter a valid email' }]}
-            >
-              <Input placeholder="you@email.com" />
-            </Form.Item>
             <FormFooter loading={emailLoading} label="Save email" />
           </Form>
         </SettingsSection>
@@ -179,9 +206,9 @@ export default function SettingsPage() {
           description="Use at least 6 characters. Verify with the code sent to your email before saving."
         >
           <Form form={passForm} layout="vertical" onFinish={onPasswordSave} requiredMark={false} size="large">
-            <ProfileOtpFields
+            <ProfilePasswordOtpFields
               email={user?.email}
-              onSendOtp={sendProfileOtp}
+              onSendOtp={sendPasswordOtp}
               sendLoading={otpSendLoading}
             />
             <Form.Item

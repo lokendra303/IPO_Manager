@@ -30,8 +30,8 @@ function resolveSsl() {
 
   const caPath = path.isAbsolute(raw) ? raw : path.join(backendRoot, raw);
   if (!fs.existsSync(caPath)) {
-    console.warn(`DB_SSL_CA file not found (${caPath}); connecting without SSL`);
-    return undefined;
+    console.warn(`DB_SSL_CA file not found (${caPath}); using SSL without CA verification`);
+    return { rejectUnauthorized: false };
   }
 
   return { ca: fs.readFileSync(caPath), rejectUnauthorized: true };

@@ -3,12 +3,19 @@ import bcrypt from 'bcryptjs';
 import { pool } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeEmail } from '../utils/validate.js';
-import { sendProfileChangeOtpEmail } from '../services/emailService.js';
+import {
+  sendProfileChangeOtpEmail,
+  sendCurrentEmailChangeOtpEmail,
+  sendNewEmailChangeOtpEmail,
+} from '../services/emailService.js';
 import { createOtp, expiryFromNowMinutes } from '../utils/tokens.js';
 import {
   storeProfileOtp,
+  storeEmailChangeOtps,
   verifyProfileOtp,
+  verifyEmailChangeOtps,
   consumeProfileActionToken,
+  assertPendingEmail,
 } from '../services/otpService.js';
 
 const router = Router();
@@ -22,6 +29,14 @@ async function getUserWithTenant(userId, tenantId) {
   );
   if (!rows.length) throw new AppError('User not found', 404);
   return rows[0];
+}
+
+async function validateNewEmail(user, newEmail) {
+  if (newEmail === user.email) {
+    throw new AppError('New email is the same as your current email');
+  }
+  const [existing] = await pool.query('SELECT id FROM users WHERE email = ? AND id != ?', [newEmail, user.id]);
+  if (existing.length) throw new AppError('This email is already in use', 409);
 }
 
 router.get('/account', async (req, res, next) => {
@@ -60,7 +75,7 @@ router.patch('/team', async (req, res, next) => {
   }
 });
 
-router.post('/send-otp', async (req, res, next) => {
+router.post('/send-password-otp', async (req, res, next) => {
   try {
     const user = await getUserWithTenant(req.user.userId, req.tenantId);
     const otp = createOtp();
@@ -79,13 +94,63 @@ router.post('/send-otp', async (req, res, next) => {
   }
 });
 
-router.post('/verify-otp', async (req, res, next) => {
+router.post('/verify-password-otp', async (req, res, next) => {
   try {
     const actionToken = await verifyProfileOtp('manager', req.user.userId, req.body.otp);
     res.json({
       success: true,
       actionToken,
-      message: 'Code verified. You can save your changes now.',
+      message: 'Code verified. You can update your password now.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/send-email-change-otp', async (req, res, next) => {
+  try {
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const user = await getUserWithTenant(req.user.userId, req.tenantId);
+    await validateNewEmail(user, newEmail);
+
+    const currentOtp = createOtp();
+    const newOtp = createOtp();
+    const currentHash = await bcrypt.hash(currentOtp, 10);
+    const newHash = await bcrypt.hash(newOtp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+
+    await storeEmailChangeOtps('manager', user.id, newEmail, currentHash, newHash, otpExpires);
+    await Promise.all([
+      sendCurrentEmailChangeOtpEmail(user.email, currentOtp),
+      sendNewEmailChangeOtpEmail(newEmail, newOtp),
+    ]);
+
+    res.json({
+      success: true,
+      message: `Verification codes sent to ${user.email} and ${newEmail}`,
+      currentEmail: user.email,
+      newEmail,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/verify-email-change-otp', async (req, res, next) => {
+  try {
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const actionToken = await verifyEmailChangeOtps(
+      'manager',
+      req.user.userId,
+      newEmail,
+      req.body.currentOtp,
+      req.body.newOtp
+    );
+
+    res.json({
+      success: true,
+      actionToken,
+      message: 'Both emails verified. You can save your new email now.',
     });
   } catch (err) {
     next(err);
@@ -97,14 +162,9 @@ router.patch('/email', async (req, res, next) => {
     const email = normalizeEmail(req.body.email);
     const user = await getUserWithTenant(req.user.userId, req.tenantId);
 
+    await assertPendingEmail('manager', user.id, email);
     await consumeProfileActionToken('manager', user.id, req.body.actionToken);
-
-    if (email === user.email) {
-      throw new AppError('New email is the same as your current email');
-    }
-
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ? AND id != ?', [email, user.id]);
-    if (existing.length) throw new AppError('This email is already in use', 409);
+    await validateNewEmail(user, email);
 
     await pool.query('UPDATE users SET email = ? WHERE id = ?', [email, user.id]);
 

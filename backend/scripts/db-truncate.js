@@ -2,20 +2,14 @@ import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getDbConnectionOptions } from './db-config.js';
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 
 dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env') });
 
 export async function truncateAllTables() {
-  const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || 'ipo_user',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'ipo_team',
-    multipleStatements: true,
-  });
+  const conn = await mysql.createConnection(getDbConnectionOptions());
 
   const dbName = process.env.DB_NAME || 'ipo_team';
   const [tables] = await conn.query(

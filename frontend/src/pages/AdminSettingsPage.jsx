@@ -4,7 +4,12 @@ import { MailOutlined, SafetyOutlined, SafetyCertificateOutlined } from '@ant-de
 import adminClient from '../api/adminClient';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { getErrorMessage } from '../utils/errors';
-import ProfileOtpFields, { verifyAndPatch } from '../components/ProfileOtpFields';
+import {
+  ProfilePasswordOtpFields,
+  ProfileEmailChangeFields,
+  verifyPasswordAndPatch,
+  verifyEmailChangeAndPatch,
+} from '../components/ProfileOtpFields';
 import PageHeader from '../components/PageHeader';
 import SettingsSection from '../components/SettingsSection';
 
@@ -23,20 +28,22 @@ export default function AdminSettingsPage() {
   const [emailLoading, setEmailLoading] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
   const [otpSendLoading, setOtpSendLoading] = useState(false);
+  const [emailCodesSent, setEmailCodesSent] = useState(false);
+  const [pendingNewEmail, setPendingNewEmail] = useState('');
   const [activeTab, setActiveTab] = useState('email');
   const [emailForm] = Form.useForm();
   const [passForm] = Form.useForm();
 
   useEffect(() => {
-    if (admin) {
-      emailForm.setFieldsValue({ email: admin.email });
-    }
-  }, [admin, emailForm]);
+    setEmailCodesSent(false);
+    setPendingNewEmail('');
+    emailForm.resetFields();
+  }, [activeTab, emailForm]);
 
-  const sendProfileOtp = async () => {
+  const sendPasswordOtp = async () => {
     setOtpSendLoading(true);
     try {
-      const { data } = await adminClient.post('/admin/profile/send-otp');
+      const { data } = await adminClient.post('/admin/profile/send-password-otp');
       message.success(data.message);
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not send verification code'));
@@ -45,25 +52,51 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const sendEmailChangeCodes = async () => {
+    const newEmail = emailForm.getFieldValue('email')?.trim();
+    if (!newEmail) {
+      message.error('Enter your new email address first');
+      return;
+    }
+    setOtpSendLoading(true);
+    try {
+      const { data } = await adminClient.post('/admin/profile/send-email-change-otp', { newEmail });
+      setEmailCodesSent(true);
+      setPendingNewEmail(data.newEmail);
+      message.success(data.message);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not send verification codes'));
+    } finally {
+      setOtpSendLoading(false);
+    }
+  };
+
   const onEmailSave = async (values) => {
-    await verifyAndPatch({
-      verifyOtp: (body) => adminClient.post('/admin/profile/verify-otp', body),
+    if (!emailCodesSent) {
+      message.error('Send verification codes to both emails first');
+      return;
+    }
+    await verifyEmailChangeAndPatch({
+      verifyOtp: (body) => adminClient.post('/admin/profile/verify-email-change-otp', body),
       patch: (body) => adminClient.patch('/admin/profile/email', body),
-      otp: values.otp,
-      patchBody: { email: values.email?.trim() },
+      newEmail: values.email,
+      currentOtp: values.currentOtp,
+      newOtp: values.newOtp,
       setLoading: setEmailLoading,
       onSuccess: (data) => {
         setAdmin(data);
         message.success('Email updated');
-        emailForm.setFieldsValue({ email: data.email, otp: '' });
+        setEmailCodesSent(false);
+        setPendingNewEmail('');
+        emailForm.setFieldsValue({ email: data.email, currentOtp: '', newOtp: '' });
       },
       onError: (err) => message.error(getErrorMessage(err, 'Update failed')),
     });
   };
 
   const onPasswordSave = async (values) => {
-    await verifyAndPatch({
-      verifyOtp: (body) => adminClient.post('/admin/profile/verify-otp', body),
+    await verifyPasswordAndPatch({
+      verifyOtp: (body) => adminClient.post('/admin/profile/verify-password-otp', body),
       patch: (body) => adminClient.patch('/admin/profile/password', body),
       otp: values.otp,
       patchBody: {
@@ -95,22 +128,17 @@ export default function AdminSettingsPage() {
           description="You will use this email address to sign in to the admin panel."
           alert={{
             type: 'info',
-            message: 'Send a verification code to your current email, then save your new address.',
+            message: 'Enter a new email, send codes to both addresses, then enter both codes to save.',
           }}
         >
           <Form form={emailForm} layout="vertical" onFinish={onEmailSave} requiredMark={false} size="large">
-            <ProfileOtpFields
-              email={admin?.email}
-              onSendOtp={sendProfileOtp}
+            <ProfileEmailChangeFields
+              currentEmail={admin?.email}
+              onSendCodes={sendEmailChangeCodes}
               sendLoading={otpSendLoading}
+              codesSent={emailCodesSent}
+              pendingNewEmail={pendingNewEmail}
             />
-            <Form.Item
-              name="email"
-              label="Email address"
-              rules={[{ required: true, type: 'email', message: 'Enter a valid email' }]}
-            >
-              <Input placeholder="admin@example.com" />
-            </Form.Item>
             <FormFooter loading={emailLoading} label="Save email" />
           </Form>
         </SettingsSection>
@@ -130,9 +158,9 @@ export default function AdminSettingsPage() {
           description="Use at least 6 characters. Verify with the code sent to your email before saving."
         >
           <Form form={passForm} layout="vertical" onFinish={onPasswordSave} requiredMark={false} size="large">
-            <ProfileOtpFields
+            <ProfilePasswordOtpFields
               email={admin?.email}
-              onSendOtp={sendProfileOtp}
+              onSendOtp={sendPasswordOtp}
               sendLoading={otpSendLoading}
             />
             <Form.Item

@@ -122,6 +122,22 @@ export async function sendProfileChangeOtpEmail(email, otp) {
   });
 }
 
+export async function sendCurrentEmailChangeOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
+    subject: 'Confirm your current email',
+    plainIntro: 'You requested to change the email on your IPO Team Manager account. Enter this code to confirm you own your current email address.',
+    htmlIntro: 'You requested to change the email on your <strong>IPO Team Manager</strong> account. Enter this code to confirm you own your <strong>current</strong> email address.',
+  });
+}
+
+export async function sendNewEmailChangeOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
+    subject: 'Confirm your new email',
+    plainIntro: 'You requested to use this email for your IPO Team Manager account. Enter this code to confirm you own this new email address.',
+    htmlIntro: 'You requested to use this email for your <strong>IPO Team Manager</strong> account. Enter this code to confirm you own this <strong>new</strong> email address.',
+  });
+}
+
 export async function sendPasswordResetEmail(email, token) {
   const resetUrl = `${getFrontendUrl()}/reset-password?token=${encodeURIComponent(token)}`;
 

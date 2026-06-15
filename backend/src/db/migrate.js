@@ -1,10 +1,13 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+const scriptsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts');
+const { getDbConnectionOptions } = await import(pathToFileURL(path.join(scriptsDir, 'db-config.js')).href);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1157,15 +1160,27 @@ async function applyProfileOtpV36(conn) {
   }
 }
 
+async function applyEmailChangeOtpV37(conn) {
+  for (const table of ['users', 'system_admins']) {
+    if (!(await tableExists(conn, table))) continue;
+
+    if (!(await columnExists(conn, table, 'profile_pending_email'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_pending_email VARCHAR(191) DEFAULT NULL`);
+      console.log(`Added ${table}.profile_pending_email`);
+    }
+    if (!(await columnExists(conn, table, 'profile_new_email_otp_hash'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_new_email_otp_hash VARCHAR(255) DEFAULT NULL`);
+      console.log(`Added ${table}.profile_new_email_otp_hash`);
+    }
+    if (!(await columnExists(conn, table, 'profile_new_email_otp_expires'))) {
+      await conn.query(`ALTER TABLE ${table} ADD COLUMN profile_new_email_otp_expires DATETIME DEFAULT NULL`);
+      console.log(`Added ${table}.profile_new_email_otp_expires`);
+    }
+  }
+}
+
 async function migrate() {
-  const conn = await mysql.createConnection({
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT) || 3306,
-    user: process.env.DB_USER || 'ipo_user',
-    password: process.env.DB_PASSWORD || 'ipo_password',
-    database: process.env.DB_NAME || 'ipo_team',
-    multipleStatements: true,
-  });
+  const conn = await mysql.createConnection(getDbConnectionOptions());
 
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await conn.query(schema);
@@ -1206,6 +1221,7 @@ async function migrate() {
   await applyEmailAuthV34(conn);
   await applyAdminPasswordOtpV35(conn);
   await applyProfileOtpV36(conn);
+  await applyEmailChangeOtpV37(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

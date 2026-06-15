@@ -109,11 +109,84 @@ export async function storeProfileOtp(kind, id, otpHash, otpExpires) {
     `UPDATE ${table}
      SET profile_otp_hash = ?,
          profile_otp_expires = ?,
+         profile_pending_email = NULL,
+         profile_new_email_otp_hash = NULL,
+         profile_new_email_otp_expires = NULL,
          profile_action_token = NULL,
          profile_action_expires = NULL
      WHERE ${idColumn} = ?`,
     [otpHash, otpExpires, id]
   );
+}
+
+export async function storeEmailChangeOtps(kind, id, pendingEmail, currentOtpHash, newOtpHash, otpExpires) {
+  const { table, idColumn } = getAccount(kind);
+  await pool.query(
+    `UPDATE ${table}
+     SET profile_pending_email = ?,
+         profile_otp_hash = ?,
+         profile_otp_expires = ?,
+         profile_new_email_otp_hash = ?,
+         profile_new_email_otp_expires = ?,
+         profile_action_token = NULL,
+         profile_action_expires = NULL
+     WHERE ${idColumn} = ?`,
+    [pendingEmail, currentOtpHash, otpExpires, newOtpHash, otpExpires, id]
+  );
+}
+
+export async function verifyEmailChangeOtps(kind, id, pendingEmail, currentOtp, newOtp) {
+  const currentCode = validateOtpInput(currentOtp);
+  const newCode = validateOtpInput(newOtp);
+  const { table, idColumn } = getAccount(kind);
+
+  const [rows] = await pool.query(
+    `SELECT profile_pending_email, profile_otp_hash, profile_otp_expires,
+            profile_new_email_otp_hash, profile_new_email_otp_expires
+     FROM ${table} WHERE ${idColumn} = ?`,
+    [id]
+  );
+  if (!rows.length || !rows[0].profile_pending_email) {
+    throw new AppError('Send verification codes for your new email first', 400);
+  }
+
+  const row = rows[0];
+  if (row.profile_pending_email !== pendingEmail) {
+    throw new AppError('New email changed. Send verification codes again.', 400);
+  }
+  if (!row.profile_otp_hash || !row.profile_new_email_otp_hash) {
+    throw new AppError('Send verification codes for your new email first', 400);
+  }
+
+  const expired =
+    (row.profile_otp_expires && new Date(row.profile_otp_expires) < new Date()) ||
+    (row.profile_new_email_otp_expires && new Date(row.profile_new_email_otp_expires) < new Date());
+  if (expired) {
+    throw new AppError('Verification codes have expired. Send new codes.', 400);
+  }
+
+  const currentValid = await bcrypt.compare(currentCode, row.profile_otp_hash);
+  const newValid = await bcrypt.compare(newCode, row.profile_new_email_otp_hash);
+  if (!currentValid || !newValid) {
+    throw new AppError('Invalid verification code. Check both codes and try again.', 400);
+  }
+
+  const actionToken = createSecureToken();
+  const actionExpires = expiryFromNowMinutes(15);
+
+  await pool.query(
+    `UPDATE ${table}
+     SET profile_otp_hash = NULL,
+         profile_otp_expires = NULL,
+         profile_new_email_otp_hash = NULL,
+         profile_new_email_otp_expires = NULL,
+         profile_action_token = ?,
+         profile_action_expires = ?
+     WHERE ${idColumn} = ?`,
+    [actionToken, actionExpires, id]
+  );
+
+  return actionToken;
 }
 
 export async function verifyProfileOtp(kind, id, otp) {
@@ -170,8 +243,23 @@ export async function consumeProfileActionToken(kind, id, actionToken) {
 
   await pool.query(
     `UPDATE ${table}
-     SET profile_action_token = NULL, profile_action_expires = NULL
+     SET profile_action_token = NULL,
+         profile_action_expires = NULL,
+         profile_pending_email = NULL,
+         profile_new_email_otp_hash = NULL,
+         profile_new_email_otp_expires = NULL
      WHERE ${idColumn} = ?`,
     [id]
   );
+}
+
+export async function assertPendingEmail(kind, id, email) {
+  const { table, idColumn } = getAccount(kind);
+  const [rows] = await pool.query(
+    `SELECT profile_pending_email FROM ${table} WHERE ${idColumn} = ?`,
+    [id]
+  );
+  if (!rows.length || rows[0].profile_pending_email !== email) {
+    throw new AppError('Email verification expired. Send codes again for your new email.', 400);
+  }
 }

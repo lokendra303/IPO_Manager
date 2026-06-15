@@ -13,7 +13,12 @@ import {
   deleteAuditLogsOlderThan,
   writeAuditLog,
 } from '../services/auditLogService.js';
-import { sendAdminPasswordOtpEmail, sendProfileChangeOtpEmail } from '../services/emailService.js';
+import {
+  sendAdminPasswordOtpEmail,
+  sendProfileChangeOtpEmail,
+  sendCurrentEmailChangeOtpEmail,
+  sendNewEmailChangeOtpEmail,
+} from '../services/emailService.js';
 import { createOtp, expiryFromNowMinutes } from '../utils/tokens.js';
 import {
   storePasswordResetOtp,
@@ -21,8 +26,11 @@ import {
   consumePasswordResetToken,
   clearPasswordResetFields,
   storeProfileOtp,
+  storeEmailChangeOtps,
   verifyProfileOtp,
+  verifyEmailChangeOtps,
   consumeProfileActionToken,
+  assertPendingEmail,
 } from '../services/otpService.js';
 
 function parseRetentionDays(value) {
@@ -157,7 +165,7 @@ router.get('/auth/me', systemAdminMiddleware, async (req, res, next) => {
   }
 });
 
-router.post('/profile/send-otp', systemAdminMiddleware, async (req, res, next) => {
+router.post('/profile/send-password-otp', systemAdminMiddleware, async (req, res, next) => {
   try {
     const admin = await getAdminById(req.admin.adminId);
     const otp = createOtp();
@@ -176,13 +184,71 @@ router.post('/profile/send-otp', systemAdminMiddleware, async (req, res, next) =
   }
 });
 
-router.post('/profile/verify-otp', systemAdminMiddleware, async (req, res, next) => {
+router.post('/profile/verify-password-otp', systemAdminMiddleware, async (req, res, next) => {
   try {
     const actionToken = await verifyProfileOtp('admin', req.admin.adminId, req.body.otp);
     res.json({
       success: true,
       actionToken,
-      message: 'Code verified. You can save your changes now.',
+      message: 'Code verified. You can update your password now.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/profile/send-email-change-otp', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const admin = await getAdminById(req.admin.adminId);
+
+    if (newEmail === admin.email) {
+      throw new AppError('New email is the same as your current email');
+    }
+    const [existing] = await pool.query(
+      'SELECT id FROM system_admins WHERE email = ? AND id != ?',
+      [newEmail, admin.id]
+    );
+    if (existing.length) throw new AppError('This email is already in use', 409);
+
+    const currentOtp = createOtp();
+    const newOtp = createOtp();
+    const currentHash = await bcrypt.hash(currentOtp, 10);
+    const newHash = await bcrypt.hash(newOtp, 10);
+    const otpExpires = expiryFromNowMinutes(10);
+
+    await storeEmailChangeOtps('admin', admin.id, newEmail, currentHash, newHash, otpExpires);
+    await Promise.all([
+      sendCurrentEmailChangeOtpEmail(admin.email, currentOtp),
+      sendNewEmailChangeOtpEmail(newEmail, newOtp),
+    ]);
+
+    res.json({
+      success: true,
+      message: `Verification codes sent to ${admin.email} and ${newEmail}`,
+      currentEmail: admin.email,
+      newEmail,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/profile/verify-email-change-otp', systemAdminMiddleware, async (req, res, next) => {
+  try {
+    const newEmail = normalizeEmail(req.body.newEmail);
+    const actionToken = await verifyEmailChangeOtps(
+      'admin',
+      req.admin.adminId,
+      newEmail,
+      req.body.currentOtp,
+      req.body.newOtp
+    );
+
+    res.json({
+      success: true,
+      actionToken,
+      message: 'Both emails verified. You can save your new email now.',
     });
   } catch (err) {
     next(err);
@@ -194,6 +260,7 @@ router.patch('/profile/email', systemAdminMiddleware, async (req, res, next) => 
     const email = normalizeEmail(req.body.email);
     const admin = await getAdminById(req.admin.adminId);
 
+    await assertPendingEmail('admin', admin.id, email);
     await consumeProfileActionToken('admin', admin.id, req.body.actionToken);
 
     if (email === admin.email) {

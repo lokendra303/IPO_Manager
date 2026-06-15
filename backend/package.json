@@ -10,6 +10,7 @@
     "seed-admin": "node src/db/seed-admin.js",
     "db:export": "node scripts/db-export.js",
     "db:import": "node scripts/db-import-server.js",
+    "db:import-data": "node scripts/db-import-data.js",
     "truncate": "node src/db/truncate-all.js"
   },
   "dependencies": {

@@ -81,8 +81,24 @@ if (isVercel) {
   const indexHtml = distPath ? path.join(distPath, 'index.html') : null;
 
   if (indexHtml) {
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders(res, filePath) {
+          const normalized = filePath.replace(/\\/g, '/');
+          if (normalized.endsWith('/index.html') || normalized.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          } else if (normalized.includes('/assets/')) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      })
+    );
     app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(indexHtml);
     });
   } else {
