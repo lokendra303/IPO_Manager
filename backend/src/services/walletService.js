@@ -48,6 +48,7 @@ async function applyAccountDelta(conn, {
   notes,
   userId,
   allowNegativeBalance = false,
+  skipSync = false,
 }) {
   const change = Number(delta);
   if (Number.isNaN(change) || change === 0) {
@@ -72,7 +73,7 @@ async function applyAccountDelta(conn, {
     [newAccountBalance, bankAccountId]
   );
 
-  const totalBalance = await syncOwnerWalletTotal(conn, tenantId);
+  const totalBalance = skipSync ? null : await syncOwnerWalletTotal(conn, tenantId);
 
   await conn.query(
     `INSERT INTO wallet_transactions
@@ -94,10 +95,15 @@ export async function creditWallet(conn, {
   txnDate,
   notes,
   userId,
+  skipEnsureWallet = false,
+  skipSync = false,
+  resolvedBankAccountId = null,
 }) {
   const credit = parseAmount(amount, { allowNegative: false, allowZero: false, fieldName: 'credit amount' });
-  await ensureWallet(conn, tenantId);
-  const accountId = await requireBankAccountId(conn, tenantId, bankAccountId);
+  if (!skipEnsureWallet) {
+    await ensureWallet(conn, tenantId);
+  }
+  const accountId = resolvedBankAccountId ?? await requireBankAccountId(conn, tenantId, bankAccountId);
   const result = await applyAccountDelta(conn, {
     tenantId,
     bankAccountId: accountId,
@@ -108,6 +114,7 @@ export async function creditWallet(conn, {
     txnDate,
     notes,
     userId,
+    skipSync,
   });
   return result.totalBalance;
 }

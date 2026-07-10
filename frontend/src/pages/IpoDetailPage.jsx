@@ -58,7 +58,9 @@ export default function IpoDetailPage() {
   const [hniForm] = Form.useForm();
   const [returnFilter, setReturnFilter] = useState('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
+  const [receivingAppId, setReceivingAppId] = useState(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [ipoSummary, setIpoSummary] = useState(null);
 
   const load = async () => {
@@ -88,6 +90,26 @@ export default function IpoDetailPage() {
       setIpo(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshReceiveData = async () => {
+    setRefreshing(true);
+    try {
+      const [appsRes, walletRes, summaryRes] = await Promise.all([
+        client.get(`/ipos/${id}/applications`),
+        client.get('/wallet'),
+        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
+      ]);
+      setApplications(appsRes.data);
+      setIpoSummary(summaryRes.data);
+      const accts = walletRes.data.accounts || [];
+      setWallet(Number(walletRes.data.balance));
+      setBankAccounts(accts);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to refresh'));
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -447,6 +469,7 @@ export default function IpoDetailPage() {
       message.warning('Select which bank account should receive the returned funds');
       return;
     }
+    setReceivingAppId(appId);
     try {
       await client.post(`/ipos/applications/${appId}/receive`, {
         returnToWallet: true,
@@ -454,9 +477,11 @@ export default function IpoDetailPage() {
       });
       message.success('Marked as received — funds returned to wallet');
       setSelectedReceiveIds((prev) => prev.filter((id) => id !== appId));
-      load();
+      await refreshReceiveData();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
+    } finally {
+      setReceivingAppId(null);
     }
   };
 
@@ -485,7 +510,7 @@ export default function IpoDetailPage() {
         message.warning(`${fail} could not be received — check those rows individually`);
       }
       setSelectedReceiveIds([]);
-      load();
+      await refreshReceiveData();
     } catch (err) {
       message.error(getErrorMessage(err, 'Bulk receive failed'));
     } finally {
@@ -678,7 +703,7 @@ export default function IpoDetailPage() {
           <Tag color="green" style={{ marginInlineEnd: 0 }}>Settled</Tag>
         ) : (
           <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
-            <Button size="small" type="primary" ghost>
+            <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
               Receive
             </Button>
           </Popconfirm>
@@ -930,7 +955,7 @@ export default function IpoDetailPage() {
         <Table
           key={returnFilter}
           rowKey="id"
-          loading={loading}
+          loading={loading || refreshing}
           className="pro-table ipo-applications-table"
           size="middle"
           columns={columns}

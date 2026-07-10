@@ -1179,6 +1179,21 @@ async function applyEmailChangeOtpV37(conn) {
   }
 }
 
+async function applyReceivePerfIndexesV38(conn) {
+  if (!(await indexExists(conn, 'member_ledger_entries', 'idx_ledger_app_type'))) {
+    await conn.query(
+      'ALTER TABLE member_ledger_entries ADD INDEX idx_ledger_app_type (ipo_application_id, type)'
+    );
+    console.log('Added idx_ledger_app_type on member_ledger_entries');
+  }
+  if (!(await indexExists(conn, 'wallet_transactions', 'idx_wallet_ref'))) {
+    await conn.query(
+      'ALTER TABLE wallet_transactions ADD INDEX idx_wallet_ref (tenant_id, ref_type, ref_id, type)'
+    );
+    console.log('Added idx_wallet_ref on wallet_transactions');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1222,6 +1237,7 @@ async function migrate() {
   await applyAdminPasswordOtpV35(conn);
   await applyProfileOtpV36(conn);
   await applyEmailChangeOtpV37(conn);
+  await applyReceivePerfIndexesV38(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

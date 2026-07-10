@@ -143,7 +143,8 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
   created_by INT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  INDEX idx_wallet_txn_tenant (tenant_id)
+  INDEX idx_wallet_txn_tenant (tenant_id),
+  INDEX idx_wallet_ref (tenant_id, ref_type, ref_id, type)
 );
 
 CREATE TABLE IF NOT EXISTS ipos (
@@ -200,5 +201,6 @@ CREATE TABLE IF NOT EXISTS member_ledger_entries (
   FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (ipo_application_id) REFERENCES ipo_applications(id) ON DELETE SET NULL,
-  INDEX idx_ledger_member (member_id)
+  INDEX idx_ledger_member (member_id),
+  INDEX idx_ledger_app_type (ipo_application_id, type)
 );
