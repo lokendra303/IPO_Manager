@@ -129,13 +129,15 @@ export default function MemberPortalPage() {
   const memberPan = formatPan(dashboard?.member?.pan);
   const isGroupLeader = subGroup?.isLeader === true;
   const groupMembers = subGroup?.members ?? [];
+  const groupApps = subGroup?.groupApplications ?? [];
+  const groupStats = subGroup?.groupStats ?? {};
   const totalGroupPendingReturn = groupMembers.reduce(
     (sum, m) => sum + Number(m.pendingReturn ?? 0),
     0
   );
-  const hasPendingAllotment = (dashboard?.ipoApplications ?? []).some(
-    (a) => a.allotmentStatus === 'PENDING'
-  );
+  const hasPendingAllotment =
+    (dashboard?.ipoApplications ?? []).some((a) => a.allotmentStatus === 'PENDING') ||
+    groupApps.some((a) => a.allotmentStatus === 'PENDING');
 
   const copyMyPan = async () => {
     if (!memberPan) return;
@@ -255,6 +257,32 @@ export default function MemberPortalPage() {
       align: 'center',
     },
     {
+      title: 'Allotted',
+      dataIndex: 'iposAlloted',
+      align: 'center',
+      render: (v) => v ?? 0,
+    },
+    {
+      title: 'IPO gross P&L',
+      dataIndex: 'grossIpoPnL',
+      render: (v) =>
+        v == null || v === 0 ? '—' : (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        ),
+    },
+    {
+      title: 'Member share',
+      dataIndex: 'totalMemberShare',
+      render: (v) =>
+        v == null || v === 0 ? '—' : (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        ),
+    },
+    {
       title: 'Pending return',
       dataIndex: 'pendingReturn',
       render: (v) => (
@@ -271,6 +299,45 @@ export default function MemberPortalPage() {
           {s === 'ACTIVE' ? 'Active' : 'Inactive'}
         </Tag>
       ),
+    },
+  ];
+
+  const groupAppCols = [
+    { title: 'IPO', dataIndex: 'ipoName' },
+    { title: 'Member', dataIndex: 'memberName' },
+    { title: 'PAN', dataIndex: 'memberPan', render: (v) => formatPan(v) || '—' },
+    {
+      title: 'Amount',
+      dataIndex: 'amount',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      title: 'Allotment',
+      dataIndex: 'allotmentStatus',
+      render: (s) => <Tag color={allotmentColors[s]}>{s.replace(/_/g, ' ')}</Tag>,
+    },
+    {
+      title: 'IPO gross P&L',
+      dataIndex: 'grossProfitLoss',
+      render: (v, row) =>
+        row.allotmentStatus !== 'ALLOTED' || v == null ? '—' : (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        ),
+    },
+    {
+      title: 'Member share',
+      dataIndex: 'memberShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return <Tag color="warning">Pending split</Tag>;
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        );
+      },
     },
   ];
 
@@ -500,8 +567,35 @@ export default function MemberPortalPage() {
             showIcon
             style={{ marginBottom: 16 }}
             message="You are the sub-group leader"
-            description="Bulk IPO funds are paid to you on behalf of your group. Collect from members and return to your manager. Below is each member’s pending return (fund received minus returned)."
+            description="Bulk IPO funds are paid to you on behalf of your group. Below is each member’s IPO allotment, profit, and pending return to your manager."
           />
+          {(groupStats.iposApplied ?? 0) > 0 && (
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+              <Col xs={12} sm={6}>
+                <StatCard title="Group IPOs" value={groupStats.iposApplied ?? 0} variant="primary" />
+              </Col>
+              <Col xs={12} sm={6}>
+                <StatCard title="Allotted" value={groupStats.iposAlloted ?? 0} variant="success" />
+              </Col>
+              <Col xs={12} sm={6}>
+                <StatCard
+                  title="Group IPO P&L"
+                  value={formatCurrency(groupStats.grossIpoPnL ?? 0)}
+                  variant="primary"
+                  valueClassName={
+                    Number(groupStats.grossIpoPnL ?? 0) >= 0 ? 'amount-positive' : 'amount-negative'
+                  }
+                />
+              </Col>
+              <Col xs={12} sm={6}>
+                <StatCard
+                  title="Group member share"
+                  value={formatCurrency(groupStats.totalMemberShare ?? 0)}
+                  variant="success"
+                />
+              </Col>
+            </Row>
+          )}
           <Typography.Title level={5} style={{ marginTop: 0 }}>
             Members ({subGroup.memberCount ?? groupMembers.length})
           </Typography.Title>
@@ -527,20 +621,38 @@ export default function MemberPortalPage() {
               groupMembers.length > 0 ? (
                 <Table.Summary fixed>
                   <Table.Summary.Row style={{ fontWeight: 600, background: '#fff7ed' }}>
-                    <Table.Summary.Cell index={0} colSpan={3}>
+                    <Table.Summary.Cell index={0} colSpan={5}>
                       Total to refund to manager
                     </Table.Summary.Cell>
-                    <Table.Summary.Cell index={3}>
+                    <Table.Summary.Cell index={5}>
                       <span className={totalGroupPendingReturn !== 0 ? 'amount-negative' : undefined}>
                         {formatCurrency(totalGroupPendingReturn)}
                       </span>
                     </Table.Summary.Cell>
-                    <Table.Summary.Cell index={4} />
+                    <Table.Summary.Cell index={6} colSpan={3} />
                   </Table.Summary.Row>
                 </Table.Summary>
               ) : null
             }
           />
+          {groupApps.length > 0 && (
+            <>
+              <Typography.Title level={5}>Group IPO applications</Typography.Title>
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                All IPO applications for members in your sub-group, including allotment and profit share.
+              </Typography.Paragraph>
+              <Table
+                rowKey="id"
+                columns={groupAppCols}
+                dataSource={groupApps}
+                pagination={groupApps.length > 10 ? { pageSize: 10 } : false}
+                locale={{ emptyText: 'No group IPO applications' }}
+                scroll={{ x: 'max-content' }}
+                style={{ marginBottom: 24 }}
+                {...tableDefaults}
+              />
+            </>
+          )}
           <Typography.Title level={5}>Bulk payments received</Typography.Title>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
             One transfer per IPO when your manager uses bulk pay to owner on Distribute.

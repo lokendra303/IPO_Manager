@@ -12,6 +12,7 @@ import {
   createRuleTemplate,
   updateRuleTemplate,
   deleteRuleTemplate,
+  listMembersWithShareRules,
   distributeProfitShares,
   getProfitShareReport,
   getProfitTotalsReport,
@@ -227,50 +228,10 @@ router.put('/providers/:providerId', async (req, res, next) => {
 /** Members: assigned provider + effective % */
 router.get('/members', async (req, res, next) => {
   try {
-    const [members] = await pool.query(
-      `SELECT m.id, m.display_name, m.pan, m.status, fp.name AS member_fund_provider_name,
-              (SELECT COUNT(*) FROM member_profit_shares mps WHERE mps.member_id = m.id) AS rule_count
-       FROM members m
-       LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
-       WHERE m.tenant_id = ?
-       ORDER BY m.sort_order, m.id`,
-      [req.tenantId]
-    );
-
     const conn = await pool.getConnection();
     try {
-      const withRules = await Promise.all(
-        members.map(async (m) => {
-          const { rules, hasRules } = await getMemberShareRules(conn, req.tenantId, m.id);
-          const globalRules = rules.filter((r) => !r.ipoId);
-          const summaryRules = globalRules.length ? globalRules : rules;
-          const profitP = summaryRules.reduce((s, r) => s + r.profitProviderPercent, 0);
-          const profitM = summaryRules.reduce((s, r) => s + r.profitManagerPercent, 0);
-          const lossP = summaryRules.reduce((s, r) => s + r.lossProviderPercent, 0);
-          const lossM = summaryRules.reduce((s, r) => s + r.lossManagerPercent, 0);
-          const providerNames = [...new Set(summaryRules.map((r) => r.providerName).filter(Boolean))];
-          return {
-            memberId: m.id,
-            displayName: m.display_name,
-            pan: m.pan,
-            status: m.status,
-            ruleCount: rules.length,
-            hasShareRule: hasRules,
-            hasIpoSpecificRules: rules.some((r) => r.ipoId),
-            rules,
-            effectiveProviderName: providerNames.join(', ') || null,
-            memberFundProviderName: m.member_fund_provider_name || null,
-            effectiveProfitProviderPercent: profitP,
-            effectiveProfitManagerPercent: profitM,
-            effectiveLossProviderPercent: lossP,
-            effectiveLossManagerPercent: lossM,
-            memberKeepsProfitPercent: Math.max(0, 100 - profitP - profitM),
-            memberKeepsLossPercent: Math.max(0, 100 - lossP - lossM),
-            ruleSource: hasRules ? 'member' : 'none',
-          };
-        })
-      );
-      res.json(withRules);
+      const rows = await listMembersWithShareRules(conn, req.tenantId);
+      res.json(rows);
     } finally {
       conn.release();
     }

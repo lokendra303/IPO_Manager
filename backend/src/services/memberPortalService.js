@@ -1,6 +1,77 @@
 import { getMemberDetail } from './memberDetailService.js';
 import { listGroupBulkTransactions } from './memberGroupService.js';
+import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
 import { formatPan } from '../utils/validate.js';
+
+function mapMemberRuleRow(row) {
+  return {
+    id: row.id,
+    ruleName: row.rule_name || `Rule ${row.id}`,
+    sortOrder: Number(row.sort_order ?? 0),
+    ipoId: row.ipo_id ?? null,
+    ipoName: row.ipo_name ?? null,
+    fundProviderId: row.fund_provider_id,
+    providerName: row.provider_name,
+    profitProviderPercent: Number(row.provider_percent),
+    profitManagerPercent: Number(row.manager_percent),
+    lossProviderPercent: Number(row.loss_provider_percent ?? 0),
+    lossManagerPercent: Number(row.loss_manager_percent ?? 0),
+  };
+}
+
+async function loadGroupMemberShareRules(pool, tenantId, memberIds) {
+  const map = new Map();
+  if (!memberIds.length) return map;
+
+  const placeholders = memberIds.map(() => '?').join(', ');
+  const [rows] = await pool.query(
+    `SELECT mps.*, fp.name AS provider_name, i.name AS ipo_name, mps.member_id
+     FROM member_profit_shares mps
+     LEFT JOIN fund_providers fp ON fp.id = mps.fund_provider_id
+     LEFT JOIN ipos i ON i.id = mps.ipo_id AND i.tenant_id = mps.tenant_id
+     WHERE mps.tenant_id = ? AND mps.member_id IN (${placeholders})
+     ORDER BY mps.member_id, mps.sort_order, mps.id`,
+    [tenantId, ...memberIds]
+  );
+
+  for (const row of rows) {
+    const memberId = row.member_id;
+    const list = map.get(memberId) ?? [];
+    list.push(mapMemberRuleRow(row));
+    map.set(memberId, list);
+  }
+  return map;
+}
+
+function computeAllottedAppShare(appRow, memberRules) {
+  const gross =
+    appRow.allotment_status === 'ALLOTED' ? Number(appRow.profit_loss ?? 0) : 0;
+  if (appRow.allotment_status !== 'ALLOTED' || appRow.profit_loss == null || gross === 0) {
+    return { gross: 0, memberShare: null, shareStatus: null };
+  }
+
+  if (appRow.profit_share_distribution_id) {
+    return {
+      gross,
+      memberShare: Number(appRow.distributed_member_amount ?? 0),
+      shareStatus: 'distributed',
+    };
+  }
+
+  if (memberRules?.length) {
+    const applicableRules = resolveRulesForIpo(memberRules, appRow.ipo_id);
+    if (applicableRules.length) {
+      const split = calculateMultiRuleSplit(gross, applicableRules);
+      return {
+        gross,
+        memberShare: split.memberAmount,
+        shareStatus: 'pending',
+      };
+    }
+  }
+
+  return { gross, memberShare: null, shareStatus: null };
+}
 
 async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   if (!memberGroupId) return null;
@@ -68,10 +139,13 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   const [groupApps] = await pool.query(
     `SELECT a.id, a.amount, a.allotment_status, a.profit_loss, a.investor_category,
             a.trns_received, m.id AS member_id, m.display_name, m.pan,
-            i.id AS ipo_id, i.name AS ipo_name, i.status AS ipo_status
+            i.id AS ipo_id, i.name AS ipo_name, i.status AS ipo_status,
+            psd.id AS profit_share_distribution_id,
+            psd.member_amount AS distributed_member_amount
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      JOIN ipos i ON i.id = a.ipo_id
+     LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
      WHERE a.tenant_id = ? AND m.member_group_id = ?
      ORDER BY i.name, m.display_name, a.id`,
     [tenantId, memberGroupId]
@@ -88,30 +162,33 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
     { iposApplied: 0, iposPending: 0, iposAlloted: 0, iposNotAlloted: 0 }
   );
 
-  const memberDetails = await Promise.all(
-    members.map((m) => getMemberDetail(pool, tenantId, m.id))
-  );
-  const statsByMemberId = new Map(
-    memberDetails
-      .filter(Boolean)
-      .map((detail) => [detail.member.id, detail.stats])
-  );
-  const appMetaById = new Map();
-  for (const detail of memberDetails) {
-    if (!detail) continue;
-    for (const app of detail.ipoApplications) {
-      appMetaById.set(app.id, {
-        memberShare: app.member_share != null ? Number(app.member_share) : null,
-        shareStatus: app.share_status ?? null,
-      });
-    }
-  }
+  const memberIds = members.map((m) => m.id);
+  const rulesByMemberId = await loadGroupMemberShareRules(pool, tenantId, memberIds);
 
+  const memberPnL = new Map();
   let groupGrossIpoPnL = 0;
   let groupTotalMemberShare = 0;
-  for (const stats of statsByMemberId.values()) {
-    groupGrossIpoPnL += Number(stats.totalIpoProfit ?? 0);
-    groupTotalMemberShare += Number(stats.totalMemberShare ?? 0);
+
+  const enrichedGroupApps = groupApps.map((row) => {
+    const memberRules = rulesByMemberId.get(row.member_id) ?? [];
+    const { gross, memberShare, shareStatus } = computeAllottedAppShare(row, memberRules);
+
+    const agg = memberPnL.get(row.member_id) ?? { grossIpoPnL: 0, totalMemberShare: 0 };
+    agg.grossIpoPnL += gross;
+    if (memberShare != null) agg.totalMemberShare += memberShare;
+    memberPnL.set(row.member_id, agg);
+
+    return {
+      row,
+      gross,
+      memberShare,
+      shareStatus,
+    };
+  });
+
+  for (const agg of memberPnL.values()) {
+    groupGrossIpoPnL += agg.grossIpoPnL;
+    groupTotalMemberShare += agg.totalMemberShare;
   }
 
   return {
@@ -123,7 +200,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
       totalMemberShare: groupTotalMemberShare,
     },
     members: members.map((m) => {
-      const memberStats = statsByMemberId.get(m.id);
+      const pnl = memberPnL.get(m.id) ?? { grossIpoPnL: 0, totalMemberShare: 0 };
       return {
         id: m.id,
         displayName: m.display_name,
@@ -134,30 +211,27 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
         iposPending: Number(m.ipos_pending),
         iposAlloted: Number(m.ipos_alloted),
         iposNotAlloted: Number(m.ipos_not_alloted),
-        grossIpoPnL: Number(memberStats?.totalIpoProfit ?? 0),
-        totalMemberShare: Number(memberStats?.totalMemberShare ?? 0),
+        grossIpoPnL: pnl.grossIpoPnL,
+        totalMemberShare: pnl.totalMemberShare,
         isLeader: Number(m.id) === Number(memberId),
       };
     }),
-    groupApplications: groupApps.map((row) => {
-      const appMeta = appMetaById.get(row.id) ?? {};
-      return {
-        id: row.id,
-        ipoId: row.ipo_id,
-        ipoName: row.ipo_name,
-        ipoStatus: row.ipo_status,
-        memberId: row.member_id,
-        memberName: row.display_name,
-        memberPan: formatPan(row.pan),
-        amount: Number(row.amount),
-        allotmentStatus: row.allotment_status,
-        investorCategory: row.investor_category ?? null,
-        grossProfitLoss: row.profit_loss != null ? Number(row.profit_loss) : null,
-        memberShare: appMeta.memberShare ?? null,
-        shareStatus: appMeta.shareStatus ?? null,
-        fundReturned: row.trns_received === 'Received',
-      };
-    }),
+    groupApplications: enrichedGroupApps.map(({ row, memberShare, shareStatus }) => ({
+      id: row.id,
+      ipoId: row.ipo_id,
+      ipoName: row.ipo_name,
+      ipoStatus: row.ipo_status,
+      memberId: row.member_id,
+      memberName: row.display_name,
+      memberPan: formatPan(row.pan),
+      amount: Number(row.amount),
+      allotmentStatus: row.allotment_status,
+      investorCategory: row.investor_category ?? null,
+      grossProfitLoss: row.profit_loss != null ? Number(row.profit_loss) : null,
+      memberShare,
+      shareStatus,
+      fundReturned: row.trns_received === 'Received',
+    })),
     bulkPayments: bulkPayments.map((bp) => ({
       id: bp.id,
       ipoName: bp.ipoName,

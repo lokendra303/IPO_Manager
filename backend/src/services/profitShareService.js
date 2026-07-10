@@ -346,6 +346,73 @@ export async function getMemberShareRules(conn, tenantId, memberId) {
   };
 }
 
+function summarizeMemberShareRules(rules) {
+  const globalRules = rules.filter((r) => !r.ipoId);
+  const summaryRules = globalRules.length ? globalRules : rules;
+  const profitP = summaryRules.reduce((s, r) => s + r.profitProviderPercent, 0);
+  const profitM = summaryRules.reduce((s, r) => s + r.profitManagerPercent, 0);
+  const lossP = summaryRules.reduce((s, r) => s + r.lossProviderPercent, 0);
+  const lossM = summaryRules.reduce((s, r) => s + r.lossManagerPercent, 0);
+  const providerNames = [...new Set(summaryRules.map((r) => r.providerName).filter(Boolean))];
+  const hasRules = rules.length > 0;
+  return {
+    ruleCount: rules.length,
+    hasShareRule: hasRules,
+    hasIpoSpecificRules: rules.some((r) => r.ipoId),
+    rules,
+    effectiveProviderName: providerNames.join(', ') || null,
+    effectiveProfitProviderPercent: profitP,
+    effectiveProfitManagerPercent: profitM,
+    effectiveLossProviderPercent: lossP,
+    effectiveLossManagerPercent: lossM,
+    memberKeepsProfitPercent: Math.max(0, 100 - profitP - profitM),
+    memberKeepsLossPercent: Math.max(0, 100 - lossP - lossM),
+    ruleSource: hasRules ? 'member' : 'none',
+  };
+}
+
+/** All members with share rules — two queries instead of N+1 per member. */
+export async function listMembersWithShareRules(conn, tenantId) {
+  const [members] = await conn.query(
+    `SELECT m.id, m.display_name, m.pan, m.status, fp.name AS member_fund_provider_name
+     FROM members m
+     LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
+     WHERE m.tenant_id = ?
+     ORDER BY m.sort_order, m.id`,
+    [tenantId]
+  );
+
+  const [ruleRows] = await conn.query(
+    `SELECT mps.*, fp.name AS provider_name, i.name AS ipo_name
+     FROM member_profit_shares mps
+     LEFT JOIN fund_providers fp ON fp.id = mps.fund_provider_id
+     LEFT JOIN ipos i ON i.id = mps.ipo_id AND i.tenant_id = mps.tenant_id
+     WHERE mps.tenant_id = ?
+     ORDER BY mps.member_id, mps.sort_order, mps.id`,
+    [tenantId]
+  );
+
+  const rulesByMember = new Map();
+  for (const row of ruleRows) {
+    const memberId = row.member_id;
+    if (!rulesByMember.has(memberId)) rulesByMember.set(memberId, []);
+    rulesByMember.get(memberId).push(mapMemberRuleRow(row));
+  }
+
+  return members.map((m) => {
+    const rules = rulesByMember.get(m.id) || [];
+    const summary = summarizeMemberShareRules(rules);
+    return {
+      memberId: m.id,
+      displayName: m.display_name,
+      pan: m.pan,
+      status: m.status,
+      memberFundProviderName: m.member_fund_provider_name || null,
+      ...summary,
+    };
+  });
+}
+
 export async function addMemberShareRule(conn, tenantId, memberId, {
   ruleName,
   sortOrder,
