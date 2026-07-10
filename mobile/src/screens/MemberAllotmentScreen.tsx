@@ -16,6 +16,7 @@ import {
   formatAllotmentLabel,
   formatIpoShareLine,
   groupApplicationsByIpo,
+  summarizeIpoGroupRows,
 } from '../utils/memberPortal';
 import { copyToClipboard, getAllotmentPortals, openAllotmentPortal } from '../utils/allotmentCheck';
 import { ui } from '../styles/ui';
@@ -103,6 +104,7 @@ export default function MemberAllotmentScreen() {
           {pendingIpos.map(({ ipoName, rows }) => (
             <View key={ipoName} style={{ marginBottom: 12 }}>
               <Text style={ui.sectionLabel}>{ipoName}</Text>
+              <Text style={[ui.hint, { marginBottom: 8 }]}>{summarizeIpoGroupRows(rows)}</Text>
               {rows
                 .filter((r) => r.allotmentStatus === 'PENDING')
                 .map((row) => (
@@ -131,6 +133,7 @@ export default function MemberAllotmentScreen() {
           ipoGroups.map(({ ipoName, rows }) => (
             <View key={ipoName} style={{ marginBottom: 16 }}>
               <Text style={ui.sectionLabel}>{ipoName}</Text>
+              <Text style={[ui.hint, { marginBottom: 8 }]}>{summarizeIpoGroupRows(rows)}</Text>
               {rows.map((row) => (
                 <ListRow
                   key={`${row.id}-${row.memberPan}-${row.allotmentStatus}`}

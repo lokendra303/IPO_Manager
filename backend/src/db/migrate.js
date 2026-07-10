@@ -1194,6 +1194,28 @@ async function applyReceivePerfIndexesV38(conn) {
   }
 }
 
+async function applyMemberPortalExtensionsV39(conn) {
+  if (!(await tableExists(conn, 'member_fund_return_claims'))) {
+    const sql = fs.readFileSync(
+      path.join(__dirname, 'schema-member-portal-extensions.sql'),
+      'utf8'
+    );
+    await conn.query(sql);
+    console.log('Created member_fund_return_claims');
+  }
+
+  if (await tableExists(conn, 'member_issues')) {
+    if (!(await columnExists(conn, 'member_issues', 'category'))) {
+      await conn.query(
+        `ALTER TABLE member_issues
+         ADD COLUMN category ENUM('PAYMENT', 'PROFIT', 'ALLOTMENT', 'FUND_RETURN', 'OTHER')
+         NOT NULL DEFAULT 'OTHER' AFTER note`
+      );
+      console.log('Added member_issues.category');
+    }
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1238,6 +1260,7 @@ async function migrate() {
   await applyProfileOtpV36(conn);
   await applyEmailChangeOtpV37(conn);
   await applyReceivePerfIndexesV38(conn);
+  await applyMemberPortalExtensionsV39(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

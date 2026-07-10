@@ -1,5 +1,7 @@
+import { useCallback, useMemo } from 'react';
 import { Alert, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
+import { router } from 'expo-router';
 import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
@@ -9,16 +11,21 @@ import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import Banner from '../components/Banner';
+import AttentionCard from '../components/AttentionCard';
 import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { useMemberDashboard } from '../hooks/useMemberDashboard';
+import { useMemberActivity, useMemberAttention, useUpcomingIpos } from '../hooks/useMemberPortalExtras';
 import { useAuth } from '../context/AuthContext';
 import {
   ALLOTMENT_COLORS,
   formatAllotmentLabel,
   formatIpoShareLine,
+  groupApplicationsByIpo,
   hasPendingAllotment,
   isStaleGroupLeaderApi,
+  summarizeIpoGroupRows,
 } from '../utils/memberPortal';
+import type { GroupApplication } from '../hooks/useMemberDashboard';
 import { copyToClipboard, getAllotmentPortals, openAllotmentPortal } from '../utils/allotmentCheck';
 import { config } from '../config';
 import { ui } from '../styles/ui';
@@ -32,6 +39,58 @@ function ledgerTypeLabel(type: string): string {
 export default function MemberPortalScreen() {
   const { user } = useAuth();
   const { data: dashboard, loading, error, refresh } = useMemberDashboard();
+  const attentionQuery = useMemberAttention();
+  const activityQuery = useMemberActivity(5);
+  const upcomingQuery = useUpcomingIpos();
+  const attentionItems = attentionQuery.data ?? [];
+  const activityPreview = activityQuery.data ?? [];
+  const upcomingIposList = upcomingQuery.data ?? [];
+
+  const groupAppsEarly = dashboard?.subGroup?.groupApplications ?? [];
+
+  const handleAttentionPress = useCallback(
+    (action?: string, ipoName?: string) => {
+      if (action === 'fund-return') router.push('/(member)/fund-return' as any);
+      else if (action === 'allotment') router.push('/(member)/allotment' as any);
+      else if (action === 'issues') router.push('/(member)/issues' as any);
+      else if (action === 'collections') router.push('/(member)/collections' as any);
+      else if (action === 'upcoming') router.push('/(member)/more' as any);
+      else if (action === 'ipo' && ipoName) {
+        const ipo = upcomingIposList.find((i) => i.name === ipoName);
+        const app = groupAppsEarly.find((a) => a.ipoName === ipoName);
+        const id = ipo?.id ?? app?.ipoId;
+        if (id) router.push(`/(member)/ipo/${id}` as any);
+      }
+    },
+    [groupAppsEarly, upcomingIposList]
+  );
+
+  const memberPan = formatPan(dashboard?.member?.pan || user?.pan);
+  const groupApps = dashboard?.subGroup?.groupApplications ?? [];
+  const applications = dashboard?.ipoApplications ?? [];
+
+  const groupIpoGroups = useMemo(
+    () => groupApplicationsByIpo(groupApps),
+    [groupApps]
+  );
+
+  const personalIpoGroups = useMemo(() => {
+    const mapped: GroupApplication[] = applications.map((app) => ({
+      id: app.id,
+      ipoId: 0,
+      ipoName: app.ipoName,
+      memberId: 0,
+      memberName: dashboard?.member?.displayName || 'You',
+      memberPan: memberPan,
+      amount: app.amount,
+      allotmentStatus: app.allotmentStatus,
+      grossProfitLoss: app.grossProfitLoss,
+      memberShare: app.memberShare,
+      shareStatus: app.shareStatus,
+      fundReturned: app.fundReturned,
+    }));
+    return groupApplicationsByIpo(mapped);
+  }, [applications, dashboard?.member?.displayName, memberPan]);
 
   if (loading && !dashboard) return <Loading />;
 
@@ -54,16 +113,11 @@ export default function MemberPortalScreen() {
   const subGroup = dashboard.subGroup;
   const isGroupLeader = subGroup?.isLeader === true;
   const groupMembers = subGroup?.members ?? [];
-  const groupApps = subGroup?.groupApplications ?? [];
   const groupStats = subGroup?.groupStats ?? {};
   const bulkPayments = subGroup?.bulkPayments ?? [];
   const stats = dashboard.stats ?? {};
-  const applications = dashboard.ipoApplications ?? [];
-  const ledgerEntries = dashboard.ledgerEntries ?? [];
-  const memberProfit = Number(stats.totalMemberShare ?? 0);
-  const grossIpoPnL = Number(stats.grossIpoPnL ?? 0);
+  const applicationsList = applications;
   const pendingReturn = Number(stats.pendingReturn ?? 0);
-  const memberPan = formatPan(member?.pan || user?.pan);
   const showAllotmentAlert = hasPendingAllotment(dashboard);
   const totalGroupPendingReturn = groupMembers.reduce(
     (sum, m) => sum + Number(m.pendingReturn ?? 0),
@@ -72,6 +126,9 @@ export default function MemberPortalScreen() {
   const groupGrossPnL = Number(groupStats.grossIpoPnL ?? 0);
   const groupMemberShare = Number(groupStats.totalMemberShare ?? 0);
   const staleGroupApi = isStaleGroupLeaderApi(subGroup);
+  const memberProfit = Number(stats.totalMemberShare ?? 0);
+  const grossIpoPnL = Number(stats.grossIpoPnL ?? 0);
+  const ledgerEntries = dashboard.ledgerEntries ?? [];
 
   const copyPan = async (pan: string, label = 'PAN') => {
     const ok = await copyToClipboard(formatPan(pan));
@@ -94,6 +151,53 @@ export default function MemberPortalScreen() {
 
       {error ? (
         <Banner variant="warn">{error}</Banner>
+      ) : null}
+
+      {attentionItems.length > 0 ? (
+        <ContentCard title="Needs your attention">
+          {attentionItems.map((item) => (
+            <AttentionCard
+              key={item.id}
+              item={item}
+              onPress={item.action ? () => handleAttentionPress(item.action, item.ipoName) : undefined}
+            />
+          ))}
+        </ContentCard>
+      ) : null}
+
+      {upcomingIposList.length > 0 ? (
+        <ContentCard title="Upcoming & open IPOs">
+          {upcomingIposList.slice(0, 6).map((ipo) => (
+            <ListRow
+              key={ipo.id}
+              title={ipo.name}
+              subtitle={[
+                ipo.status,
+                ipo.openDate ? formatDateTime(ipo.openDate) : null,
+                ipo.applied ? `Applied · ${ipo.allotmentStatus || '—'}` : 'Not applied yet',
+                formatCurrency(ipo.appliedAmount ?? ipo.lotAmountRii),
+              ].filter(Boolean).join(' · ')}
+              right={<Tag label={ipo.applied ? 'Applied' : ipo.status} color={ipo.status === 'OPEN' ? '#059669' : '#64748b'} />}
+              onPress={() => router.push(`/(member)/ipo/${ipo.id}` as any)}
+            />
+          ))}
+        </ContentCard>
+      ) : null}
+
+      {activityPreview.length > 0 ? (
+        <ContentCard
+          title="Recent activity"
+          extra={<Button compact onPress={() => router.push('/(member)/activity' as any)}>See all</Button>}
+        >
+          {activityPreview.map((item) => (
+            <ListRow
+              key={item.id}
+              title={item.title}
+              subtitle={formatDateTime(item.at)}
+              onPress={item.ipoId ? () => router.push(`/(member)/ipo/${item.ipoId}` as any) : undefined}
+            />
+          ))}
+        </ContentCard>
       ) : null}
 
       {isGroupLeader ? (
@@ -321,31 +425,43 @@ export default function MemberPortalScreen() {
 
           <ContentCard title={`Group IPO & allotment (${groupApps.length})`}>
             <Text style={ui.hint}>
-              Allotment and P&L for every member in your sub-group. Use the Allotment tab to copy PANs and open official portals.
+              Grouped by IPO name. Allotment and P&L for every member in your sub-group. Use the Allotment tab to copy PANs and open official portals.
             </Text>
-            {groupApps.length ? (
-              groupApps.map((app) => (
-                <ListRow
-                  key={app.id}
-                  title={`${app.memberName} — ${app.ipoName}`}
-                  subtitle={[
-                    formatPan(app.memberPan),
-                    formatCurrency(app.amount),
-                    app.investorCategory,
-                    formatAllotmentLabel(app.allotmentStatus),
-                    app.fundReturned ? 'Fund returned' : 'Fund pending',
-                    app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                      ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
-                      : null,
-                    formatIpoShareLine(app),
-                  ].filter(Boolean).join(' · ')}
-                  right={
-                    <Tag
-                      label={formatAllotmentLabel(app.allotmentStatus)}
-                      color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+            {groupIpoGroups.length ? (
+              groupIpoGroups.map(({ ipoName, rows }) => (
+                <View key={ipoName} style={{ marginBottom: 16 }}>
+                  <ListRow
+                    title={ipoName}
+                    subtitle={summarizeIpoGroupRows(rows)}
+                    onPress={() => {
+                      const id = rows[0]?.ipoId;
+                      if (id) router.push(`/(member)/ipo/${id}` as any);
+                    }}
+                  />
+                  {rows.map((app) => (
+                    <ListRow
+                      key={app.id}
+                      title={app.memberName}
+                      subtitle={[
+                        formatPan(app.memberPan),
+                        formatCurrency(app.amount),
+                        app.investorCategory,
+                        formatAllotmentLabel(app.allotmentStatus),
+                        app.fundReturned ? 'Fund returned' : 'Fund pending',
+                        app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
+                          ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
+                          : null,
+                        formatIpoShareLine(app),
+                      ].filter(Boolean).join(' · ')}
+                      right={
+                        <Tag
+                          label={formatAllotmentLabel(app.allotmentStatus)}
+                          color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                        />
+                      }
                     />
-                  }
-                />
+                  ))}
+                </View>
               ))
             ) : (
               <ListRow title="No group IPO applications yet" />
@@ -354,32 +470,44 @@ export default function MemberPortalScreen() {
         </>
       ) : null}
 
-      <ContentCard title={`Your IPO applications (${applications.length})`}>
-        {applications.length ? (
-          applications.map((app) => (
-            <ListRow
-              key={app.id}
-              title={app.ipoName}
-              subtitle={[
-                formatCurrency(app.amount),
-                app.fundReturned ? 'Fund returned' : `Fund pending ${formatCurrency(app.amount)}`,
-                formatAllotmentLabel(app.allotmentStatus),
-                app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                  ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
-                  : null,
-                app.allotmentStatus === 'ALLOTED' && app.memberShare != null
-                  ? `Your share ${formatCurrency(app.memberShare)}`
-                  : app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                    ? 'Share pending split'
-                    : null,
-              ].filter(Boolean).join(' · ')}
-              right={
-                <Tag
-                  label={formatAllotmentLabel(app.allotmentStatus)}
-                  color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+      <ContentCard title={`Your IPO applications (${applicationsList.length})`}>
+        {personalIpoGroups.length ? (
+          personalIpoGroups.map(({ ipoName, rows }) => (
+            <View key={ipoName} style={{ marginBottom: 16 }}>
+              <ListRow
+                title={ipoName}
+                subtitle={summarizeIpoGroupRows(rows)}
+                onPress={() => {
+                  const ipo = upcomingIposList.find((i) => i.name === ipoName);
+                  if (ipo) router.push(`/(member)/ipo/${ipo.id}` as any);
+                }}
+              />
+              {rows.map((app) => (
+                <ListRow
+                  key={app.id}
+                  title={app.memberName}
+                  subtitle={[
+                    formatCurrency(app.amount),
+                    app.fundReturned ? 'Fund returned' : `Fund pending ${formatCurrency(app.amount)}`,
+                    formatAllotmentLabel(app.allotmentStatus),
+                    app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
+                      ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
+                      : null,
+                    app.allotmentStatus === 'ALLOTED' && app.memberShare != null
+                      ? `Your share ${formatCurrency(app.memberShare)}`
+                      : app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
+                        ? 'Share pending split'
+                        : null,
+                  ].filter(Boolean).join(' · ')}
+                  right={
+                    <Tag
+                      label={formatAllotmentLabel(app.allotmentStatus)}
+                      color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                    />
+                  }
                 />
-              }
-            />
+              ))}
+            </View>
           ))
         ) : (
           <ListRow title="No applications yet" subtitle="Your manager will add IPO applications here" />

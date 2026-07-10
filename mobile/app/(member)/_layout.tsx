@@ -56,8 +56,15 @@ export default function MemberLayout() {
           }}
         >
           <Stack.Screen name="portal" />
-          <Stack.Screen name="issues" />
+          <Stack.Screen name="activity" />
           <Stack.Screen name="allotment" />
+          <Stack.Screen name="more" />
+          <Stack.Screen name="issues" />
+          <Stack.Screen name="profile" />
+          <Stack.Screen name="fund-return" />
+          <Stack.Screen name="statement" />
+          <Stack.Screen name="collections" />
+          <Stack.Screen name="ipo/[ipoId]" options={{ headerShown: true, title: 'IPO detail' }} />
         </Stack>
       </View>
       <MemberBottomNav />

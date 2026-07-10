@@ -100,7 +100,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   if (!isLeader) return base;
 
   const [members] = await pool.query(
-    `SELECT m.id, m.display_name, m.pan, m.status,
+    `SELECT m.id, m.display_name, m.pan, m.upi, m.status,
             COALESCE(given.total, 0) - COALESCE(recv.total, 0) AS pending_return,
             COALESCE(apps.c, 0) AS ipos_applied,
             COALESCE(apps.ipos_pending, 0) AS ipos_pending,
@@ -205,6 +205,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
         id: m.id,
         displayName: m.display_name,
         pan: formatPan(m.pan),
+        upi: m.upi ?? null,
         status: m.status,
         pendingReturn: Number(m.pending_return),
         iposApplied: Number(m.ipos_applied),

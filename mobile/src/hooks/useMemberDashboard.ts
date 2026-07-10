@@ -48,6 +48,7 @@ export type MemberDashboard = {
       id: number;
       displayName: string;
       pan: string;
+      upi?: string | null;
       status: string;
       pendingReturn: number;
       iposApplied: number;

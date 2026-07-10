@@ -20,7 +20,23 @@ export function groupApplicationsByIpo(apps: GroupApplication[]) {
     list.push(app);
     map.set(key, list);
   }
-  return [...map.entries()].map(([ipoName, rows]) => ({ ipoName, rows }));
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ipoName, rows]) => ({
+      ipoName,
+      rows: rows.sort((x, y) => x.memberName.localeCompare(y.memberName)),
+    }));
+}
+
+export function summarizeIpoGroupRows(rows: Array<{ allotmentStatus: string }>): string {
+  const pending = rows.filter((r) => r.allotmentStatus === 'PENDING').length;
+  const allotted = rows.filter((r) => r.allotmentStatus === 'ALLOTED').length;
+  const notAlloted = rows.filter((r) => r.allotmentStatus === 'NOT_ALLOTED').length;
+  const parts = [`${rows.length} application${rows.length === 1 ? '' : 's'}`];
+  if (allotted) parts.push(`${allotted} allotted`);
+  if (pending) parts.push(`${pending} pending`);
+  if (notAlloted) parts.push(`${notAlloted} not allotted`);
+  return parts.join(' · ');
 }
 
 export function hasPendingAllotment(dashboard: MemberDashboard | null | undefined): boolean {

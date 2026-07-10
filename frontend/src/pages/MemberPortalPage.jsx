@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
   Col,
+  Collapse,
   Descriptions,
   Form,
   Input,
+  InputNumber,
   Row,
+  Select,
   Space,
   Table,
   Tag,
@@ -28,8 +31,8 @@ import {
   TeamOutlined,
   CrownOutlined,
   RollbackOutlined,
-} from '@ant-design/icons';
-import dayjs from 'dayjs';
+  WhatsAppOutlined,
+} from '@ant-design/icons';import dayjs from 'dayjs';
 import {
   getAllotmentPortals,
   openAllotmentPortal,
@@ -42,9 +45,16 @@ import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
+import MemberIpoDetailDrawer from '../components/MemberIpoDetailDrawer';
 import { tableDefaults } from '../utils/table';
 import { getErrorMessage } from '../utils/errors';
-
+import {
+  buildCollectionWhatsAppMessage,
+  groupApplicationsByIpo,
+  openWhatsAppReminder,
+  statementToText,
+  summarizeIpoGroupRows,
+} from '../utils/memberPortal';
 const allotmentColors = {
   PENDING: 'processing',
   ALLOTED: 'success',
@@ -54,30 +64,87 @@ const allotmentColors = {
 export default function MemberPortalPage() {
   const [dashboard, setDashboard] = useState(null);
   const [issues, setIssues] = useState([]);
+  const [attention, setAttention] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [upcomingIpos, setUpcomingIpos] = useState([]);
+  const [fundClaims, setFundClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [form] = Form.useForm();
+  const [profileForm] = Form.useForm();
+  const [claimForm] = Form.useForm();
+  const [ipoDrawerId, setIpoDrawerId] = useState(null);
+
+  const groupAppsEarly = dashboard?.subGroup?.groupApplications ?? [];
+  const isGroupLeaderEarly = dashboard?.subGroup?.isLeader === true;
+  const memberPanEarly = formatPan(dashboard?.member?.pan);
+
+  const groupIpoGroups = useMemo(
+    () => groupApplicationsByIpo(groupAppsEarly),
+    [groupAppsEarly]
+  );
+
+  const personalIpoGroups = useMemo(
+    () =>
+      groupApplicationsByIpo(
+        (dashboard?.ipoApplications ?? []).map((app) => ({
+          ...app,
+          memberName: dashboard?.member?.displayName || 'You',
+          memberPan: memberPanEarly,
+        }))
+      ),
+    [dashboard?.ipoApplications, dashboard?.member?.displayName, memberPanEarly]
+  );
+
+  const allotmentIpoGroups = useMemo(() => {
+    if (isGroupLeaderEarly && groupAppsEarly.length) {
+      return groupApplicationsByIpo(groupAppsEarly);
+    }
+    return groupApplicationsByIpo(
+      (dashboard?.ipoApplications ?? []).map((app) => ({
+        ...app,
+        memberName: dashboard?.member?.displayName || 'You',
+        memberPan: memberPanEarly,
+      }))
+    );
+  }, [dashboard?.ipoApplications, dashboard?.member?.displayName, groupAppsEarly, isGroupLeaderEarly, memberPanEarly]);
 
   const load = () => {
     setLoadError(null);
     return Promise.allSettled([
       client.get('/member-portal/dashboard'),
       client.get('/member-portal/issues'),
-    ]).then(([dashRes, issuesRes]) => {
+      client.get('/member-portal/attention'),
+      client.get('/member-portal/activity?limit=15'),
+      client.get('/member-portal/upcoming-ipos'),
+      client.get('/member-portal/fund-return-claims'),
+    ]).then(([dashRes, issuesRes, attRes, actRes, ipoRes, claimsRes]) => {
       if (dashRes.status === 'fulfilled') {
         setDashboard(dashRes.value.data);
+        profileForm.setFieldsValue({
+          email: dashRes.value.data?.member?.email || '',
+          upi: dashRes.value.data?.member?.upi || '',
+        });
       } else {
         setDashboard(null);
         setLoadError(getErrorMessage(dashRes.reason, 'Could not load your portal'));
       }
       if (issuesRes.status === 'fulfilled') {
         setIssues(Array.isArray(issuesRes.value.data) ? issuesRes.value.data : []);
-      } else {
-        setIssues([]);
-        if (dashRes.status === 'fulfilled') {
-          message.warning('Could not load your issues list');
-        }
+      } else setIssues([]);
+      if (attRes.status === 'fulfilled') setAttention(attRes.value.data || []);
+      else setAttention([]);
+      if (actRes.status === 'fulfilled') setActivity(actRes.value.data || []);
+      else setActivity([]);
+      if (ipoRes.status === 'fulfilled') setUpcomingIpos(ipoRes.value.data || []);
+      else setUpcomingIpos([]);
+      if (claimsRes.status === 'fulfilled') setFundClaims(claimsRes.value.data || []);
+      else setFundClaims([]);
+      if (issuesRes.status === 'rejected' && dashRes.status === 'fulfilled') {
+        message.warning('Could not load your issues list');
       }
     });
   };
@@ -89,7 +156,10 @@ export default function MemberPortalPage() {
   const onSubmitIssue = async (values) => {
     setSubmitting(true);
     try {
-      await client.post('/member-portal/issues', { note: values.note?.trim() });
+      await client.post('/member-portal/issues', {
+        note: values.note?.trim(),
+        category: values.category || 'OTHER',
+      });
       message.success('Issue submitted — your manager will be notified');
       form.resetFields();
       const { data } = await client.get('/member-portal/issues');
@@ -101,6 +171,60 @@ export default function MemberPortalPage() {
     }
   };
 
+  const onSaveProfile = async (values) => {
+    setProfileSubmitting(true);
+    try {
+      await client.patch('/member-portal/profile', {
+        email: values.email?.trim() || null,
+        upi: values.upi?.trim() || null,
+      });
+      message.success('Profile updated');
+      await load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not update profile'));
+    } finally {
+      setProfileSubmitting(false);
+    }
+  };
+
+  const onSubmitClaim = async (values) => {
+    setClaimSubmitting(true);
+    try {
+      await client.post('/member-portal/fund-return-claims', {
+        amount: values.amount,
+        paymentRef: values.paymentRef?.trim() || undefined,
+        notes: values.notes?.trim() || undefined,
+        txnDate: new Date().toISOString(),
+      });
+      message.success('Fund return reported to your manager');
+      claimForm.resetFields();
+      const { data } = await client.get('/member-portal/fund-return-claims');
+      setFundClaims(data);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not submit claim'));
+    } finally {
+      setClaimSubmitting(false);
+    }
+  };
+
+  const downloadStatement = async (format = 'json') => {
+    try {
+      const { data } = await client.get('/member-portal/statement');
+      const blob =
+        format === 'text'
+          ? new Blob([statementToText(data)], { type: 'text/plain;charset=utf-8' })
+          : new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const ext = format === 'text' ? 'txt' : 'json';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `member-statement-${dayjs().format('YYYY-MM-DD')}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not download statement'));
+    }
+  };
   if (loading) return <PageLoading />;
 
   if (loadError && !dashboard) {
@@ -138,6 +262,37 @@ export default function MemberPortalPage() {
   const hasPendingAllotment =
     (dashboard?.ipoApplications ?? []).some((a) => a.allotmentStatus === 'PENDING') ||
     groupApps.some((a) => a.allotmentStatus === 'PENDING');
+
+  const membersOwing = groupMembers.filter(
+    (m) => !m.isLeader && Number(m.pendingReturn ?? 0) > 0
+  );
+
+  const resolveIpoId = (ipoName) =>
+    upcomingIpos.find((i) => i.name === ipoName)?.id ??
+    groupApps.find((a) => a.ipoName === ipoName)?.ipoId ??
+    null;
+
+  const openIpoDetail = (ipoId) => {
+    if (ipoId) setIpoDrawerId(ipoId);
+  };
+
+  const handleAttentionAction = (item) => {
+    if (item.action === 'fund-return' || item.action === 'issues' || item.action === 'collections') {
+      document.getElementById('member-tools')?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    if (item.action === 'allotment') {
+      document.getElementById('member-allotment')?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    if (item.action === 'upcoming') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (item.action === 'ipo' && item.ipoName) {
+      openIpoDetail(resolveIpoId(item.ipoName));
+    }
+  };
 
   const copyMyPan = async () => {
     if (!memberPan) return;
@@ -252,6 +407,11 @@ export default function MemberPortalPage() {
     },
     { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
     {
+      title: 'UPI',
+      dataIndex: 'upi',
+      render: (v) => v || '—',
+    },
+    {
       title: 'IPOs',
       dataIndex: 'iposApplied',
       align: 'center',
@@ -303,7 +463,6 @@ export default function MemberPortalPage() {
   ];
 
   const groupAppCols = [
-    { title: 'IPO', dataIndex: 'ipoName' },
     { title: 'Member', dataIndex: 'memberName' },
     { title: 'PAN', dataIndex: 'memberPan', render: (v) => formatPan(v) || '—' },
     {
@@ -315,6 +474,11 @@ export default function MemberPortalPage() {
       title: 'Allotment',
       dataIndex: 'allotmentStatus',
       render: (s) => <Tag color={allotmentColors[s]}>{s.replace(/_/g, ' ')}</Tag>,
+    },
+    {
+      title: 'Fund return',
+      dataIndex: 'fundReturned',
+      render: (v) => (v ? <Tag color="success">Returned</Tag> : <Tag color="warning">Pending</Tag>),
     },
     {
       title: 'IPO gross P&L',
@@ -371,6 +535,11 @@ export default function MemberPortalPage() {
       dataIndex: 'created_at',
       render: (v) => new Date(v).toLocaleString('en-IN'),
     },
+    {
+      title: 'Category',
+      dataIndex: 'category',
+      render: (v) => <Tag>{v || 'OTHER'}</Tag>,
+    },
     { title: 'Your note', dataIndex: 'note', ellipsis: true },
     {
       title: 'Status',
@@ -410,6 +579,83 @@ export default function MemberPortalPage() {
           message={`${formatCurrency(pendingReturn)} pending to return to your manager`}
           description="This is the difference between fund received from your team and what you have returned so far."
         />
+      )}
+
+      {attention.length > 0 && (
+        <ContentCard title="Needs your attention" style={{ marginBottom: 24 }}>
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            {attention.map((item) => (
+              <Alert
+                key={item.id}
+                type={item.priority === 'high' ? 'warning' : item.priority === 'medium' ? 'info' : 'success'}
+                showIcon
+                message={item.title}
+                description={
+                  <Space direction="vertical" size={4}>
+                    {item.detail ? <span>{item.detail}</span> : null}
+                    {item.action ? (
+                      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => handleAttentionAction(item)}>
+                        View details
+                      </Button>
+                    ) : null}
+                  </Space>
+                }
+              />
+            ))}
+          </Space>
+        </ContentCard>
+      )}
+
+      {upcomingIpos.length > 0 && (
+        <ContentCard title="Upcoming & open IPOs" style={{ marginBottom: 24 }}>
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={false}
+            dataSource={upcomingIpos.slice(0, 8)}
+            onRow={(row) => ({
+              onClick: () => openIpoDetail(row.id),
+              style: { cursor: 'pointer' },
+            })}
+            columns={[
+              { title: 'IPO', dataIndex: 'name' },
+              { title: 'Status', dataIndex: 'status', render: (s) => <Tag color={s === 'OPEN' ? 'green' : 'default'}>{s}</Tag> },
+              { title: 'Open date', dataIndex: 'openDate', render: (v) => (v ? dayjs(v).format('DD MMM YYYY') : '—') },
+              { title: 'Applied', dataIndex: 'applied', render: (v, row) => (v ? <Tag color="blue">{row.allotmentStatus || 'Yes'}</Tag> : <Tag>Not yet</Tag>) },
+              { title: 'Lot (RII)', dataIndex: 'lotAmountRii', render: (v) => formatCurrency(v) },
+            ]}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
+
+      {activity.length > 0 && (
+        <ContentCard
+          title="Recent activity"
+          style={{ marginBottom: 24 }}
+          extra={
+            <Button type="link" onClick={() => document.getElementById('member-activity')?.scrollIntoView({ behavior: 'smooth' })}>
+              View all
+            </Button>
+          }
+        >
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={activity.length > 5 ? { pageSize: 5 } : false}
+            dataSource={activity.slice(0, 5)}
+            onRow={(row) => ({
+              onClick: () => row.ipoId && openIpoDetail(row.ipoId),
+              style: row.ipoId ? { cursor: 'pointer' } : undefined,
+            })}
+            columns={[
+              { title: 'When', dataIndex: 'at', render: (v) => dayjs(v).format('DD MMM YYYY HH:mm') },
+              { title: 'Event', dataIndex: 'title' },
+              { title: 'Amount', dataIndex: 'amount', render: (v) => (v != null ? formatCurrency(v) : '—') },
+            ]}
+            {...tableDefaults}
+          />
+        </ContentCard>
       )}
 
       <ContentCard title="Your profile" style={{ marginBottom: 24 }}>
@@ -475,7 +721,60 @@ export default function MemberPortalPage() {
             ) : '—'}
           </Descriptions.Item>
         </Descriptions>
+        <Typography.Title level={5} style={{ marginTop: 16 }}>Update contact details</Typography.Title>
+        <Form form={profileForm} layout="vertical" onFinish={onSaveProfile} style={{ maxWidth: 480 }}>
+          <Form.Item name="email" label="Email">
+            <Input type="email" placeholder="you@example.com" />
+          </Form.Item>
+          <Form.Item name="upi" label="UPI ID">
+            <Input placeholder="name@upi" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={profileSubmitting}>Save profile</Button>
+        </Form>
       </ContentCard>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={12}>
+          <ContentCard title="Report fund return">
+            <Typography.Paragraph type="secondary">
+              Tell your manager you paid them back. They will confirm and update your ledger.
+            </Typography.Paragraph>
+            <Form form={claimForm} layout="vertical" onFinish={onSubmitClaim}>
+              <Form.Item name="amount" label="Amount returned" rules={[{ required: true, message: 'Enter amount' }]}>
+                <InputNumber min={1} style={{ width: '100%' }} addonBefore="₹" />
+              </Form.Item>
+              <Form.Item name="paymentRef" label="UPI / transaction ref">
+                <Input placeholder="Optional reference" />
+              </Form.Item>
+              <Form.Item name="notes" label="Notes">
+                <Input.TextArea rows={2} maxLength={1000} />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" loading={claimSubmitting}>Submit to manager</Button>
+            </Form>
+          </ContentCard>
+        </Col>
+        <Col xs={24} lg={12}>
+          <ContentCard title="Statement & fund return claims">
+            <Space style={{ marginBottom: 16 }}>
+              <Button onClick={() => downloadStatement('text')}>Download statement (TXT)</Button>
+              <Button onClick={() => downloadStatement('json')}>Download statement (JSON)</Button>
+            </Space>
+            <Table
+              rowKey="id"
+              size="small"
+              dataSource={fundClaims}
+              pagination={fundClaims.length > 5 ? { pageSize: 5 } : false}
+              locale={{ emptyText: 'No fund return claims yet' }}
+              columns={[
+                { title: 'Amount', dataIndex: 'amount', render: (v) => formatCurrency(v) },
+                { title: 'Status', dataIndex: 'status', render: (s) => <Tag color={s === 'ACKNOWLEDGED' ? 'success' : s === 'REJECTED' ? 'error' : 'warning'}>{s}</Tag> },
+                { title: 'Submitted', dataIndex: 'createdAt', render: (v) => dayjs(v).format('DD MMM YYYY') },
+              ]}
+              {...tableDefaults}
+            />
+          </ContentCard>
+        </Col>
+      </Row>
 
       <ContentCard title="Overview" style={{ marginBottom: 24 }}>
         <Typography.Text type="secondary" className="member-portal-section-label">Fund</Typography.Text>
@@ -635,21 +934,36 @@ export default function MemberPortalPage() {
               ) : null
             }
           />
-          {groupApps.length > 0 && (
+          {groupIpoGroups.length > 0 && (
             <>
-              <Typography.Title level={5}>Group IPO applications</Typography.Title>
+              <Typography.Title level={5}>Group IPO applications (by IPO)</Typography.Title>
               <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                All IPO applications for members in your sub-group, including allotment and profit share.
+                Grouped by IPO name. Click an IPO header to expand members.
               </Typography.Paragraph>
-              <Table
-                rowKey="id"
-                columns={groupAppCols}
-                dataSource={groupApps}
-                pagination={groupApps.length > 10 ? { pageSize: 10 } : false}
-                locale={{ emptyText: 'No group IPO applications' }}
-                scroll={{ x: 'max-content' }}
+              <Collapse
                 style={{ marginBottom: 24 }}
-                {...tableDefaults}
+                items={groupIpoGroups.map(({ ipoName, ipoId, rows }) => ({
+                  key: ipoName,
+                  label: (
+                    <Space>
+                      <Button type="link" style={{ padding: 0 }} onClick={(e) => { e.stopPropagation(); openIpoDetail(ipoId ?? resolveIpoId(ipoName)); }}>
+                        {ipoName}
+                      </Button>
+                      <Typography.Text type="secondary">{summarizeIpoGroupRows(rows)}</Typography.Text>
+                    </Space>
+                  ),
+                  children: (
+                    <Table
+                      rowKey="id"
+                      size="small"
+                      columns={groupAppCols}
+                      dataSource={rows}
+                      pagination={false}
+                      scroll={{ x: 'max-content' }}
+                      {...tableDefaults}
+                    />
+                  ),
+                }))}
               />
             </>
           )}
@@ -669,7 +983,7 @@ export default function MemberPortalPage() {
         </ContentCard>
       )}
 
-      <ContentCard title="Your IPO Applications" style={{ marginBottom: 24 }}>
+      <ContentCard title="Your IPO applications (by IPO)" style={{ marginBottom: 24 }}>
         {hasPendingAllotment && memberPan && (
           <Alert
             type="info"
@@ -680,20 +994,12 @@ export default function MemberPortalPage() {
               <Space direction="vertical" size="small" style={{ width: '100%' }}>
                 <span>
                   After allotment day, use official BSE/NSE sites: select the IPO name, enter PAN{' '}
-                  <Typography.Text code>{memberPan}</Typography.Text>, then search. Results are not
-                  fetched automatically into this app.
+                  <Typography.Text code>{memberPan}</Typography.Text>, then search.
                 </span>
                 <Space wrap>
-                  <Button size="small" icon={<CopyOutlined />} onClick={copyMyPan}>
-                    Copy my PAN
-                  </Button>
+                  <Button size="small" icon={<CopyOutlined />} onClick={copyMyPan}>Copy my PAN</Button>
                   {getAllotmentPortals().map((p) => (
-                    <Button
-                      key={p.id}
-                      size="small"
-                      icon={<LinkOutlined />}
-                      onClick={() => openAllotmentPortal(p.url)}
-                    >
+                    <Button key={p.id} size="small" icon={<LinkOutlined />} onClick={() => openAllotmentPortal(p.url)}>
                       {p.name}
                     </Button>
                   ))}
@@ -702,15 +1008,149 @@ export default function MemberPortalPage() {
             }
           />
         )}
-        <Table
-          rowKey="id"
-          columns={ipoCols}
-          dataSource={dashboard?.ipoApplications ?? []}
-          pagination={false}
-          locale={{ emptyText: 'No IPO applications yet' }}
-          {...tableDefaults}
-        />
+        {personalIpoGroups.length ? (
+          <Collapse
+            items={personalIpoGroups.map(({ ipoName, rows }) => ({
+              key: ipoName,
+              label: (
+                <Space>
+                  <span>{ipoName}</span>
+                  <Typography.Text type="secondary">{summarizeIpoGroupRows(rows)}</Typography.Text>
+                </Space>
+              ),
+              children: (
+                <Table rowKey="id" size="small" columns={ipoCols} dataSource={rows} pagination={false} {...tableDefaults} />
+              ),
+            }))}
+          />
+        ) : (
+          <Typography.Text type="secondary">No IPO applications yet</Typography.Text>
+        )}
       </ContentCard>
+
+      <ContentCard id="member-allotment" title={isGroupLeader ? 'Allotment — your sub-group' : 'Allotment status'} style={{ marginBottom: 24 }}>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Grouped by IPO. Copy each member PAN and check on official BSE/NSE portals.
+        </Typography.Paragraph>
+        {allotmentIpoGroups.length ? (
+          <Collapse
+            items={allotmentIpoGroups.map(({ ipoName, rows }) => ({
+              key: `allot-${ipoName}`,
+              label: (
+                <Space>
+                  <span>{ipoName}</span>
+                  <Typography.Text type="secondary">{summarizeIpoGroupRows(rows)}</Typography.Text>
+                </Space>
+              ),
+              children: (
+                <Table
+                  rowKey={(r) => `${r.id}-${r.memberPan}`}
+                  size="small"
+                  pagination={false}
+                  dataSource={rows}
+                  columns={[
+                    { title: 'Member', dataIndex: 'memberName' },
+                    { title: 'PAN', dataIndex: 'memberPan', render: (v) => formatPan(v) },
+                    { title: 'Amount', dataIndex: 'amount', render: (v) => formatCurrency(v) },
+                    {
+                      title: 'Allotment',
+                      dataIndex: 'allotmentStatus',
+                      render: (s) => <Tag color={allotmentColors[s]}>{s.replace(/_/g, ' ')}</Tag>,
+                    },
+                    {
+                      title: '',
+                      key: 'copy',
+                      render: (_, row) => (
+                        <Button size="small" icon={<CopyOutlined />} onClick={() => copyField(formatPan(row.memberPan), 'PAN')}>
+                          Copy PAN
+                        </Button>
+                      ),
+                    },
+                  ]}
+                  {...tableDefaults}
+                />
+              ),
+            }))}
+          />
+        ) : (
+          <Typography.Text type="secondary">No IPO applications yet</Typography.Text>
+        )}
+      </ContentCard>
+
+      {isGroupLeader && membersOwing.length > 0 && (
+        <ContentCard title="Collect from members" style={{ marginBottom: 24 }}>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`${formatCurrency(membersOwing.reduce((s, m) => s + Number(m.pendingReturn ?? 0), 0))} pending across ${membersOwing.length} member(s)`}
+            description="Remind members to return IPO fund to you, then you refund your manager."
+          />
+          <Table
+            rowKey="id"
+            size="small"
+            dataSource={membersOwing}
+            pagination={membersOwing.length > 8 ? { pageSize: 8 } : false}
+            columns={[
+              { title: 'Member', dataIndex: 'displayName' },
+              { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) },
+              { title: 'UPI', dataIndex: 'upi', render: (v) => v || '—' },
+              { title: 'Pending', dataIndex: 'pendingReturn', render: (v) => formatCurrency(v) },
+              {
+                title: 'Actions',
+                key: 'actions',
+                render: (_, row) => (
+                  <Space>
+                    {row.upi ? (
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => copyField(row.upi, 'UPI')}>
+                        Copy UPI
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="small"
+                      icon={<WhatsAppOutlined />}
+                      onClick={() =>
+                        openWhatsAppReminder(
+                          buildCollectionWhatsAppMessage(
+                            row.displayName,
+                            Number(row.pendingReturn),
+                            dashboard?.member?.displayName
+                          )
+                        )
+                      }
+                    >
+                      WhatsApp
+                    </Button>
+                  </Space>
+                ),
+              },
+            ]}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
+
+      {activity.length > 0 && (
+        <ContentCard id="member-activity" title="Full activity feed" style={{ marginBottom: 24 }}>
+          <Table
+            rowKey="id"
+            size="small"
+            pagination={activity.length > 15 ? { pageSize: 15 } : false}
+            dataSource={activity}
+            onRow={(row) => ({
+              onClick: () => row.ipoId && openIpoDetail(row.ipoId),
+              style: row.ipoId ? { cursor: 'pointer' } : undefined,
+            })}
+            columns={[
+              { title: 'When', dataIndex: 'at', render: (v) => dayjs(v).format('DD MMM YYYY HH:mm') },
+              { title: 'Event', dataIndex: 'title' },
+              { title: 'Detail', dataIndex: 'detail', ellipsis: true, render: (v) => v || '—' },
+              { title: 'Amount', dataIndex: 'amount', render: (v) => (v != null ? formatCurrency(v) : '—') },
+            ]}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
 
       {(dashboard?.ledgerEntries ?? []).length > 0 && (
         <ContentCard title="Your transactions" style={{ marginBottom: 24 }}>
@@ -737,13 +1177,24 @@ export default function MemberPortalPage() {
         </ContentCard>
       )}
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[16, 16]} id="member-tools">
         <Col xs={24} lg={12}>
           <ContentCard title="Raise an Issue">
             <Typography.Paragraph type="secondary">
               Describe any problem or question. Your manager will see this in their dashboard alerts.
             </Typography.Paragraph>
-            <Form form={form} layout="vertical" onFinish={onSubmitIssue}>
+            <Form form={form} layout="vertical" onFinish={onSubmitIssue} initialValues={{ category: 'OTHER' }}>
+              <Form.Item name="category" label="Category">
+                <Select
+                  options={[
+                    { value: 'PAYMENT', label: 'Payment' },
+                    { value: 'PROFIT', label: 'Profit' },
+                    { value: 'ALLOTMENT', label: 'Allotment' },
+                    { value: 'FUND_RETURN', label: 'Fund return' },
+                    { value: 'OTHER', label: 'Other' },
+                  ]}
+                />
+              </Form.Item>
               <Form.Item
                 name="note"
                 label="Issue / note"
@@ -786,6 +1237,12 @@ export default function MemberPortalPage() {
           </ContentCard>
         </Col>
       </Row>
+
+      <MemberIpoDetailDrawer
+        ipoId={ipoDrawerId}
+        open={!!ipoDrawerId}
+        onClose={() => setIpoDrawerId(null)}
+      />
     </div>
   );
 }
