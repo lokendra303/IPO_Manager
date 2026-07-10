@@ -24,7 +24,8 @@ export function groupApplicationsByIpo(apps: GroupApplication[]) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([ipoName, rows]) => ({
       ipoName,
-      rows: rows.sort((x, y) => x.memberName.localeCompare(y.memberName)),
+      ipoId: rows[0]?.ipoId ?? null,
+      rows: rows.sort((x, y) => (x.memberName || '').localeCompare(y.memberName || '')),
     }));
 }
 
@@ -45,7 +46,7 @@ export function hasPendingAllotment(dashboard: MemberDashboard | null | undefine
   return !!(personal || group);
 }
 
-/** Production API before group leader enrichment returns members without P&L/allotment fields. */
+/** @deprecated Use dashboard payload; kept for soft warning only. */
 export function isStaleGroupLeaderApi(
   subGroup: MemberDashboard['subGroup'] | null | undefined
 ): boolean {
@@ -70,6 +71,65 @@ export function isStaleGroupLeaderApi(
   if (hasGroupActivity && !subGroup.groupApplications?.length) return true;
 
   return false;
+}
+
+/** Build attention cards on-device when API extras are missing (older server). */
+export function buildAttentionFromDashboard(dashboard: MemberDashboard | null | undefined) {
+  if (!dashboard) return [];
+  const items: Array<{
+    id: string;
+    priority: 'high' | 'medium' | 'low';
+    type: string;
+    title: string;
+    detail?: string;
+    action?: string;
+    ipoName?: string;
+  }> = [];
+  const pendingReturn = Number(dashboard.stats?.pendingReturn ?? 0);
+  if (pendingReturn > 0) {
+    items.push({
+      id: 'pending-return',
+      priority: 'high',
+      type: 'PENDING_RETURN',
+      title: `${formatCurrency(pendingReturn)} pending return to manager`,
+      detail: 'Fund received minus what you have returned so far.',
+      action: 'fund-return',
+    });
+  }
+  const pendingIpos = [
+    ...(dashboard.ipoApplications ?? []).filter((a) => a.allotmentStatus === 'PENDING').map((a) => a.ipoName),
+    ...(dashboard.subGroup?.groupApplications ?? [])
+      .filter((a) => a.allotmentStatus === 'PENDING')
+      .map((a) => a.ipoName),
+  ];
+  const uniquePending = [...new Set(pendingIpos)];
+  if (uniquePending.length) {
+    items.push({
+      id: 'pending-allotment',
+      priority: 'medium',
+      type: 'PENDING_ALLOTMENT',
+      title: `Check allotment for ${uniquePending.slice(0, 2).join(', ')}${uniquePending.length > 2 ? '…' : ''}`,
+      detail: 'Use official BSE/NSE portals with each member PAN.',
+      action: 'allotment',
+    });
+  }
+  if (dashboard.subGroup?.isLeader) {
+    const owing = (dashboard.subGroup.members ?? []).filter(
+      (m) => !m.isLeader && Number(m.pendingReturn ?? 0) > 0
+    );
+    if (owing.length) {
+      const total = owing.reduce((s, m) => s + Number(m.pendingReturn ?? 0), 0);
+      items.push({
+        id: 'group-collections',
+        priority: 'high',
+        type: 'GROUP_COLLECTION',
+        title: `Collect ${formatCurrency(total)} from ${owing.length} member(s)`,
+        detail: owing.map((m) => m.displayName).slice(0, 4).join(', '),
+        action: 'collections',
+      });
+    }
+  }
+  return items;
 }
 
 export function formatIpoShareLine(app: {

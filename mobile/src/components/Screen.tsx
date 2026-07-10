@@ -1,5 +1,6 @@
 import { ScrollView, StyleSheet, View, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BOTTOM_NAV_HEIGHT } from './AppBottomNav';
 import { colors, spacing } from '../theme';
 
 type Props = {
@@ -7,11 +8,26 @@ type Props = {
   scroll?: boolean;
   style?: ViewStyle;
   padded?: boolean;
+  bottomNavInset?: boolean;
 };
 
-export default function Screen({ children, scroll = true, style, padded = true }: Props) {
+export default function Screen({
+  children,
+  scroll = true,
+  style,
+  padded = true,
+  bottomNavInset = false,
+}: Props) {
   const content = (
-    <View style={[padded && styles.padded, style]}>{children}</View>
+    <View
+      style={[
+        padded && styles.padded,
+        bottomNavInset && { paddingBottom: spacing.xxl + BOTTOM_NAV_HEIGHT },
+        style,
+      ]}
+    >
+      {children}
+    </View>
   );
 
   return (

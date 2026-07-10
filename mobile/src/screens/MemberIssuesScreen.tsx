@@ -63,7 +63,7 @@ export default function MemberIssuesScreen() {
   const openCount = issues.filter((i) => i.status === 'OPEN').length;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Issues"
         subtitle={openCount > 0 ? `${openCount} open issue${openCount === 1 ? '' : 's'}` : 'Report problems and track manager responses'}

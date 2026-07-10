@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { isStaleGroupLeaderApi } from '../utils/memberPortal';
-import { config } from '../config';
 import { getErrorMessage } from '../utils/errors';
+import type { ActivityItem, UpcomingIpo } from './useMemberPortalExtras';
+import type { AttentionItem } from '../components/AttentionCard';
 
 export type GroupApplication = {
   id: number;
@@ -83,6 +84,7 @@ export type MemberDashboard = {
   };
   ipoApplications?: Array<{
     id: number;
+    ipoId?: number;
     ipoName: string;
     allotmentStatus: string;
     amount: number;
@@ -99,6 +101,9 @@ export type MemberDashboard = {
     ipoName: string | null;
     notes: string | null;
   }>;
+  attention?: AttentionItem[];
+  activity?: ActivityItem[];
+  upcomingIpos?: UpcomingIpo[];
 };
 
 export function useMemberDashboard() {
@@ -107,6 +112,7 @@ export function useMemberDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [staleWarning, setStaleWarning] = useState(false);
 
   const load = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -120,17 +126,17 @@ export function useMemberDashboard() {
       setError(null);
 
       try {
-        const { data: fresh } = await client.get<MemberDashboard>('/member-portal/dashboard');
-        if (isStaleGroupLeaderApi(fresh.subGroup)) {
-          throw new Error(
-            `Server at ${config.apiBaseUrl} returned outdated group data. Tap Refresh or log in again.`
-          );
-        }
+        const { data: fresh } = await client.get<MemberDashboard>('/member-portal/dashboard', {
+          timeout: 90000,
+        });
+        setStaleWarning(isStaleGroupLeaderApi(fresh.subGroup));
         setData(fresh);
         return fresh;
       } catch (err) {
-        setError(getErrorMessage(err, 'Could not load member portal'));
-        setData(null);
+        const message = getErrorMessage(err, 'Could not load member portal');
+        setError(message);
+        setData((prev) => prev);
+        if (!opts?.silent) setData(null);
         return null;
       } finally {
         setLoading(false);
@@ -146,5 +152,5 @@ export function useMemberDashboard() {
 
   const refresh = useCallback(() => load({ silent: true }), [load]);
 
-  return { data, loading, refreshing, error, refresh, reload: load };
+  return { data, loading, refreshing, error, staleWarning, refresh, reload: load };
 }

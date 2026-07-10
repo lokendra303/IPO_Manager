@@ -59,7 +59,7 @@ export default function MemberFundReturnScreen() {
   if (loading && !claims.length) return <Loading />;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader title="Report fund return" subtitle="Tell your manager you paid them back" />
       <ContentCard title="New payment report">
         <Banner variant="info">This does not auto-update your ledger. Your manager confirms and records the return.</Banner>

@@ -1,8 +1,21 @@
 import { useCallback } from 'react';
+import { isAxiosError } from 'axios';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useQuery } from './useQuery';
 import type { AttentionItem } from '../components/AttentionCard';
+
+async function safeMemberGet<T>(url: string, fallback: T): Promise<T> {
+  try {
+    const { data } = await client.get<T>(url, { timeout: 60000 });
+    return data;
+  } catch (err) {
+    if (isAxiosError(err) && (err.response?.status === 403 || err.response?.status === 404)) {
+      return fallback;
+    }
+    throw err;
+  }
+}
 
 export type ActivityItem = {
   id: string;
@@ -32,8 +45,7 @@ export type UpcomingIpo = {
 export function useMemberAttention() {
   const { user, isMember } = useAuth();
   const fetcher = useCallback(async () => {
-    const { data } = await client.get<AttentionItem[]>('/member-portal/attention');
-    return data;
+    return safeMemberGet<AttentionItem[]>('/member-portal/attention', []);
   }, []);
   return useQuery(fetcher, [], { enabled: isMember && !!user?.id });
 }
@@ -41,8 +53,7 @@ export function useMemberAttention() {
 export function useMemberActivity(limit = 40) {
   const { user, isMember } = useAuth();
   const fetcher = useCallback(async () => {
-    const { data } = await client.get<ActivityItem[]>(`/member-portal/activity?limit=${limit}`);
-    return data;
+    return safeMemberGet<ActivityItem[]>(`/member-portal/activity?limit=${limit}`, []);
   }, [limit]);
   return useQuery(fetcher, [limit], { enabled: isMember && !!user?.id });
 }
@@ -50,8 +61,7 @@ export function useMemberActivity(limit = 40) {
 export function useUpcomingIpos() {
   const { user, isMember } = useAuth();
   const fetcher = useCallback(async () => {
-    const { data } = await client.get<UpcomingIpo[]>('/member-portal/upcoming-ipos');
-    return data;
+    return safeMemberGet<UpcomingIpo[]>('/member-portal/upcoming-ipos', []);
   }, []);
   return useQuery(fetcher, [], { enabled: isMember && !!user?.id });
 }

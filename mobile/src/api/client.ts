@@ -11,7 +11,7 @@ export function setClientUnauthorizedHandler(handler: AuthHandler | null) {
 
 const client = axios.create({
   baseURL: config.apiBaseUrl,
-  timeout: 30000,
+  timeout: 60000,
 });
 
 client.interceptors.request.use(async (cfg: InternalAxiosRequestConfig) => {

@@ -9,6 +9,7 @@ import Tag from '../components/Tag';
 import Banner from '../components/Banner';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { useMemberActivity } from '../hooks/useMemberPortalExtras';
+import { useMemberDashboard } from '../hooks/useMemberDashboard';
 
 const TYPE_COLORS: Record<string, string> = {
   FUND_RECEIVED: '#d97706',
@@ -25,13 +26,14 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function MemberActivityScreen() {
+  const { data: dashboard } = useMemberDashboard();
   const { data, loading, error, refresh } = useMemberActivity(50);
-  const activity = data ?? [];
+  const activity = data?.length ? data : dashboard?.activity ?? [];
 
   if (loading && !activity.length) return <Loading />;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Activity"
         subtitle="Fund, allotment, profit, and issue updates"

@@ -18,6 +18,7 @@ import { useMemberActivity, useMemberAttention, useUpcomingIpos } from '../hooks
 import { useAuth } from '../context/AuthContext';
 import {
   ALLOTMENT_COLORS,
+  buildAttentionFromDashboard,
   formatAllotmentLabel,
   formatIpoShareLine,
   groupApplicationsByIpo,
@@ -38,13 +39,26 @@ function ledgerTypeLabel(type: string): string {
 
 export default function MemberPortalScreen() {
   const { user } = useAuth();
-  const { data: dashboard, loading, error, refresh } = useMemberDashboard();
+  const { data: dashboard, loading, error, staleWarning, refresh } = useMemberDashboard();
   const attentionQuery = useMemberAttention();
   const activityQuery = useMemberActivity(5);
   const upcomingQuery = useUpcomingIpos();
-  const attentionItems = attentionQuery.data ?? [];
-  const activityPreview = activityQuery.data ?? [];
-  const upcomingIposList = upcomingQuery.data ?? [];
+
+  const attentionItems = useMemo(() => {
+    if (dashboard?.attention?.length) return dashboard.attention;
+    if (attentionQuery.data?.length) return attentionQuery.data;
+    return buildAttentionFromDashboard(dashboard);
+  }, [attentionQuery.data, dashboard]);
+
+  const activityPreview = useMemo(() => {
+    if (dashboard?.activity?.length) return dashboard.activity.slice(0, 5);
+    return activityQuery.data ?? [];
+  }, [activityQuery.data, dashboard?.activity]);
+
+  const upcomingIposList = useMemo(
+    () => dashboard?.upcomingIpos ?? upcomingQuery.data ?? [],
+    [dashboard?.upcomingIpos, upcomingQuery.data]
+  );
 
   const groupAppsEarly = dashboard?.subGroup?.groupApplications ?? [];
 
@@ -77,7 +91,7 @@ export default function MemberPortalScreen() {
   const personalIpoGroups = useMemo(() => {
     const mapped: GroupApplication[] = applications.map((app) => ({
       id: app.id,
-      ipoId: 0,
+      ipoId: app.ipoId ?? 0,
       ipoName: app.ipoName,
       memberId: 0,
       memberName: dashboard?.member?.displayName || 'You',
@@ -96,7 +110,7 @@ export default function MemberPortalScreen() {
 
   if (!dashboard) {
     return (
-      <Screen>
+      <Screen bottomNavInset>
         <PageHeader
           title="Member portal"
           subtitle="Could not load your dashboard"
@@ -125,7 +139,7 @@ export default function MemberPortalScreen() {
   );
   const groupGrossPnL = Number(groupStats.grossIpoPnL ?? 0);
   const groupMemberShare = Number(groupStats.totalMemberShare ?? 0);
-  const staleGroupApi = isStaleGroupLeaderApi(subGroup);
+  const staleGroupApi = staleWarning || isStaleGroupLeaderApi(subGroup);
   const memberProfit = Number(stats.totalMemberShare ?? 0);
   const grossIpoPnL = Number(stats.grossIpoPnL ?? 0);
   const ledgerEntries = dashboard.ledgerEntries ?? [];
@@ -136,7 +150,7 @@ export default function MemberPortalScreen() {
   };
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title={`Hello, ${member?.displayName || user?.displayName || 'Member'}`}
         subtitle="Your fund flow, IPO applications, and profit summary"

@@ -36,7 +36,7 @@ export default function MemberIpoDetailScreen() {
   const groupApps = data?.groupApplications ?? [];
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title={ipo?.name || 'IPO detail'}
         subtitle={ipo?.status === 'OPEN' ? 'Open IPO' : 'Closed IPO'}

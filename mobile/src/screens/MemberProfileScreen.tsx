@@ -41,7 +41,7 @@ export default function MemberProfileScreen() {
   };
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader title="Edit profile" subtitle="Update contact details your manager can see" />
       <ContentCard title="Contact details">
         <TextInput label="Email" value={email} onChangeText={setEmail} mode="outlined" style={ui.input} keyboardType="email-address" autoCapitalize="none" />

@@ -38,7 +38,7 @@ export default function MemberCollectionsScreen() {
 
   if (!isLeader) {
     return (
-      <Screen>
+      <Screen bottomNavInset>
         <PageHeader title="Collect from members" />
         <Banner variant="info">Only sub-group leaders can see member collection status.</Banner>
       </Screen>
@@ -48,7 +48,7 @@ export default function MemberCollectionsScreen() {
   const total = members.reduce((s, m) => s + Number(m.pendingReturn ?? 0), 0);
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Collect from members"
         subtitle={members.length ? `${formatCurrency(total)} pending across ${members.length} member(s)` : 'All caught up'}

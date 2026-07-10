@@ -57,7 +57,7 @@ export default function MemberAllotmentScreen() {
   if (loading && !dashboard) return <Loading />;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Check allotment"
         subtitle={

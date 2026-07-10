@@ -39,7 +39,7 @@ export default function MemberStatementScreen() {
   const summary = statement?.summary ?? {};
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Statement"
         subtitle="Your fund and IPO summary"

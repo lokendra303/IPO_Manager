@@ -16,7 +16,7 @@ const LINKS = [
 
 export default function MemberMoreScreen() {
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader title="More" subtitle="Profile, issues, statements, and collections" />
       <ContentCard title="Member tools">
         <Text style={[ui.hint, { marginBottom: 12 }]}>Extra actions beyond your home dashboard.</Text>

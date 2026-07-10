@@ -1,6 +1,12 @@
 import { getMemberDetail } from './memberDetailService.js';
 import { listGroupBulkTransactions } from './memberGroupService.js';
 import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
+import {
+  buildMemberAttentionItems,
+  getMemberActivityFeed,
+  getMemberUpcomingIpos,
+  listFundReturnClaims,
+} from './memberPortalExtrasService.js';
 import { formatPan } from '../utils/validate.js';
 
 function mapMemberRuleRow(row) {
@@ -256,7 +262,7 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
     member.member_group_id
   );
 
-  return {
+  const dashboardCore = {
     member: {
       id: member.id,
       displayName: member.display_name,
@@ -280,6 +286,7 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
     },
     ipoApplications: ipoApplications.map((app) => ({
       id: app.id,
+      ipoId: app.ipo_id,
       ipoName: app.ipo_name,
       ipoStatus: app.ipo_status,
       amount: Number(app.amount),
@@ -300,5 +307,25 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       ipoName: entry.ipo_name ?? null,
       notes: entry.notes ?? null,
     })),
+  };
+
+  const [upcomingIpos, activity, fundClaims] = await Promise.all([
+    getMemberUpcomingIpos(pool, tenantId, memberId),
+    getMemberActivityFeed(pool, tenantId, memberId, { limit: 15 }),
+    listFundReturnClaims(pool, tenantId, memberId),
+  ]);
+
+  const attention = buildMemberAttentionItems({
+    dashboard: dashboardCore,
+    upcomingIpos,
+    issues: [],
+    claims: fundClaims,
+  });
+
+  return {
+    ...dashboardCore,
+    attention,
+    activity,
+    upcomingIpos,
   };
 }
