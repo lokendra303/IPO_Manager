@@ -249,6 +249,11 @@ export default function MemberGroupsScreen() {
     );
   };
 
+  const deselectAllMembers = () => {
+    setSelectedMemberIds([]);
+    setOwnerMemberId(null);
+  };
+
   if (loading && !groups.length) return <Loading />;
 
   const viewOwnerLabel = viewGroup ? getOwnerLabel(viewGroup) : null;
@@ -437,9 +442,19 @@ export default function MemberGroupsScreen() {
               );
             })}
 
-            <Button mode="text" onPress={selectAllAvailable} style={{ alignSelf: 'flex-start' }}>
-              Select all available members
-            </Button>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+              <Button mode="text" onPress={selectAllAvailable} style={{ alignSelf: 'flex-start' }}>
+                Select all available members
+              </Button>
+              <Button
+                mode="text"
+                disabled={!selectedMemberIds.length}
+                onPress={deselectAllMembers}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                Deselect all
+              </Button>
+            </View>
 
             <ContentCard title="Group owner" style={{ marginTop: 16 }}>
               <Text style={styles.hint}>Receives bulk IPO payments for the whole group. Must be one of the selected members.</Text>

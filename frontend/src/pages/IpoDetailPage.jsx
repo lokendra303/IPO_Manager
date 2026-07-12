@@ -1309,7 +1309,13 @@ export default function IpoDetailPage() {
                       options={availableMembers.map((m) => ({ label: `${m.display_name} (${formatPan(m.pan)})`, value: m.id }))}
                     />
                     <Space size={0}>
-                      <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>
+                      <Button
+                        type="link"
+                        onClick={() => {
+                          setSelectedGroupBulkIds([]);
+                          setSelectedIds(availableMembers.map((m) => m.id));
+                        }}
+                      >
                         Select all
                       </Button>
                       <Button

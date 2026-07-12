@@ -782,11 +782,18 @@ export default function IpoDetailScreen() {
                     const selectedInGroup = groupAvailable.filter((m: any) => selectedIds.includes(m.id));
                     const allSelected = !bulkSelected && groupAvailable.length > 0 && selectedInGroup.length === groupAvailable.length;
                     const hasOwner = !!group.ownerMemberId;
+                    const noAvailableLabel = !groupAvailable.length
+                      ? group.members.every((m: any) => getGroupMemberDistributeReason(m) === 'inactive')
+                        ? ' · no active members'
+                        : group.members.some((m: any) => getGroupMemberDistributeReason(m) === 'inactive')
+                          ? ' · no available members'
+                          : ' · all already applied'
+                      : '';
 
                     return (
                       <View key={group.id} style={styles.groupBox}>
                         <Checkbox.Item
-                          label={`${group.name} — bulk to owner${hasOwner ? ` (${group.ownerDisplayName})` : ' (set owner)'}`}
+                          label={`${group.name} — bulk to owner${hasOwner ? ` (${group.ownerDisplayName})` : ' (set owner)'}${noAvailableLabel}`}
                           status={bulkSelected ? 'checked' : 'unchecked'}
                           disabled={!groupAvailable.length || !hasOwner}
                           onPress={() => toggleGroupBulk(group, !bulkSelected)}
@@ -833,21 +840,6 @@ export default function IpoDetailScreen() {
                         onPress={() => toggleMemberSelection(m.id)}
                       />
                     ))}
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
-                      <Button mode="text" onPress={() => setSelectedIds(availableMembers.map((m) => m.id))}>
-                        Select all
-                      </Button>
-                      <Button
-                        mode="text"
-                        disabled={!selectedIds.length && !selectedGroupBulkIds.length}
-                        onPress={() => {
-                          setSelectedIds([]);
-                          setSelectedGroupBulkIds([]);
-                        }}
-                      >
-                        Deselect all
-                      </Button>
-                    </View>
                   </>
                 )}
 
@@ -865,10 +857,11 @@ export default function IpoDetailScreen() {
                   </>
                 )}
 
-                {distributeMode === 'groups' && memberGroups.length > 0 && (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                {availableMembers.length > 0 && (
+                  <View style={styles.selectActions}>
                     <Button
                       mode="text"
+                      compact
                       onPress={() => {
                         setSelectedGroupBulkIds([]);
                         setSelectedIds(availableMembers.map((m) => m.id));
@@ -878,6 +871,7 @@ export default function IpoDetailScreen() {
                     </Button>
                     <Button
                       mode="text"
+                      compact
                       disabled={!selectedIds.length && !selectedGroupBulkIds.length}
                       onPress={() => {
                         setSelectedIds([]);
@@ -1236,6 +1230,13 @@ const styles = StyleSheet.create({
   sectionTitle: { fontWeight: '600', fontSize: 13, marginTop: 4, color: colors.text },
   bold: { fontWeight: '600' },
   groupBox: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, marginBottom: 12, padding: 4, backgroundColor: '#fff' },
+  selectActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 12 },
   splitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   splitInput: { width: 120 },
