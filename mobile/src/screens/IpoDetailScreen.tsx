@@ -144,10 +144,20 @@ export default function IpoDetailScreen() {
 
   const isClosed = ipo?.status === 'CLOSED';
   const activeAccounts = bankAccounts.filter((a) => a.is_active);
-  const activeMemberIds = new Set(applications.map((a) => a.member_id));
-  const availableMembers = members.filter((m) => !activeMemberIds.has(m.id));
+  const appliedMemberIds = new Set(applications.map((a) => a.member_id));
+  const availableMembers = members.filter((m) => !appliedMemberIds.has(m.id));
   const isMemberAvailable = (memberId: number) => availableMembers.some((m) => m.id === memberId);
+  const getGroupMemberDistributeReason = (m: any): 'inactive' | 'applied' | null => {
+    if (m.status === 'INACTIVE' || !members.some((am) => am.id === m.id)) return 'inactive';
+    if (appliedMemberIds.has(m.id)) return 'applied';
+    return null;
+  };
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
+  const riiLotAmount = getLotAmountForCategory(ipo, 'RII') ?? 0;
+  const hniLotAmount = getLotAmountForCategory(ipo, 'HNI');
+  const requiredFundForActiveRii = availableMembers.length * riiLotAmount;
+  const requiredFundForActiveHni =
+    hniLotAmount != null && ipoHasHniLot(ipo) ? availableMembers.length * hniLotAmount : null;
 
   const getAllotmentStatus = (app: any) =>
     editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
@@ -565,6 +575,31 @@ export default function IpoDetailScreen() {
         </ContentCard>
       )}
 
+      {!isClosed && (
+        <ContentCard title="Required fund (active members)">
+          {availableMembers.length === 0 ? (
+            <Text style={ui.hint}>All active members already have an application for this IPO.</Text>
+          ) : (
+            <>
+              <Text style={styles.summaryMeta}>
+                {availableMembers.length} available × {formatCurrency(riiLotAmount)} (RII) ={' '}
+                <Text style={styles.bold}>{formatCurrency(requiredFundForActiveRii)}</Text>
+              </Text>
+              {requiredFundForActiveHni != null && (
+                <Text style={styles.summaryMeta}>
+                  {availableMembers.length} available × {formatCurrency(hniLotAmount)} (HNI) ={' '}
+                  <Text style={styles.bold}>{formatCurrency(requiredFundForActiveHni)}</Text>
+                </Text>
+              )}
+              <Text style={ui.hint}>
+                Wallet {formatCurrency(wallet)}
+                {wallet < requiredFundForActiveRii ? ' — short for full RII distribution' : ''}
+              </Text>
+            </>
+          )}
+        </ContentCard>
+      )}
+
       <ContentCard title="Actions">
         <ActionGrid>
           {!isClosed && (
@@ -766,10 +801,17 @@ export default function IpoDetailScreen() {
                             />
                             {group.members.map((m: any) => {
                               const available = isMemberAvailable(m.id);
+                              const reason = getGroupMemberDistributeReason(m);
+                              const suffix =
+                                reason === 'inactive'
+                                  ? ' — inactive'
+                                  : reason === 'applied'
+                                    ? ' — already applied'
+                                    : '';
                               return (
                                 <Checkbox.Item
                                   key={m.id}
-                                  label={`${m.displayName} (${formatPan(m.pan)})`}
+                                  label={`${m.displayName} (${formatPan(m.pan)})${suffix}`}
                                   status={selectedIds.includes(m.id) ? 'checked' : 'unchecked'}
                                   disabled={!available}
                                   onPress={() => toggleMemberSelection(m.id, group.id)}
@@ -791,9 +833,21 @@ export default function IpoDetailScreen() {
                         onPress={() => toggleMemberSelection(m.id)}
                       />
                     ))}
-                    <Button mode="text" onPress={() => setSelectedIds(availableMembers.map((m) => m.id))}>
-                      Select all
-                    </Button>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                      <Button mode="text" onPress={() => setSelectedIds(availableMembers.map((m) => m.id))}>
+                        Select all
+                      </Button>
+                      <Button
+                        mode="text"
+                        disabled={!selectedIds.length && !selectedGroupBulkIds.length}
+                        onPress={() => {
+                          setSelectedIds([]);
+                          setSelectedGroupBulkIds([]);
+                        }}
+                      >
+                        Deselect all
+                      </Button>
+                    </View>
                   </>
                 )}
 
@@ -811,9 +865,39 @@ export default function IpoDetailScreen() {
                   </>
                 )}
 
+                {distributeMode === 'groups' && memberGroups.length > 0 && (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+                    <Button
+                      mode="text"
+                      onPress={() => {
+                        setSelectedGroupBulkIds([]);
+                        setSelectedIds(availableMembers.map((m) => m.id));
+                      }}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      mode="text"
+                      disabled={!selectedIds.length && !selectedGroupBulkIds.length}
+                      onPress={() => {
+                        setSelectedIds([]);
+                        setSelectedGroupBulkIds([]);
+                      }}
+                    >
+                      Deselect all
+                    </Button>
+                  </View>
+                )}
+
                 <Text style={ui.hint}>
-                  {distributeSelectionCount} application(s) × {formatCurrency(lotForCategory)} = {formatCurrency(totalNeeded)}
+                  Selected: {distributeSelectionCount} × {formatCurrency(lotForCategory)} = {formatCurrency(totalNeeded)}
                 </Text>
+                {availableMembers.length > 0 && (
+                  <Text style={ui.hint}>
+                    Full active list: {availableMembers.length} × {formatCurrency(lotForCategory)} ={' '}
+                    {formatCurrency(availableMembers.length * (lotForCategory ?? 0))}
+                  </Text>
+                )}
                 <Button mode="contained" disabled={!distributeSelectionCount} onPress={() => setStep(1)}>Next</Button>
               </>
             )}

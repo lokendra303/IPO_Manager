@@ -1216,6 +1216,16 @@ async function applyMemberPortalExtensionsV39(conn) {
   }
 }
 
+async function applyEmailVerificationOtpV40(conn) {
+  if (!(await tableExists(conn, 'users'))) return;
+  if (!(await columnExists(conn, 'users', 'email_verification_token'))) return;
+
+  await conn.query(
+    'ALTER TABLE users MODIFY COLUMN email_verification_token VARCHAR(255) DEFAULT NULL'
+  );
+  console.log('Widened users.email_verification_token for OTP hashes');
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1261,6 +1271,7 @@ async function migrate() {
   await applyEmailChangeOtpV37(conn);
   await applyReceivePerfIndexesV38(conn);
   await applyMemberPortalExtensionsV39(conn);
+  await applyEmailVerificationOtpV40(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

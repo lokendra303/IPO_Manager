@@ -342,12 +342,20 @@ router.get('/registrations', systemAdminMiddleware, async (req, res, next) => {
       throw new AppError('Invalid status filter');
     }
 
-    const where = status === 'ALL' ? '' : 'WHERE t.status = ?';
-    const params = status === 'ALL' ? [] : [status];
+    let where = '';
+    const params = [];
+    if (status === 'PENDING') {
+      // Only show registration requests after the owner has verified their email via OTP
+      where = 'WHERE t.status = ? AND u.email_verified_at IS NOT NULL';
+      params.push('PENDING');
+    } else if (status !== 'ALL') {
+      where = 'WHERE t.status = ?';
+      params.push(status);
+    }
 
     const [rows] = await pool.query(
       `SELECT t.id, t.name, t.status, t.created_at, t.approved_at, t.rejection_reason,
-              u.id AS owner_id, u.email AS owner_email,
+              u.id AS owner_id, u.email AS owner_email, u.email_verified_at AS owner_email_verified_at,
               sa.email AS approved_by_email,
               (SELECT COUNT(*) FROM members m WHERE m.tenant_id = t.id) AS member_count,
               COALESCE(ow.balance, 0) AS wallet_balance
@@ -541,9 +549,18 @@ router.get('/tenants-list', systemAdminMiddleware, async (_req, res, next) => {
 router.post('/registrations/:id/approve', systemAdminMiddleware, async (req, res, next) => {
   try {
     const tenantId = Number(req.params.id);
-    const [rows] = await pool.query('SELECT id, status, name FROM tenants WHERE id = ?', [tenantId]);
+    const [rows] = await pool.query(
+      `SELECT t.id, t.status, t.name, u.email_verified_at
+       FROM tenants t
+       JOIN users u ON u.tenant_id = t.id AND u.role = 'owner'
+       WHERE t.id = ?`,
+      [tenantId]
+    );
     if (!rows.length) throw new AppError('Tenant not found', 404);
     if (rows[0].status === 'APPROVED') throw new AppError('Already approved');
+    if (!rows[0].email_verified_at) {
+      throw new AppError('Owner must verify their email before this registration can be approved', 400);
+    }
 
     await pool.query(
       `UPDATE tenants SET status = 'APPROVED', approved_at = NOW(), approved_by = ?,

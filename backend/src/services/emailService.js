@@ -91,29 +91,13 @@ async function sendMail({ to, subject, text, html }) {
   });
 }
 
-export async function sendVerificationEmail(email, token) {
-  const verifyUrl = `${getFrontendUrl()}/verify-email?token=${encodeURIComponent(token)}`;
-
-  await sendMail({
-    to: email,
+export async function sendRegistrationOtpEmail(email, otp) {
+  return sendOtpEmail(email, otp, {
     subject: 'Confirm your IPO Team Manager email',
-    text: [
-      'Thanks for registering with IPO Team Manager.',
-      '',
-      'Please confirm your email address by opening this link:',
-      verifyUrl,
-      '',
-      'This link expires in 24 hours.',
-      'If you did not create an account, you can ignore this email.',
-    ].join('\n'),
-    html: `
-      <p>Thanks for registering with <strong>IPO Team Manager</strong>.</p>
-      <p>Please confirm your email address:</p>
-      <p><a href="${verifyUrl}">Confirm email address</a></p>
-      <p>Or copy this link into your browser:<br><a href="${verifyUrl}">${verifyUrl}</a></p>
-      <p>This link expires in 24 hours.</p>
-      <p>If you did not create an account, you can ignore this email.</p>
-    `,
+    plainIntro:
+      'Thanks for registering with IPO Team Manager. Enter this code in the app to confirm your email address.',
+    htmlIntro:
+      'Thanks for registering with <strong>IPO Team Manager</strong>. Enter this code in the app to confirm your email address.',
   });
 }
 

@@ -34,6 +34,54 @@ export async function storePasswordResetOtp(kind, id, otpHash, otpExpires) {
   );
 }
 
+export async function storeEmailVerificationOtp(userId, otpHash, otpExpires) {
+  await pool.query(
+    `UPDATE users
+     SET email_verification_token = ?,
+         email_verification_expires = ?
+     WHERE id = ?`,
+    [otpHash, otpExpires, userId]
+  );
+}
+
+export async function verifyEmailVerificationOtp(email, otp) {
+  const code = validateOtpInput(otp);
+
+  const [rows] = await pool.query(
+    `SELECT id, email, email_verified_at, email_verification_token, email_verification_expires
+     FROM users WHERE email = ?`,
+    [email]
+  );
+  if (!rows.length) {
+    throw new AppError('Invalid or expired verification code', 400);
+  }
+
+  const user = rows[0];
+  if (user.email_verified_at) {
+    return { id: user.id, email: user.email, alreadyVerified: true };
+  }
+  if (!user.email_verification_token) {
+    throw new AppError('Invalid or expired verification code', 400);
+  }
+  if (user.email_verification_expires && new Date(user.email_verification_expires) < new Date()) {
+    throw new AppError('Verification code has expired. Request a new code.', 400);
+  }
+
+  const valid = await bcrypt.compare(code, user.email_verification_token);
+  if (!valid) throw new AppError('Invalid verification code', 400);
+
+  await pool.query(
+    `UPDATE users
+     SET email_verified_at = NOW(),
+         email_verification_token = NULL,
+         email_verification_expires = NULL
+     WHERE id = ?`,
+    [user.id]
+  );
+
+  return { id: user.id, email: user.email, alreadyVerified: false };
+}
+
 export async function verifyPasswordResetOtp(kind, email, otp) {
   const code = validateOtpInput(otp);
   const { table, idColumn, emailColumn } = getAccount(kind);

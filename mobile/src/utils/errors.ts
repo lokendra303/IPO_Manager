@@ -42,7 +42,7 @@ export function getAuthErrorModal(err: unknown, context: 'manager' | 'member' | 
     return {
       title: 'Email not confirmed',
       content:
-        'Please confirm your email before signing in. Check your inbox for the confirmation link, or use "Resend verification email".',
+        'Please enter the 6-digit verification code sent to your email before signing in, or use "Resend verification code".',
     };
   }
 

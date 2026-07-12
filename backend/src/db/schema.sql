@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('owner', 'super_admin') NOT NULL DEFAULT 'owner',
   email_verified_at DATETIME DEFAULT NULL,
-  email_verification_token VARCHAR(64) DEFAULT NULL,
+  email_verification_token VARCHAR(255) DEFAULT NULL,
   email_verification_expires DATETIME DEFAULT NULL,
   password_reset_otp_hash VARCHAR(255) DEFAULT NULL,
   password_reset_otp_expires DATETIME DEFAULT NULL,

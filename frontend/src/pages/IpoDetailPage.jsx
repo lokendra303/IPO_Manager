@@ -118,11 +118,21 @@ export default function IpoDetailPage() {
     load();
   }, [id]);
 
-  const activeMemberIds = new Set(applications.map((a) => a.member_id));
-  const availableMembers = members.filter((m) => !activeMemberIds.has(m.id));
+  const appliedMemberIds = new Set(applications.map((a) => a.member_id));
+  const availableMembers = members.filter((m) => !appliedMemberIds.has(m.id));
   const isMemberAvailable = (memberId) => availableMembers.some((m) => m.id === memberId);
+  const getGroupMemberDistributeReason = (m) => {
+    if (m.status === 'INACTIVE' || !members.some((am) => am.id === m.id)) return 'inactive';
+    if (appliedMemberIds.has(m.id)) return 'applied';
+    return null;
+  };
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const isClosed = ipo?.status === 'CLOSED';
+  const riiLotAmount = getLotAmountForCategory(ipo, 'RII') ?? 0;
+  const hniLotAmount = getLotAmountForCategory(ipo, 'HNI');
+  const requiredFundForActiveRii = availableMembers.length * riiLotAmount;
+  const requiredFundForActiveHni =
+    hniLotAmount != null && ipoHasHniLot(ipo) ? availableMembers.length * hniLotAmount : null;
 
   const isFundReturned = (app) => app.trns_received === 'Received';
   const getAllotmentStatus = (app) =>
@@ -838,6 +848,41 @@ export default function IpoDetailPage() {
         <IpoSummaryStats summary={ipoSummary} loading={loading} />
       </div>
 
+      {!isClosed && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Required fund for active members"
+          description={
+            availableMembers.length === 0 ? (
+              'All active members already have an application for this IPO.'
+            ) : (
+              <>
+                <strong>{availableMembers.length}</strong> active member
+                {availableMembers.length !== 1 ? 's' : ''} available ×{' '}
+                <strong>{formatCurrency(riiLotAmount)}</strong> (RII) ={' '}
+                <strong>{formatCurrency(requiredFundForActiveRii)}</strong>
+                {requiredFundForActiveHni != null && (
+                  <>
+                    {' '}
+                    · HNI:{' '}
+                    <strong>{availableMembers.length}</strong> ×{' '}
+                    <strong>{formatCurrency(hniLotAmount)}</strong> ={' '}
+                    <strong>{formatCurrency(requiredFundForActiveHni)}</strong>
+                  </>
+                )}
+                {' '}
+                · Wallet {formatCurrency(wallet)}
+                {wallet < requiredFundForActiveRii && (
+                  <Typography.Text type="danger"> — wallet is short for full RII distribution</Typography.Text>
+                )}
+              </>
+            )
+          }
+        />
+      )}
+
       {!isClosed && !ipoAllowsHni(ipo) && (
         <Alert
           type="info"
@@ -1130,6 +1175,13 @@ export default function IpoDetailPage() {
                       const someSelected = selectedInGroup.length > 0 && !allSelected;
                       const hasOwner = !!group.ownerMemberId;
                       const bulkTotal = groupAvailable.length * (lotForSelectedCategory ?? 0);
+                      const noAvailableLabel = group.members.every(
+                        (m) => getGroupMemberDistributeReason(m) === 'inactive'
+                      )
+                        ? ' · no active members'
+                        : group.members.some((m) => getGroupMemberDistributeReason(m) === 'inactive')
+                          ? ' · no available members'
+                          : ' · all already applied';
 
                       return (
                         <div
@@ -1157,7 +1209,7 @@ export default function IpoDetailPage() {
                               {bulkSelected && groupAvailable.length > 0 && (
                                 <> · {groupAvailable.length} members · {formatCurrency(bulkTotal)}</>
                               )}
-                              {!groupAvailable.length && ' · all already applied'}
+                              {!groupAvailable.length && noAvailableLabel}
                             </Typography.Text>
                           </Checkbox>
                           {!bulkSelected && (
@@ -1178,6 +1230,7 @@ export default function IpoDetailPage() {
                                 </Checkbox>
                                 {group.members.map((m) => {
                                   const available = isMemberAvailable(m.id);
+                                  const reason = getGroupMemberDistributeReason(m);
                                   return (
                                     <Checkbox
                                       key={m.id}
@@ -1189,7 +1242,10 @@ export default function IpoDetailPage() {
                                       {m.id === group.ownerMemberId && (
                                         <Tag color="gold" style={{ marginLeft: 6 }}>Owner</Tag>
                                       )}
-                                      {!available && (
+                                      {reason === 'inactive' && (
+                                        <Typography.Text type="secondary"> — inactive</Typography.Text>
+                                      )}
+                                      {reason === 'applied' && (
                                         <Typography.Text type="secondary"> — already applied</Typography.Text>
                                       )}
                                     </Checkbox>
@@ -1222,6 +1278,27 @@ export default function IpoDetailPage() {
                         />
                       </>
                     )}
+                    <Space size={0}>
+                      <Button
+                        type="link"
+                        onClick={() => {
+                          setSelectedGroupBulkIds([]);
+                          setSelectedIds(availableMembers.map((m) => m.id));
+                        }}
+                      >
+                        Select all
+                      </Button>
+                      <Button
+                        type="link"
+                        disabled={!selectedIds.length && !selectedGroupBulkIds.length}
+                        onClick={() => {
+                          setSelectedIds([]);
+                          setSelectedGroupBulkIds([]);
+                        }}
+                      >
+                        Deselect all
+                      </Button>
+                    </Space>
                   </Space>
                 ) : (
                   <>
@@ -1231,9 +1308,21 @@ export default function IpoDetailPage() {
                       onChange={setSelectedIds}
                       options={availableMembers.map((m) => ({ label: `${m.display_name} (${formatPan(m.pan)})`, value: m.id }))}
                     />
-                    <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>
-                      Select all
-                    </Button>
+                    <Space size={0}>
+                      <Button type="link" onClick={() => setSelectedIds(availableMembers.map((m) => m.id))}>
+                        Select all
+                      </Button>
+                      <Button
+                        type="link"
+                        disabled={!selectedIds.length && !selectedGroupBulkIds.length}
+                        onClick={() => {
+                          setSelectedIds([]);
+                          setSelectedGroupBulkIds([]);
+                        }}
+                      >
+                        Deselect all
+                      </Button>
+                    </Space>
                   </>
                 )}
 
@@ -1243,11 +1332,17 @@ export default function IpoDetailPage() {
                   style={{ marginTop: 16 }}
                   message={
                     <>
-                      Total: <strong>{distributeSelectionCount}</strong> application(s) ×{' '}
+                      Selected: <strong>{distributeSelectionCount}</strong> application(s) ×{' '}
                       <strong>{formatCurrency(lotForSelectedCategory)}</strong> ({distributeInvestorCategory}) ={' '}
                       <strong>{formatCurrency(totalNeeded)}</strong>
                       {selectedGroupBulkIds.length > 0 && (
                         <span> · {selectedGroupBulkIds.length} group bulk payment(s)</span>
+                      )}
+                      {availableMembers.length > 0 && (
+                        <div style={{ marginTop: 6, fontSize: 12 }}>
+                          Full active list: {availableMembers.length} × {formatCurrency(lotForSelectedCategory)} ={' '}
+                          {formatCurrency(availableMembers.length * (lotForSelectedCategory ?? 0))}
+                        </div>
                       )}
                     </>
                   }

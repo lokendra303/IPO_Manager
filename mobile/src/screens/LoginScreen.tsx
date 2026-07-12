@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Link, Redirect, useLocalSearchParams } from 'expo-router';
+import { Link, Redirect, router, useLocalSearchParams } from 'expo-router';
 import { Button, SegmentedButtons, TextInput } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -97,9 +97,8 @@ export default function LoginScreen() {
     try {
       const trimmedEmail = regEmail.trim();
       await register(trimmedEmail, regPassword, tenantName.trim());
-      setEmail(trimmedEmail);
-      setTab('manager');
-      Alert.alert('Registration submitted', 'Check your email to confirm your address before signing in.');
+      Alert.alert('Registration submitted', 'Enter the verification code sent to your email.');
+      router.push({ pathname: '/(auth)/verify-email', params: { email: trimmedEmail } });
     } catch (err) {
       showError(err, 'register');
     } finally {
@@ -112,9 +111,10 @@ export default function LoginScreen() {
     setResendLoading(true);
     try {
       const { data } = await client.post('/auth/resend-verification', { email: pendingVerifyEmail });
-      Alert.alert('Email sent', data.message);
+      Alert.alert('Code sent', data.message);
+      router.push({ pathname: '/(auth)/verify-email', params: { email: pendingVerifyEmail } });
     } catch (err) {
-      Alert.alert('Error', getErrorMessage(err, 'Could not resend confirmation email'));
+      Alert.alert('Error', getErrorMessage(err, 'Could not resend verification code'));
     } finally {
       setResendLoading(false);
     }
@@ -176,7 +176,17 @@ export default function LoginScreen() {
                 <TextInput label="Password" value={password} onChangeText={setPassword} secureTextEntry mode="outlined" style={styles.input} />
                 <Link href="/(auth)/forgot-password" style={styles.link}>Forgot password?</Link>
                 {pendingVerifyEmail ? (
-                  <Button mode="text" loading={resendLoading} onPress={onResend}>Resend verification email</Button>
+                  <>
+                    <Button mode="text" loading={resendLoading} onPress={onResend}>Resend verification code</Button>
+                    <Button
+                      mode="text"
+                      onPress={() =>
+                        router.push({ pathname: '/(auth)/verify-email', params: { email: pendingVerifyEmail } })
+                      }
+                    >
+                      Enter verification code
+                    </Button>
+                  </>
                 ) : null}
                 <Button mode="contained" onPress={onLogin} loading={loading} style={styles.btn} contentStyle={styles.btnContent}>
                   Sign in
@@ -189,7 +199,7 @@ export default function LoginScreen() {
                 <TextInput label="Team name" value={tenantName} onChangeText={setTenantName} mode="outlined" style={styles.input} />
                 <TextInput label="Email" value={regEmail} onChangeText={setRegEmail} keyboardType="email-address" autoCapitalize="none" mode="outlined" style={styles.input} />
                 <TextInput label="Password" value={regPassword} onChangeText={setRegPassword} secureTextEntry mode="outlined" style={styles.input} />
-                <Text style={styles.hint}>New teams need email confirmation and admin approval.</Text>
+                <Text style={styles.hint}>New teams need an email verification code and admin approval.</Text>
                 <Button mode="contained" onPress={onRegister} loading={loading} style={styles.btn} contentStyle={styles.btnContent}>
                   Submit registration
                 </Button>

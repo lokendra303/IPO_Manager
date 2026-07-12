@@ -48,7 +48,7 @@ export default function ForgotPasswordPage() {
       const { data } = await client.post('/auth/resend-verification', { email: targetEmail });
       message.success(data.message);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not resend confirmation email'));
+      message.error(getErrorMessage(err, 'Could not resend verification code'));
     } finally {
       setResendVerifyLoading(false);
     }
@@ -136,7 +136,7 @@ export default function ForgotPasswordPage() {
                           onClick={resendVerification}
                           style={{ padding: 0, height: 'auto' }}
                         >
-                          Resend email confirmation
+                          Resend verification code
                         </Button>
                       )}
                     </>

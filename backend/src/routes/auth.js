@@ -5,10 +5,12 @@ import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeEmail, normalizePan, formatPan } from '../utils/validate.js';
 import { writeAuditLog } from '../services/auditLogService.js';
-import { sendVerificationEmail, sendManagerPasswordOtpEmail } from '../services/emailService.js';
-import { createSecureToken, createOtp, expiryFromNow, expiryFromNowMinutes } from '../utils/tokens.js';
+import { sendRegistrationOtpEmail, sendManagerPasswordOtpEmail } from '../services/emailService.js';
+import { createOtp, expiryFromNowMinutes } from '../utils/tokens.js';
 import {
   storePasswordResetOtp,
+  storeEmailVerificationOtp,
+  verifyEmailVerificationOtp,
   verifyPasswordResetOtp,
   consumePasswordResetToken,
   clearPasswordResetFields,
@@ -17,6 +19,15 @@ import {
 const router = Router();
 
 const RESET_OTP_SENT_MESSAGE = 'A verification code has been sent to your email.';
+const VERIFY_OTP_SENT_MESSAGE = 'A verification code has been sent to your email.';
+
+async function issueRegistrationOtp(userId, email) {
+  const otp = createOtp();
+  const otpHash = await bcrypt.hash(otp, 10);
+  const otpExpires = expiryFromNowMinutes(10);
+  await storeEmailVerificationOtp(userId, otpHash, otpExpires);
+  await sendRegistrationOtpEmail(email, otp);
+}
 
 async function findUserByEmail(email) {
   const [rows] = await pool.query(
@@ -37,7 +48,7 @@ function assertManagerPasswordResetEligible(user) {
   }
   if (!user.email_verified_at) {
     throw new AppError(
-      'Please confirm your email before resetting your password. Check your inbox or resend the confirmation email from the sign-in page.',
+      'Please confirm your email with the verification code before resetting your password. You can resend the code from the sign-in page.',
       403
     );
   }
@@ -85,9 +96,6 @@ router.post('/register', async (req, res, next) => {
       throw new AppError('Email already registered', 409);
     }
 
-    const verificationToken = createSecureToken();
-    const verificationExpires = expiryFromNow(24);
-
     const result = await withTransaction(async (conn) => {
       const [tenantResult] = await conn.query(
         `INSERT INTO tenants (name, status) VALUES (?, 'PENDING')`,
@@ -99,23 +107,20 @@ router.post('/register', async (req, res, next) => {
 
       const hash = await bcrypt.hash(password, 10);
       const [userResult] = await conn.query(
-        `INSERT INTO users (
-           tenant_id, email, password_hash, role,
-           email_verification_token, email_verification_expires
-         ) VALUES (?, ?, ?, ?, ?, ?)`,
-        [tenantId, email, hash, 'owner', verificationToken, verificationExpires]
+        `INSERT INTO users (tenant_id, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+        [tenantId, email, hash, 'owner']
       );
 
       return { userId: userResult.insertId, tenantId };
     });
 
-    await sendVerificationEmail(email, verificationToken);
+    await issueRegistrationOtp(result.userId, email);
 
     res.status(201).json({
       pending: true,
       emailVerificationRequired: true,
       message:
-        'Registration submitted. Check your email to confirm your address. You can sign in once your email is verified and a system administrator approves your account.',
+        'Registration submitted. Enter the verification code sent to your email. After verification, a system administrator must approve your account before you can sign in.',
       email,
       tenantName: tenantName.trim(),
       userId: result.userId,
@@ -125,37 +130,18 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
-router.get('/verify-email', async (req, res, next) => {
+router.post('/verify-email', async (req, res, next) => {
   try {
-    const token = String(req.query.token || '').trim();
-    if (!token) throw new AppError('Verification token is required', 400);
-
-    const [rows] = await pool.query(
-      `SELECT id, email, email_verification_expires
-       FROM users
-       WHERE email_verification_token = ?`,
-      [token]
-    );
-    if (!rows.length) throw new AppError('Invalid or expired verification link', 400);
-
-    const user = rows[0];
-    if (user.email_verification_expires && new Date(user.email_verification_expires) < new Date()) {
-      throw new AppError('Verification link has expired. Request a new confirmation email.', 400);
-    }
-
-    await pool.query(
-      `UPDATE users
-       SET email_verified_at = NOW(),
-           email_verification_token = NULL,
-           email_verification_expires = NULL
-       WHERE id = ?`,
-      [user.id]
-    );
+    const email = normalizeEmail(req.body.email);
+    const { alreadyVerified, email: verifiedEmail } = await verifyEmailVerificationOtp(email, req.body.otp);
 
     res.json({
       success: true,
-      message: 'Email verified successfully. You can sign in once your account is approved by an administrator.',
-      email: user.email,
+      alreadyVerified,
+      email: verifiedEmail,
+      message: alreadyVerified
+        ? 'Email is already verified. You can sign in once your account is approved by an administrator.'
+        : 'Email verified successfully. Your registration is now waiting for system administrator approval.',
     });
   } catch (err) {
     next(err);
@@ -175,25 +161,15 @@ router.post('/resend-verification', async (req, res, next) => {
     if (!rows.length || rows[0].email_verified_at) {
       return res.json({
         success: true,
-        message: 'If your account needs verification, a new confirmation email has been sent.',
+        message: 'If your account needs verification, a new code has been sent.',
       });
     }
 
-    const verificationToken = createSecureToken();
-    const verificationExpires = expiryFromNow(24);
-
-    await pool.query(
-      `UPDATE users
-       SET email_verification_token = ?, email_verification_expires = ?
-       WHERE id = ?`,
-      [verificationToken, verificationExpires, rows[0].id]
-    );
-
-    await sendVerificationEmail(email, verificationToken);
+    await issueRegistrationOtp(rows[0].id, email);
 
     res.json({
       success: true,
-      message: 'If your account needs verification, a new confirmation email has been sent.',
+      message: VERIFY_OTP_SENT_MESSAGE,
     });
   } catch (err) {
     next(err);
@@ -269,7 +245,7 @@ router.post('/login', async (req, res, next) => {
 
     if (!user.email_verified_at) {
       throw new AppError(
-        'Please confirm your email before signing in. Check your inbox or request a new confirmation email.',
+        'Please confirm your email before signing in. Enter the verification code from your email, or request a new code.',
         403
       );
     }

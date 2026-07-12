@@ -69,8 +69,9 @@ export default function LoginPage() {
     try {
       const { data } = await client.post('/auth/resend-verification', { email: pendingVerifyEmail });
       message.success(data.message);
+      navigate(`/verify-email?email=${encodeURIComponent(pendingVerifyEmail)}`);
     } catch (err) {
-      message.error(getErrorMessage(err, 'Could not resend confirmation email'));
+      message.error(getErrorMessage(err, 'Could not resend verification code'));
     } finally {
       setResendLoading(false);
     }
@@ -82,9 +83,8 @@ export default function LoginPage() {
       const email = values.email?.trim();
       await register(email, values.password, values.tenantName?.trim());
       registerForm.resetFields();
-      managerForm.setFieldsValue({ email });
-      setActiveTab('login');
-      message.success('Registration submitted. Check your email to confirm your address before signing in.');
+      message.success('Registration submitted. Enter the verification code sent to your email.');
+      navigate(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err) {
       showAuthErrorModal(err, 'register');
     } finally {
@@ -166,10 +166,12 @@ export default function LoginPage() {
                     </div>
                     {pendingVerifyEmail ? (
                       <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                        Need a new confirmation email?{' '}
+                        Need a new code?{' '}
                         <Button type="link" size="small" loading={resendLoading} onClick={onResendVerification} style={{ padding: 0 }}>
-                          Resend verification email
+                          Resend verification code
                         </Button>
+                        {' · '}
+                        <Link to={`/verify-email?email=${encodeURIComponent(pendingVerifyEmail)}`}>Enter code</Link>
                       </Typography.Text>
                     ) : null}
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
@@ -193,7 +195,7 @@ export default function LoginPage() {
                       <Input.Password prefix={<LockOutlined style={{ color: '#94a3b8' }} />} placeholder="Min. 6 characters" />
                     </Form.Item>
                     <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                      New teams require email confirmation and administrator approval before you can sign in.
+                      New teams require an email verification code and administrator approval before you can sign in.
                     </Typography.Text>
                     <Button type="primary" htmlType="submit" block loading={loading} size="large">
                       Submit registration
