@@ -313,9 +313,17 @@ export default function MemberPortalScreen() {
         </StatGrid>
         {grossIpoPnL !== 0 && Math.abs(grossIpoPnL - memberProfit) > 0.01 ? (
           <Text style={ui.hint}>
-            Gross IPO P&L {formatCurrency(grossIpoPnL)} · Your share {formatCurrency(memberProfit)} · Manager {formatCurrency(stats.totalManagerShare ?? 0)} · Provider {formatCurrency(stats.totalProviderShare ?? 0)}. Open Full ledger under More for every IPO.
+            Gross IPO P&L {formatCurrency(grossIpoPnL)} · Your share {formatCurrency(memberProfit)} · Manager {formatCurrency(stats.totalManagerShare ?? 0)} · Provider {formatCurrency(stats.totalProviderShare ?? 0)}.
           </Text>
         ) : null}
+        <Button
+          mode="outlined"
+          compact
+          style={{ marginTop: 8 }}
+          onPress={() => router.push('/(member)/statement')}
+        >
+          {isGroupLeader ? 'Full ledger / PDF (you + group)' : 'Full ledger / PDF report'}
+        </Button>
       </ContentCard>
 
       <ContentCard title={isGroupLeader ? 'Your IPO activity' : 'IPO activity'}>

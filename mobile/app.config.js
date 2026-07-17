@@ -26,7 +26,7 @@ export default ({ config }) => ({
     favicon: './assets/favicon.png',
     bundler: 'metro',
   },
-  plugins: ['expo-router'],
+  plugins: ['expo-router', 'expo-sharing'],
   experiments: {
     typedRoutes: true,
   },

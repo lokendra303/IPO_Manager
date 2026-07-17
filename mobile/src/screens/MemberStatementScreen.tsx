@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { Alert, Share, Text } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, Share, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -15,25 +15,70 @@ import { formatCurrency } from '../utils/format';
 import { useQuery } from '../hooks/useQuery';
 import { useAuth } from '../context/AuthContext';
 import { statementToText } from '../utils/share';
+import { shareMemberFullLedgerPdf, type GroupPdfPayload } from '../utils/memberLedgerPdf';
 import { getErrorMessage } from '../utils/errors';
 import { ui } from '../styles/ui';
+import type { MemberDashboard } from '../hooks/useMemberDashboard';
 
 export default function MemberStatementScreen() {
   const { user, isMember } = useAuth();
+  const [pdfLoading, setPdfLoading] = useState(false);
 
-  const fetcher = useCallback(async () => {
+  const statementFetcher = useCallback(async () => {
     const { data } = await client.get('/member-portal/statement');
     return data;
   }, []);
 
-  const { data: statement, loading, refresh } = useQuery(fetcher, [], { enabled: isMember && !!user?.id });
+  const dashboardFetcher = useCallback(async () => {
+    const { data } = await client.get<MemberDashboard>('/member-portal/dashboard', { timeout: 90000 });
+    return data;
+  }, []);
 
-  const share = async () => {
+  const { data: statement, loading, refresh } = useQuery(statementFetcher, [], {
+    enabled: isMember && !!user?.id,
+  });
+  const { data: dashboard } = useQuery(dashboardFetcher, [], {
+    enabled: isMember && !!user?.id,
+  });
+
+  const isGroupLeader = dashboard?.subGroup?.isLeader === true;
+
+  const shareText = async () => {
     if (!statement) return;
     try {
       await Share.share({ message: statementToText(statement), title: 'IPO Member Full Ledger' });
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not share statement'));
+    }
+  };
+
+  const downloadPdf = async () => {
+    setPdfLoading(true);
+    try {
+      const { data } = await client.get('/member-portal/statement');
+      if (!data.teamName && dashboard?.teamName) {
+        data.teamName = dashboard.teamName;
+      }
+
+      const sub = dashboard?.subGroup;
+      const groupPayload: GroupPdfPayload | null =
+        sub?.isLeader
+          ? {
+              isLeader: true,
+              teamName: data.teamName || dashboard?.teamName,
+              groupName: sub.name,
+              leaderName: dashboard?.member?.displayName || data.member?.displayName,
+              groupStats: sub.groupStats || {},
+              groupApplications: sub.groupApplications || [],
+              members: sub.members || [],
+            }
+          : null;
+
+      await shareMemberFullLedgerPdf(data, groupPayload);
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Could not generate PDF'));
+    } finally {
+      setPdfLoading(false);
     }
   };
 
@@ -64,7 +109,17 @@ export default function MemberStatementScreen() {
             <ListRow title="Fund received" subtitle={formatCurrency(summary.totalGiven)} />
             <ListRow title="Fund returned" subtitle={formatCurrency(summary.totalReceived)} />
             <ListRow title="Pending return" subtitle={formatCurrency(summary.pendingReturn)} />
-            <Button mode="contained" onPress={share} style={{ marginTop: 8 }}>Share full ledger</Button>
+            <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
+              PDF includes allotment counts, profit by IPO, and your total member profit
+              {isGroupLeader ? ', plus the full sub-group ledger for all members.' : '.'}
+              {' '}App: IPO Team Manager · Developer: Lokendra.
+            </Text>
+            <View style={{ gap: 8, marginTop: 8 }}>
+              <Button mode="contained" loading={pdfLoading} disabled={pdfLoading} onPress={downloadPdf}>
+                {isGroupLeader ? 'Download PDF (you + group)' : 'Download PDF report'}
+              </Button>
+              <Button mode="outlined" onPress={shareText}>Share as text</Button>
+            </View>
           </ContentCard>
 
           <ContentCard title={`All IPOs (${apps.length})`}>
@@ -96,6 +151,23 @@ export default function MemberStatementScreen() {
                   subtitle={[formatCurrency(row.amount), row.ipoName, row.notes].filter(Boolean).join(' · ')}
                 />
               ))}
+            </ContentCard>
+          ) : null}
+
+          {isGroupLeader && (dashboard?.subGroup?.groupApplications?.length ?? 0) > 0 ? (
+            <ContentCard title={`Sub-group ledger (${dashboard?.subGroup?.name || 'group'})`}>
+              <Text style={ui.hint}>
+                Leader only — full group IPO ledger. Use Download PDF above to include this in the report.
+              </Text>
+              <StatGrid>
+                <StatCard title="Group apps" value={dashboard?.subGroup?.groupStats?.iposApplied ?? 0} variant="primary" />
+                <StatCard title="Allotted" value={dashboard?.subGroup?.groupStats?.iposAlloted ?? 0} variant="success" />
+                <PnlStatCard
+                  title="Group member profit"
+                  value={dashboard?.subGroup?.groupStats?.totalMemberShare ?? 0}
+                  formatted={formatCurrency(dashboard?.subGroup?.groupStats?.totalMemberShare ?? 0)}
+                />
+              </StatGrid>
             </ContentCard>
           ) : null}
         </>

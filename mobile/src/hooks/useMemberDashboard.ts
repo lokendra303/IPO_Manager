@@ -24,6 +24,7 @@ export type GroupApplication = {
 };
 
 export type MemberDashboard = {
+  teamName?: string;
   member?: {
     displayName?: string;
     pan?: string;
