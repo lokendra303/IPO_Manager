@@ -11,6 +11,14 @@ import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 
 const router = Router();
 
+function computeProfitLoss(withdrawalMoney, amount) {
+  if (withdrawalMoney == null || withdrawalMoney === '') return null;
+  const withdrawal = Number(withdrawalMoney);
+  const distributed = Number(amount ?? 0);
+  if (Number.isNaN(withdrawal)) return null;
+  return Math.round((withdrawal - distributed) * 100) / 100;
+}
+
 router.patch('/bulk', async (req, res, next) => {
   try {
     const { updates } = req.body;
@@ -45,17 +53,54 @@ router.patch('/bulk', async (req, res, next) => {
         const fields = [];
         const values = [];
 
+        let effectiveAmount = Number(row.amount);
+        if (u.amount !== undefined) {
+          const amt = parseOptionalAmount(u.amount, 'amount');
+          if (amt !== null && amt <= 0) throw new AppError('Application amount must be positive');
+          fields.push('amount = ?');
+          values.push(amt);
+          effectiveAmount = amt;
+        }
+
+        let effectiveWithdrawal = row.withdrawal_money;
+        if (u.withdrawalMoney !== undefined) {
+          effectiveWithdrawal =
+            u.withdrawalMoney === null || u.withdrawalMoney === ''
+              ? null
+              : Number(u.withdrawalMoney);
+          if (effectiveWithdrawal != null && Number.isNaN(effectiveWithdrawal)) {
+            throw new AppError(`Invalid withdrawal amount for app #${appId}`);
+          }
+          fields.push('withdrawal_money = ?');
+          values.push(effectiveWithdrawal);
+        }
+
+        const nextAllotment = u.allotmentStatus ?? row.allotment_status;
+
         if (u.allotmentStatus !== undefined) {
           fields.push('allotment_status = ?');
           values.push(u.allotmentStatus);
           if (u.allotmentStatus === 'NOT_ALLOTED' || u.allotmentStatus === 'NOT_APPLIED') {
             fields.push('profit_loss = ?');
             values.push(null);
-          } else if (u.allotmentStatus === 'ALLOTED' && u.profitLoss !== undefined) {
+            fields.push('withdrawal_money = ?');
+            values.push(null);
+            effectiveWithdrawal = null;
+          }
+        }
+
+        if (nextAllotment === 'ALLOTED') {
+          const withdrawalForCalc =
+            u.withdrawalMoney !== undefined ? effectiveWithdrawal : row.withdrawal_money;
+          if (withdrawalForCalc != null && withdrawalForCalc !== '') {
+            const computed = computeProfitLoss(withdrawalForCalc, effectiveAmount);
+            fields.push('profit_loss = ?');
+            values.push(computed);
+          } else if (u.profitLoss !== undefined) {
             fields.push('profit_loss = ?');
             values.push(u.profitLoss === null ? null : Number(u.profitLoss));
           }
-        } else if (u.profitLoss !== undefined) {
+        } else if (u.profitLoss !== undefined && u.allotmentStatus === undefined) {
           if (row.allotment_status !== 'ALLOTED') {
             throw new AppError(`Cannot set P&L unless allotment is ALLOTED (app #${appId})`);
           }
@@ -66,12 +111,6 @@ router.patch('/bulk', async (req, res, next) => {
         if (u.remarks !== undefined) {
           fields.push('remarks = ?');
           values.push(u.remarks || null);
-        }
-        if (u.amount !== undefined) {
-          const amt = parseOptionalAmount(u.amount, 'amount');
-          if (amt !== null && amt <= 0) throw new AppError('Application amount must be positive');
-          fields.push('amount = ?');
-          values.push(amt);
         }
         if (u.dateReceived !== undefined) {
           fields.push('date_received = ?');
@@ -99,7 +138,13 @@ router.patch('/bulk', async (req, res, next) => {
         const willClearPnL =
           u.allotmentStatus === 'NOT_ALLOTED'
           || u.allotmentStatus === 'NOT_APPLIED'
-          || u.profitLoss === null;
+          || u.profitLoss === null
+          || u.withdrawalMoney === null;
+
+        const profitUpdated =
+          u.profitLoss !== undefined
+          || u.withdrawalMoney !== undefined
+          || (u.amount !== undefined && row.withdrawal_money != null);
 
         values.push(appId, req.tenantId);
         await conn.query(
@@ -117,7 +162,9 @@ router.patch('/bulk', async (req, res, next) => {
         }
 
         const mayTriggerShare =
-          !ipoClosed && !willClearPnL && (u.profitLoss !== undefined || u.allotmentStatus === 'ALLOTED');
+          !ipoClosed
+          && !willClearPnL
+          && (profitUpdated || u.allotmentStatus === 'ALLOTED');
 
         if (mayTriggerShare) {
           const result = await tryAutoDistributeApplication(conn, {

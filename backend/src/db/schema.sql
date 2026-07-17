@@ -155,12 +155,15 @@ CREATE TABLE IF NOT EXISTS ipos (
   lot_amount_hni DECIMAL(15, 2) DEFAULT NULL,
   lot_amount DECIMAL(15, 2) DEFAULT NULL,
   status ENUM('OPEN', 'CLOSED') NOT NULL DEFAULT 'OPEN',
+  is_invalid TINYINT(1) NOT NULL DEFAULT 0,
+  invalidated_at DATETIME DEFAULT NULL,
   open_date DATE DEFAULT NULL,
   ipo_segment ENUM('SME', 'MAINBOARD') NOT NULL DEFAULT 'MAINBOARD',
   allowed_categories LONGTEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-  INDEX idx_ipos_tenant (tenant_id)
+  INDEX idx_ipos_tenant (tenant_id),
+  INDEX idx_ipos_tenant_invalid (tenant_id, is_invalid)
 );
 
 CREATE TABLE IF NOT EXISTS ipo_applications (
@@ -177,6 +180,7 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII',
   paid_to_member_id INT DEFAULT NULL,
   profit_loss DECIMAL(15, 2) DEFAULT NULL,
+  withdrawal_money DECIMAL(15, 2) DEFAULT NULL,
   remarks TEXT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT NULL,

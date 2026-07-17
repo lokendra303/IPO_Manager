@@ -175,6 +175,10 @@ export async function distributeIpo(conn, {
   if (!ipoRows.length) throw new AppError('IPO not found', 404);
   const ipo = ipoRows[0];
 
+  if (ipo.is_invalid) {
+    throw new AppError('Cannot distribute funds for an invalid IPO. Restore it to the main list first.');
+  }
+
   if (ipo.status === 'CLOSED') {
     throw new AppError('Cannot distribute funds for a closed IPO. Reopen the IPO first.');
   }

@@ -662,7 +662,7 @@ async function getDistributionForApplication(conn, tenantId, applicationId) {
   return rows[0] || null;
 }
 
-async function distributionNeedsUpdate(conn, tenantId, app, distribution) {
+export async function distributionNeedsUpdate(conn, tenantId, app, distribution) {
   const gross = Number(app.profit_loss);
   if (!amountsMatch(distribution.gross_profit_loss, gross)) return true;
 
@@ -717,7 +717,8 @@ export async function revokeProfitShareDistribution(conn, { tenantId, applicatio
     const [providerTxns] = await conn.query(
       `SELECT id FROM provider_transactions
        WHERE tenant_id = ? AND fund_provider_id = ?
-         AND ABS(amount - ?) < 0.01
+         AND account_label IN ('P&L Share', 'P&L Share (Loss)')
+         AND ABS(COALESCE(provider_profit, 0) - ?) < 0.01
          AND notes LIKE ?
        ORDER BY id DESC LIMIT 1`,
       [tenantId, line.fund_provider_id, providerAmount, `%${noteSuffix}%`]
@@ -733,7 +734,7 @@ export async function revokeProfitShareDistribution(conn, { tenantId, applicatio
         [
           line.fund_provider_id,
           tenantId,
-          -providerAmount,
+          0,
           now,
           'P&L Share Reversal',
           `Reversal — ${line.rule_name} — ${noteSuffix}`,
@@ -763,7 +764,7 @@ export async function isIpoFinancialsFrozen(conn, tenantId, ipoId) {
 /** Auto-apply member share rules when app is ALLOTED with non-zero P&L (skips if already distributed). */
 export async function tryAutoDistributeApplication(conn, { tenantId, applicationId, userId }) {
   const [app] = await conn.query(
-    `SELECT allotment_status, profit_loss, member_id, ipo_id
+    `SELECT allotment_status, profit_loss, withdrawal_money, member_id, ipo_id
      FROM ipo_applications WHERE id = ? AND tenant_id = ?`,
     [applicationId, tenantId]
   );
@@ -778,14 +779,14 @@ export async function tryAutoDistributeApplication(conn, { tenantId, application
     await revokeProfitShareDistribution(conn, { tenantId, applicationId, userId });
     return { applicationId, skipped: true, reason: 'Not allotted — prior share reversed' };
   }
-  if (existing && (app[0].profit_loss == null || Number(app[0].profit_loss) === 0)) {
+  if (existing && (app[0].withdrawal_money == null || app[0].profit_loss == null || Number(app[0].profit_loss) === 0)) {
     await revokeProfitShareDistribution(conn, { tenantId, applicationId, userId });
     return { applicationId, skipped: true, reason: 'No P&L set — prior share reversed' };
   }
   if (app[0].allotment_status !== 'ALLOTED') {
     return { applicationId, skipped: true, reason: 'Not allotted' };
   }
-  if (app[0].profit_loss == null || Number(app[0].profit_loss) === 0) {
+  if (app[0].withdrawal_money == null || app[0].profit_loss == null || Number(app[0].profit_loss) === 0) {
     return { applicationId, skipped: true, reason: 'No P&L set' };
   }
   if (existing && !(await distributionNeedsUpdate(conn, tenantId, app[0], existing))) {
@@ -813,7 +814,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
     FROM ipo_applications a
     JOIN ipos i ON i.id = a.ipo_id
     JOIN members m ON m.id = a.member_id
-    WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL
+    WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL
       AND i.status = 'OPEN'
   `;
   const params = [tenantId];
@@ -917,6 +918,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
       );
 
       if (line.fundProviderId && line.providerAmount !== 0) {
+        // Accrue profit separately — do not increase provider principal until reinvested.
         await conn.query(
           `INSERT INTO provider_transactions
            (fund_provider_id, tenant_id, amount, txn_date, account_label, notes, provider_profit, created_by)
@@ -924,7 +926,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
           [
             line.fundProviderId,
             tenantId,
-            line.providerAmount,
+            0,
             now,
             isLoss ? 'P&L Share (Loss)' : 'P&L Share',
             `${line.ruleName} — ${app.display_name} (${app.ipo_name})`,
@@ -976,6 +978,81 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
   }
 
   return results;
+}
+
+/** Preview pending P&L splits and rows that need re-split after rule changes. */
+export async function previewProfitShares(conn, tenantId, { ipoId, applicationIds } = {}) {
+  let query = `
+    SELECT a.id, a.member_id, a.ipo_id, a.profit_loss, m.display_name, i.name as ipo_name,
+           psd.id AS distribution_id
+    FROM ipo_applications a
+    JOIN members m ON m.id = a.member_id
+    JOIN ipos i ON i.id = a.ipo_id
+    LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
+    WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED'
+      AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL
+  `;
+  const params = [tenantId];
+  if (ipoId) {
+    query += ' AND a.ipo_id = ?';
+    params.push(ipoId);
+  }
+  if (applicationIds?.length) {
+    query += ` AND a.id IN (${applicationIds.map(() => '?').join(',')})`;
+    params.push(...applicationIds);
+  }
+
+  const [apps] = await conn.query(query, params);
+  const previews = [];
+
+  for (const app of apps) {
+    const gross = Number(app.profit_loss);
+    const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
+    const rules = resolveRulesForIpo(allRules, app.ipo_id);
+    let configWarning = null;
+    if (!rules.length) {
+      const ipoHint = app.ipo_name ? ` for ${app.ipo_name}` : '';
+      configWarning = `Add share rule for this member${ipoHint} under Profit Sharing`;
+    }
+    let split;
+    try {
+      split = calculateMultiRuleSplit(gross, rules);
+    } catch (e) {
+      configWarning = e.message || 'Invalid share rules';
+      split = {
+        pnlType: gross >= 0 ? 'PROFIT' : 'LOSS',
+        totalProvider: 0,
+        totalManager: 0,
+        memberAmount: gross,
+        lines: [],
+      };
+    }
+
+    let needsResplit = false;
+    if (app.distribution_id) {
+      const existing = await getDistributionForApplication(conn, tenantId, app.id);
+      needsResplit = existing ? await distributionNeedsUpdate(conn, tenantId, app, existing) : false;
+      if (!needsResplit) continue;
+    }
+
+    previews.push({
+      applicationId: app.id,
+      memberName: app.display_name,
+      ipoName: app.ipo_name,
+      grossProfitLoss: gross,
+      pnlType: split.pnlType,
+      ruleCount: rules.length,
+      ruleSource: rules.length ? 'member' : 'none',
+      ruleLines: split.lines,
+      providerAmount: split.totalProvider,
+      managerAmount: split.totalManager,
+      memberAmount: split.memberAmount,
+      configWarning,
+      needsResplit,
+    });
+  }
+
+  return previews;
 }
 
 export async function getProfitShareReport(pool, tenantId) {
@@ -1035,15 +1112,34 @@ export async function getProfitShareReport(pool, tenantId) {
      JOIN ipos i ON i.id = a.ipo_id
      LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
      LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL AND psd.id IS NULL`,
+     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL`,
     [tenantId]
   );
 
+  const conn = await pool.getConnection();
+  const enrichedDistributions = [];
+  try {
+    for (const d of distributions) {
+      const [appRows] = await conn.query(
+        `SELECT a.* FROM ipo_applications a WHERE a.id = ? AND a.tenant_id = ?`,
+        [d.ipo_application_id, tenantId]
+      );
+      const app = appRows[0];
+      const needsResplit = app
+        ? await distributionNeedsUpdate(conn, tenantId, app, d)
+        : false;
+      enrichedDistributions.push({
+        ...d,
+        ruleLines: linesByDist[d.id] || [],
+        needsResplit,
+      });
+    }
+  } finally {
+    conn.release();
+  }
+
   return {
-    distributions: distributions.map((d) => ({
-      ...d,
-      ruleLines: linesByDist[d.id] || [],
-    })),
+    distributions: enrichedDistributions,
     byProvider,
     totals: totals[0],
     pending,
@@ -1072,7 +1168,7 @@ export async function getProfitTotalsReport(pool, tenantId) {
        COALESCE(SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END), 0) as ipo_profit,
        COALESCE(SUM(CASE WHEN profit_loss < 0 THEN profit_loss ELSE 0 END), 0) as ipo_loss
      FROM ipo_applications
-     WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND profit_loss IS NOT NULL`,
+     WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL`,
     [tenantId]
   );
 
@@ -1080,7 +1176,7 @@ export async function getProfitTotalsReport(pool, tenantId) {
     `SELECT COALESCE(SUM(a.profit_loss), 0) as pending_gross, COUNT(*) as pending_count
      FROM ipo_applications a
      LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL AND psd.id IS NULL`,
+     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL`,
     [tenantId]
   );
 
@@ -1100,7 +1196,7 @@ export async function getProfitTotalsReport(pool, tenantId) {
               SUM(profit_loss) AS gross_ipo_pnl,
               COUNT(*) AS ipo_count
        FROM ipo_applications
-       WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND profit_loss IS NOT NULL
+       WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL
        GROUP BY member_id
      ) app ON app.member_id = m.id
      LEFT JOIN (
@@ -1118,7 +1214,7 @@ export async function getProfitTotalsReport(pool, tenantId) {
        SELECT a.member_id, SUM(a.profit_loss) AS pending_gross
        FROM ipo_applications a
        LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-       WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL AND psd.id IS NULL
+       WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL
        GROUP BY a.member_id
      ) pend ON pend.member_id = m.id
      WHERE m.tenant_id = ?

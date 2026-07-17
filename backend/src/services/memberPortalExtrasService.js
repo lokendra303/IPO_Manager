@@ -24,6 +24,7 @@ export async function getMemberUpcomingIpos(pool, tenantId, memberId) {
      FROM ipos i
      LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.member_id = ? AND a.tenant_id = i.tenant_id
      WHERE i.tenant_id = ?
+       AND (COALESCE(i.is_invalid, 0) = 0 OR a.id IS NOT NULL)
      ORDER BY i.status = 'OPEN' DESC, i.open_date DESC, i.name ASC`,
     [memberId, tenantId]
   );

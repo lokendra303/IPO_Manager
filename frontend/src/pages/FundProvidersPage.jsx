@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Table, Button, Tag, Modal, Form, Input, InputNumber, DatePicker, Space,
-  message, Drawer, Switch, Row, Col, Select, Typography, Popconfirm,
+  Table, Button, Modal, Form, Input, InputNumber, DatePicker, Space,
+  message, Switch, Row, Col, Select, Typography, Popconfirm,
 } from 'antd';
 import { PlusOutlined, TransactionOutlined, BankOutlined, EditOutlined, UndoOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
-import { formatCurrency, amountToWordsInr } from '../utils/format';
+import { formatCurrency } from '../utils/format';
 import AmountWithWords from '../components/AmountWithWords';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
@@ -26,7 +26,8 @@ export default function FundProvidersPage() {
   const [savingTxn, setSavingTxn] = useState(false);
   const [savingProvider, setSavingProvider] = useState(false);
   const [rollingBackTxnId, setRollingBackTxnId] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [viewProviderId, setViewProviderId] = useState(null);
+  const [txnsLoading, setTxnsLoading] = useState(false);
   const [selected, setSelected] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [form] = Form.useForm();
@@ -37,6 +38,9 @@ export default function FundProvidersPage() {
   const [creditSplits, setCreditSplits] = useState({});
   const [txnAmount, setTxnAmount] = useState(null);
   const [txnType, setTxnType] = useState('funds');
+  const [reinvestModal, setReinvestModal] = useState(false);
+  const [reinvestForm] = Form.useForm();
+  const [reinvesting, setReinvesting] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -52,11 +56,58 @@ export default function FundProvidersPage() {
     loadAccounts();
   }, []);
 
-  const openLedger = async (provider) => {
+  const viewProvider = viewProviderId ? providers.find((p) => p.id === viewProviderId) : null;
+
+  const loadTransactions = async (providerId) => {
+    if (!providerId) {
+      setTransactions([]);
+      return;
+    }
+    setTxnsLoading(true);
+    try {
+      const { data } = await client.get(`/fund-providers/${providerId}/transactions`);
+      setTransactions(data);
+    } finally {
+      setTxnsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (viewProviderId) {
+      const p = providers.find((x) => x.id === viewProviderId);
+      if (p) {
+        setSelected(p);
+        loadTransactions(viewProviderId);
+      }
+    } else {
+      setTransactions([]);
+      setSelected(null);
+    }
+  }, [viewProviderId, providers]);
+
+  useEffect(() => {
+    if (providers.length === 1 && viewProviderId == null) {
+      setViewProviderId(providers[0].id);
+    }
+  }, [providers, viewProviderId]);
+
+  const selectProvider = (provider) => {
+    setViewProviderId(provider.id);
     setSelected(provider);
-    setDrawerOpen(true);
-    const { data } = await client.get(`/fund-providers/${provider.id}/transactions`);
-    setTransactions(data);
+  };
+
+  const refreshProviderView = async () => {
+    load();
+    if (viewProviderId) {
+      await loadTransactions(viewProviderId);
+      const { data } = await client.get('/fund-providers');
+      const updated = data.find((p) => p.id === viewProviderId);
+      if (updated) setSelected(updated);
+    }
+  };
+
+  const openLedger = (provider) => {
+    selectProvider(provider);
   };
 
   const openTxnModal = (type = 'funds') => {
@@ -116,7 +167,7 @@ export default function FundProvidersPage() {
       editTxnForm.resetFields();
       load();
       loadAccounts();
-      openLedger(selected);
+      refreshProviderView();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to update transaction'));
     } finally {
@@ -136,7 +187,7 @@ export default function FundProvidersPage() {
       );
       load();
       loadAccounts();
-      openLedger(selected);
+      refreshProviderView();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to roll back transaction'));
     } finally {
@@ -180,7 +231,7 @@ export default function FundProvidersPage() {
         amount: values.amount,
         txnDate: values.txnDate?.toISOString(),
         notes: values.notes,
-        providerProfit: isShareOnly ? (values.providerProfit ?? values.amount) : values.providerProfit,
+        providerProfit: isShareOnly ? (values.providerProfit ?? values.amount) : undefined,
         creditToWallet: isShareOnly ? false : values.creditToWallet,
       };
       if (!isShareOnly && creditMode === 'split' && splitEntries.length) {
@@ -197,14 +248,14 @@ export default function FundProvidersPage() {
       setTxnType('funds');
       message.success(
         isShareOnly
-          ? `P&L share recorded for provider — ${formatCurrency(amount)}`
+          ? `P&L share accrued — ${formatCurrency(amount)} (not added to principal yet)`
           : amount >= 0
             ? `Funds added successfully — ${formatCurrency(amount)}`
             : `Repayment recorded — ${formatCurrency(Math.abs(amount))}`
       );
       load();
       loadAccounts();
-      if (drawerOpen) openLedger(selected);
+      if (viewProviderId) refreshProviderView();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to record transaction'));
     } finally {
@@ -212,21 +263,76 @@ export default function FundProvidersPage() {
     }
   };
 
-  const totalLedger = providers.reduce((s, p) => s + Number(p.ledgerBalance || 0), 0);
-  const absTxnAmount = Math.abs(Number(txnAmount) || 0);
-  const splitTotal = Object.values(creditSplits).reduce((s, v) => s + (Number(v) || 0), 0);
+  const onReinvestProfit = async (values) => {
+    if (!selected || reinvesting) return;
+    setReinvesting(true);
+    try {
+      const { data } = await client.post(`/fund-providers/${selected.id}/reinvest-profit`, {
+        amount: values.amount,
+        txnDate: values.txnDate?.toISOString(),
+        notes: values.notes,
+      });
+      message.success(data.message || 'Profit reinvested into principal');
+      setReinvestModal(false);
+      reinvestForm.resetFields();
+      load();
+      refreshProviderView();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not reinvest profit'));
+    } finally {
+      setReinvesting(false);
+    }
+  };
+
+  const openReinvestModal = () => {
+    reinvestForm.setFieldsValue({
+      amount: selected?.accruedProfit > 0 ? selected.accruedProfit : undefined,
+      txnDate: dayjs(),
+      notes: 'Profit reinvested into principal',
+    });
+    setReinvestModal(true);
+  };
+
+  const totalPrincipal = providers.reduce((s, p) => s + Number(p.principalBalance ?? p.ledgerBalance ?? 0), 0);
+  const totalAccrued = providers.reduce((s, p) => s + Number(p.accruedProfit ?? p.totalProfit ?? 0), 0);
+
+  const displayPrincipal = viewProvider
+    ? Number(viewProvider.principalBalance ?? viewProvider.ledgerBalance ?? 0)
+    : totalPrincipal;
+  const displayAccrued = viewProvider
+    ? Number(viewProvider.accruedProfit ?? viewProvider.totalProfit ?? 0)
+    : totalAccrued;
+  const displayCombined = displayPrincipal + displayAccrued;
+  const statsScope = viewProvider ? viewProvider.name : 'All providers';
+
+  const isAutoPnLEntry = (txn) => {
+    const label = txn.account_label || '';
+    return label === 'P&L Share' || label === 'P&L Share (Loss)' || label === 'P&L Share (Manual)' || label === 'P&L Share (Manual Loss)';
+  };
+
+  const isReinvestEntry = (txn) => (txn.account_label || '') === 'Profit Reinvested';
 
   const columns = [
     { title: 'Name', dataIndex: 'name', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
     {
-      title: 'Ledger Balance',
-      dataIndex: 'ledgerBalance',
-      render: (v) => <AmountWithWords value={v} compact />,
+      title: 'Principal (given)',
+      dataIndex: 'principalBalance',
+      render: (_, r) => <AmountWithWords value={r.principalBalance ?? r.ledgerBalance ?? 0} compact />,
     },
     {
-      title: 'Total Profit',
-      dataIndex: 'totalProfit',
-      render: (v) => (v ? <AmountWithWords value={v} compact /> : '—'),
+      title: 'Accrued profit',
+      dataIndex: 'accruedProfit',
+      render: (_, r) => {
+        const v = r.accruedProfit ?? r.totalProfit ?? 0;
+        return v ? <AmountWithWords value={v} compact /> : '—';
+      },
+    },
+    {
+      title: 'Total',
+      render: (_, r) => {
+        const total = r.totalBalance ?? (Number(r.principalBalance ?? r.ledgerBalance ?? 0) + Number(r.accruedProfit ?? r.totalProfit ?? 0));
+        return <AmountWithWords value={total} compact />;
+      },
     },
     {
       title: 'Actions',
@@ -239,7 +345,7 @@ export default function FundProvidersPage() {
             type="primary"
             size="small"
             onClick={() => {
-              setSelected(r);
+              selectProvider(r);
               openTxnModal();
             }}
           >
@@ -250,26 +356,22 @@ export default function FundProvidersPage() {
     },
   ];
 
+  const absTxnAmount = Math.abs(Number(txnAmount) || 0);
+  const splitTotal = Object.values(creditSplits).reduce((s, v) => s + (Number(v) || 0), 0);
+
   const txnCols = [
     { title: 'Date', dataIndex: 'txn_date', render: (v) => dayjs(v).format('DD MMM YYYY') },
     {
-      title: 'Amount',
+      title: 'Principal',
       dataIndex: 'amount',
-      render: (v) => (
-        <div>
-          <Tag color={v >= 0 ? 'success' : 'error'}>{formatCurrency(v)}</Tag>
-          <div className="amount-with-words__text" style={{ marginTop: 4, maxWidth: 260 }}>
-            {amountToWordsInr(v)}
-          </div>
-        </div>
-      ),
+      render: (v) => (Number(v) !== 0 ? <AmountWithWords value={v} compact /> : '—'),
     },
-    { title: 'Bank Account(s)', dataIndex: 'account_label' },
     {
-      title: 'Profit',
+      title: 'Profit (accrued)',
       dataIndex: 'provider_profit',
-      render: (v) => (v != null ? <AmountWithWords value={v} compact /> : '—'),
+      render: (v) => (v != null && Number(v) !== 0 ? <AmountWithWords value={v} compact /> : '—'),
     },
+    { title: 'Bank Account(s)', dataIndex: 'account_label', render: (v) => v || '—' },
     {
       title: 'Notes',
       dataIndex: 'notes',
@@ -279,12 +381,16 @@ export default function FundProvidersPage() {
       title: '',
       width: 150,
       render: (_, r) => {
-        const isAutoPnL = r.account_label === 'P&L Share' || r.account_label === 'P&L Share (Loss)';
+        const isAutoPnL = isAutoPnLEntry(r);
+        const isAccrualOnly = Number(r.amount) === 0 && r.provider_profit != null;
+        const canEdit = !isAutoPnL && !isAccrualOnly && !isReinvestEntry(r);
         return (
           <Space size="small">
-            <Button size="small" icon={<EditOutlined />} onClick={() => openEditTxn(r)}>
-              Edit
-            </Button>
+            {canEdit && (
+              <Button size="small" icon={<EditOutlined />} onClick={() => openEditTxn(r)}>
+                Edit
+              </Button>
+            )}
             {!isAutoPnL && (
               <Popconfirm
                 title="Roll back this entry?"
@@ -321,23 +427,85 @@ export default function FundProvidersPage() {
         )}
       />
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} md={8}>
-          <StatCard title="Providers" value={providers.length} icon={<BankOutlined />} variant="info" />
-        </Col>
-        <Col xs={24} sm={12} md={8}>
-          <StatCard
-            title="Combined Ledger"
-            value={<AmountWithWords value={totalLedger} />}
-            icon={<TransactionOutlined />}
-            variant="primary"
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }} align="middle">
+        <Col xs={24} md={8}>
+          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>View provider</Typography.Text>
+          <Select
+            style={{ width: '100%' }}
+            placeholder="Select a provider"
+            value={viewProviderId ?? 'all'}
+            onChange={(v) => setViewProviderId(v === 'all' ? null : v)}
+            options={[
+              { value: 'all', label: `All providers (${providers.length})` },
+              ...providers.map((p) => ({ value: p.id, label: p.name })),
+            ]}
           />
         </Col>
       </Row>
 
-      <ContentCard title="All Fund Providers">
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={providers} {...tableDefaults} />
-      </ContentCard>
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} md={6}>
+          <StatCard title={`Principal — ${statsScope}`} value={<AmountWithWords value={displayPrincipal} />} icon={<BankOutlined />} variant="primary" />
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <StatCard
+            title={`Accrued profit — ${statsScope}`}
+            value={<AmountWithWords value={displayAccrued} />}
+            icon={<TransactionOutlined />}
+            variant="success"
+          />
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <StatCard
+            title={`Combined — ${statsScope}`}
+            value={<AmountWithWords value={displayCombined} />}
+            icon={<BankOutlined />}
+            variant="info"
+          />
+        </Col>
+        {!viewProvider && (
+          <Col xs={24} sm={12} md={6}>
+            <StatCard title="Providers" value={providers.length} icon={<BankOutlined />} variant="info" />
+          </Col>
+        )}
+      </Row>
+
+      {!viewProvider ? (
+        <ContentCard title="All Fund Providers">
+          <Table rowKey="id" loading={loading} columns={columns} dataSource={providers} {...tableDefaults} />
+        </ContentCard>
+      ) : (
+        <ContentCard
+          title={`${viewProvider.name} — Transactions`}
+          extra={(
+            <Space wrap>
+              <Button
+                onClick={openReinvestModal}
+                disabled={!selected?.accruedProfit || Number(selected.accruedProfit) <= 0}
+              >
+                Add profit to principal
+              </Button>
+              <Button onClick={() => openTxnModal('share')}>Accrue P&L share</Button>
+              <Button type="primary" onClick={() => openTxnModal('funds')}>Add / repay funds</Button>
+            </Space>
+          )}
+        >
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+            Principal is funds given or repaid (updates wallet). Accrued profit is P&L share only — use
+            {' '}&quot;Add profit to principal&quot; when you want to move it into principal.
+          </Typography.Paragraph>
+          <Table
+            rowKey="id"
+            loading={txnsLoading}
+            columns={txnCols}
+            dataSource={transactions}
+            size="middle"
+            className="pro-table ledger-table"
+            pagination={{ pageSize: 15 }}
+            scroll={{ x: 900 }}
+          />
+        </ContentCard>
+      )}
 
       <Modal
         title="Add Fund Provider"
@@ -384,7 +552,7 @@ export default function FundProvidersPage() {
               }}
               options={[
                 { value: 'funds', label: 'Add / repay funds (updates wallet)' },
-                { value: 'share', label: 'P&L share to provider (ledger only)' },
+                { value: 'share', label: 'Accrue P&L share (does not add to principal)' },
               ]}
             />
           </Form.Item>
@@ -403,9 +571,14 @@ export default function FundProvidersPage() {
               <Switch />
             </Form.Item>
           )}
+          {txnType === 'funds' && (
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+              Records principal only (wallet in/out). P&L profit is tracked separately via &quot;Accrue P&L share&quot;.
+            </Typography.Text>
+          )}
           {txnType === 'share' && (
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              Provider ledger only — your wallet bank accounts are not used for P&L share entries.
+              Adds to accrued profit only — not principal. Use &quot;Add profit to principal&quot; when ready to reinvest.
             </Typography.Text>
           )}
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.creditToWallet !== cur.creditToWallet}>
@@ -476,11 +649,6 @@ export default function FundProvidersPage() {
               </>
             )}
           </Form.Item>
-          {txnType === 'funds' && (
-            <Form.Item name="providerProfit" label="Provider Profit (optional)">
-              <InputNumber style={{ width: '100%' }} />
-            </Form.Item>
-          )}
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
           </Form.Item>
@@ -503,48 +671,45 @@ export default function FundProvidersPage() {
           <Form.Item name="txnDate" label="Date">
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="providerProfit" label="Provider Profit">
-            <InputNumber style={{ width: '100%' }} />
+          <Form.Item name="notes" label="Notes">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+          {editingTxn && Number(editingTxn.amount) === 0 && editingTxn.provider_profit != null && (
+            <Form.Item name="providerProfit" label="Accrued profit">
+              <InputNumber style={{ width: '100%' }} />
+            </Form.Item>
+          )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`Add profit to principal — ${selected?.name}`}
+        open={reinvestModal}
+        onCancel={() => !reinvesting && setReinvestModal(false)}
+        onOk={() => reinvestForm.submit()}
+        confirmLoading={reinvesting}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary">
+          Accrued profit available:{' '}
+          <strong>{formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}</strong>
+        </Typography.Paragraph>
+        <Form form={reinvestForm} layout="vertical" onFinish={onReinvestProfit}>
+          <Form.Item
+            name="amount"
+            label="Amount to add to principal"
+            rules={[{ required: true, message: 'Enter amount' }]}
+          >
+            <InputNumber min={0.01} max={selected?.accruedProfit ?? selected?.totalProfit} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="txnDate" label="Date">
+            <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
       </Modal>
-
-      <Drawer
-        title={selected?.name}
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        width={920}
-        className="member-drawer fund-provider-ledger-drawer"
-        extra={(
-          <Space>
-            <Button onClick={() => openTxnModal('share')}>Record P&L Share</Button>
-            <Button type="primary" onClick={() => openTxnModal('funds')}>Add Transaction</Button>
-          </Space>
-        )}
-      >
-        <Row gutter={16} style={{ marginBottom: 20 }}>
-          <Col xs={24} md={12}>
-            <StatCard
-              title="Ledger Balance"
-              value={<AmountWithWords value={selected?.ledgerBalance} />}
-              icon={<BankOutlined />}
-              variant="primary"
-            />
-          </Col>
-        </Row>
-        <Table
-          rowKey="id"
-          columns={txnCols}
-          dataSource={transactions}
-          size="middle"
-          className="pro-table ledger-table"
-          pagination={{ pageSize: 15 }}
-          scroll={{ x: 800 }}
-        />
-      </Drawer>
     </div>
   );
 }

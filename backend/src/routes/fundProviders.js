@@ -56,41 +56,38 @@ router.get('/', async (req, res, next) => {
 
 
     const [balances] = await pool.query(
-
-      `SELECT fund_provider_id, SUM(amount) as balance, SUM(COALESCE(provider_profit, 0)) as total_profit
-
+      `SELECT fund_provider_id,
+              SUM(amount) AS principal_balance,
+              SUM(COALESCE(provider_profit, 0)) AS accrued_profit
        FROM provider_transactions WHERE tenant_id = ?
-
        GROUP BY fund_provider_id`,
-
       [req.tenantId]
-
     );
-
-
 
     const balanceMap = Object.fromEntries(
-
-      balances.map((b) => [b.fund_provider_id, { balance: Number(b.balance), totalProfit: Number(b.total_profit) }])
-
+      balances.map((b) => {
+        const principal = Number(b.principal_balance);
+        const accrued = Number(b.accrued_profit);
+        return [
+          b.fund_provider_id,
+          { principal, accrued, total: principal + accrued },
+        ];
+      })
     );
 
-
-
     res.json(
-
-      providers.map((p) => ({
-
-        ...p,
-
-        contact_info: safeParseContact(p.contact_info),
-
-        ledgerBalance: balanceMap[p.id]?.balance ?? 0,
-
-        totalProfit: balanceMap[p.id]?.totalProfit ?? 0,
-
-      }))
-
+      providers.map((p) => {
+        const bal = balanceMap[p.id] || { principal: 0, accrued: 0, total: 0 };
+        return {
+          ...p,
+          contact_info: safeParseContact(p.contact_info),
+          principalBalance: bal.principal,
+          accruedProfit: bal.accrued,
+          totalBalance: bal.total,
+          ledgerBalance: bal.principal,
+          totalProfit: bal.accrued,
+        };
+      })
     );
 
   } catch (err) {
@@ -315,7 +312,12 @@ router.post('/:id/transactions', async (req, res, next) => {
 
     }
 
-
+    const isAccrualOnly = creditToWallet === false;
+    const principalAmount = isAccrualOnly ? 0 : amt;
+    const accruedProfitAmount = isAccrualOnly ? (profitVal ?? amt) : profitVal;
+    if (isAccrualOnly && (accruedProfitAmount === 0 || Number.isNaN(accruedProfitAmount))) {
+      throw new AppError('Profit share amount is required');
+    }
 
     const result = await withTransaction(async (conn) => {
       const absAmt = Math.abs(amt);
@@ -358,6 +360,11 @@ router.post('/:id/transactions', async (req, res, next) => {
         resolvedAccountId = normalizedDebits.length === 1 ? normalizedDebits[0].bankAccountId : null;
       }
 
+      const accrualLabel =
+        isAccrualOnly && !resolvedAccountLabel
+          ? (accruedProfitAmount >= 0 ? 'P&L Share (Manual)' : 'P&L Share (Manual Loss)')
+          : resolvedAccountLabel;
+
       const [txnResult] = await conn.query(
         `INSERT INTO provider_transactions
          (fund_provider_id, tenant_id, amount, txn_date, account_label, bank_account_id, notes, provider_profit, created_by)
@@ -365,12 +372,12 @@ router.post('/:id/transactions', async (req, res, next) => {
         [
           providerId,
           req.tenantId,
-          amt,
+          principalAmount,
           txnDateVal,
-          resolvedAccountLabel,
+          accrualLabel,
           resolvedAccountId,
           notes?.trim() || null,
-          profitVal,
+          accruedProfitAmount,
           req.user.userId,
         ]
       );
@@ -537,24 +544,41 @@ router.patch('/:id/transactions/:txnId', async (req, res, next) => {
 
       if (!existing.length) throw new AppError('Transaction not found', 404);
 
+      const label = existing[0].account_label || '';
+      if (label === 'P&L Share' || label === 'P&L Share (Loss)') {
+        throw new AppError(
+          'This entry was created by IPO P&L split. Change allotment/P&L on the IPO page to reverse it.',
+          400
+        );
+      }
 
-
-      const updates = [];
-
-      const values = [];
-
-
+      const [walletLink] = await conn.query(
+        `SELECT id FROM wallet_transactions
+         WHERE ref_type = 'provider_transaction' AND ref_id = ? AND tenant_id = ? LIMIT 1`,
+        [txnId, req.tenantId]
+      );
+      const hasWalletLink = walletLink.length > 0;
+      const isReinvest = label === 'Profit Reinvested';
 
       if (amount !== undefined) {
-
         const amt = Number(amount);
-
         if (Number.isNaN(amt) || amt === 0) throw new AppError('Amount must be non-zero');
+        const profitOnRow = existing[0].provider_profit != null ? Number(existing[0].provider_profit) : null;
+        if (!hasWalletLink && !isReinvest && profitOnRow != null && profitOnRow !== 0 && amt !== 0) {
+          throw new AppError(
+            'This accrual payout has no wallet link — amount must stay 0; only provider profit applies',
+            400
+          );
+        }
+      }
 
+      const updates = [];
+      const values = [];
+
+      if (amount !== undefined) {
+        const amt = Number(amount);
         updates.push('amount = ?');
-
         values.push(amt);
-
       }
 
       if (txnDate !== undefined) {
@@ -621,6 +645,70 @@ router.patch('/:id/transactions/:txnId', async (req, res, next) => {
 
   }
 
+});
+
+
+
+router.post('/:id/reinvest-profit', async (req, res, next) => {
+  try {
+    const providerId = parsePositiveInt(req.params.id, 'provider id');
+    const reinvestAmt = Number(req.body.amount);
+    if (!reinvestAmt || Number.isNaN(reinvestAmt) || reinvestAmt <= 0) {
+      throw new AppError('Reinvest amount must be greater than zero', 400);
+    }
+
+    const [provider] = await pool.query(
+      'SELECT * FROM fund_providers WHERE id = ? AND tenant_id = ?',
+      [providerId, req.tenantId]
+    );
+    if (!provider.length) throw new AppError('Provider not found', 404);
+
+    const txnDateVal = parseDate(req.body.txnDate, 'transaction date');
+    const notes = req.body.notes?.trim() || 'Profit reinvested into principal';
+
+    const result = await withTransaction(async (conn) => {
+      const [accruedRows] = await conn.query(
+        `SELECT COALESCE(SUM(provider_profit), 0) AS accrued
+         FROM provider_transactions
+         WHERE fund_provider_id = ? AND tenant_id = ?`,
+        [providerId, req.tenantId]
+      );
+      const accrued = Number(accruedRows[0]?.accrued ?? 0);
+      if (reinvestAmt > accrued + 0.001) {
+        throw new AppError(
+          `Cannot reinvest ${reinvestAmt}. Accrued profit available: ${accrued.toFixed(2)}`,
+          400
+        );
+      }
+
+      const [txnResult] = await conn.query(
+        `INSERT INTO provider_transactions
+         (fund_provider_id, tenant_id, amount, txn_date, account_label, notes, provider_profit, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          providerId,
+          req.tenantId,
+          reinvestAmt,
+          txnDateVal,
+          'Profit Reinvested',
+          notes,
+          -reinvestAmt,
+          req.user.userId,
+        ]
+      );
+
+      return { transactionId: txnResult.insertId, accruedAfter: accrued - reinvestAmt };
+    });
+
+    const [txn] = await pool.query('SELECT * FROM provider_transactions WHERE id = ?', [result.transactionId]);
+    res.status(201).json({
+      transaction: txn[0],
+      accruedProfitAfter: result.accruedAfter,
+      message: `${reinvestAmt} moved from accrued profit into provider principal`,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 

@@ -27,6 +27,12 @@ const router = Router();
 router.get('/', async (req, res, next) => {
 
   try {
+    const invalidOnly = req.query.invalidOnly === '1' || req.query.invalidOnly === 'true';
+    const includeInvalid = req.query.includeInvalid === '1' || req.query.includeInvalid === 'true';
+
+    let invalidFilter = 'AND COALESCE(i.is_invalid, 0) = 0';
+    if (invalidOnly) invalidFilter = 'AND COALESCE(i.is_invalid, 0) = 1';
+    else if (includeInvalid) invalidFilter = '';
 
     const [rows] = await pool.query(
 
@@ -34,7 +40,7 @@ router.get('/', async (req, res, next) => {
 
         (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count
 
-       FROM ipos i WHERE i.tenant_id = ? ORDER BY i.created_at DESC`,
+       FROM ipos i WHERE i.tenant_id = ? ${invalidFilter} ORDER BY i.created_at DESC`,
 
       [req.tenantId]
 
@@ -305,6 +311,52 @@ router.post('/:id/reopen', async (req, res, next) => {
     await pool.query(
       'UPDATE ipos SET status = ? WHERE id = ? AND tenant_id = ?',
       ['OPEN', ipoId, req.tenantId]
+    );
+    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/invalidate', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [existing] = await pool.query(
+      'SELECT * FROM ipos WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    if (!existing.length) throw new AppError('IPO not found', 404);
+    if (existing[0].is_invalid) {
+      throw new AppError('IPO is already marked invalid');
+    }
+
+    await pool.query(
+      'UPDATE ipos SET is_invalid = 1, invalidated_at = NOW() WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/restore', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [existing] = await pool.query(
+      'SELECT * FROM ipos WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    if (!existing.length) throw new AppError('IPO not found', 404);
+    if (!existing[0].is_invalid) {
+      throw new AppError('IPO is not marked invalid');
+    }
+
+    await pool.query(
+      'UPDATE ipos SET is_invalid = 0, invalidated_at = NULL WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
     );
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
     res.json(rows[0]);

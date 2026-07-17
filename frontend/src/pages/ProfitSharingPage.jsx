@@ -165,14 +165,26 @@ export default function ProfitSharingPage() {
 
   useEffect(() => {
     const editId = location.state?.editMemberId;
-    if (!editId || !members.length) return;
-    const m = members.find((x) => x.memberId === editId);
-    if (m) {
-      setActiveTabKey('members');
-      openManageMember(m);
+    if (editId && members.length) {
+      const m = members.find((x) => x.memberId === editId);
+      if (m) {
+        setActiveTabKey('members');
+        openManageMember(m);
+      }
+      navigate(location.pathname, { replace: true, state: {} });
     }
-    navigate(location.pathname, { replace: true, state: {} });
   }, [location.state?.editMemberId, members]);
+
+  useEffect(() => {
+    const presetIpoId = location.state?.presetIpoId;
+    if (!presetIpoId) return;
+    setBulkTemplateIpoId(Number(presetIpoId));
+    setActiveTabKey('members');
+    message.info(
+      `Configure share rules for ${location.state?.presetIpoName || 'this IPO'} — choose IPO scope when adding rules`
+    );
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [location.state?.presetIpoId]);
 
   const providerOptions = fundProviders.map((p) => ({ value: p.id, label: p.name }));
   const ipoOptions = ipos.map((i) => ({ value: i.id, label: i.name }));
@@ -688,6 +700,28 @@ export default function ProfitSharingPage() {
     }
   };
 
+  const onRevokeProfitSplit = async (applicationId) => {
+    try {
+      await client.post('/profit-shares/revoke', { applicationId });
+      message.success('P&L split revoked — wallet and provider accruals reversed');
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
+  };
+
+  const onResplitProfit = async (applicationId) => {
+    try {
+      const { data } = await client.post('/profit-shares/distribute', { applicationIds: [applicationId] });
+      const count = data.count || 0;
+      if (count) message.success('P&L re-split with current rules');
+      else message.info(data.skipped?.[0]?.reason || 'Nothing to re-split');
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
+  };
+
   const pctSummary = (prov, mgr) => (
     <span style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
       {prov}% / {mgr}% <Typography.Text type="secondary">(keeps {Math.max(0, 100 - prov - mgr)}%)</Typography.Text>
@@ -811,6 +845,36 @@ export default function ProfitSharingPage() {
     { title: 'Member share', dataIndex: 'member_amount', render: (v) => (
       <span className={pnlClassName(v)}>{formatCurrency(v)}</span>
     )},
+    {
+      title: 'Status',
+      width: 120,
+      render: (_, r) => (r.needsResplit ? <Tag color="warning">Rule changed</Tag> : <Tag>Current</Tag>),
+    },
+    {
+      title: 'Actions',
+      width: 200,
+      fixed: 'right',
+      render: (_, r) => (
+        <Space size="small" wrap>
+          {r.needsResplit && (
+            <Popconfirm
+              title="Re-split with current rules?"
+              description="Reverses the old split and applies your updated share rules."
+              onConfirm={() => onResplitProfit(r.ipo_application_id)}
+            >
+              <Button size="small" type="primary">Re-split</Button>
+            </Popconfirm>
+          )}
+          <Popconfirm
+            title="Revoke this P&L split?"
+            description="Reverses wallet manager share and provider accrual. P&L stays on the application."
+            onConfirm={() => onRevokeProfitSplit(r.ipo_application_id)}
+          >
+            <Button size="small" danger>Revoke</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
   const memberTotalCols = [

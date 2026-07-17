@@ -15,7 +15,9 @@ import { formatCurrency, pnlClassName } from '../utils/format';
 export default function IpoSummaryStats({ summary, loading }) {
   if (!summary && !loading) return null;
 
-  const pl = summary?.totalProfitLoss ?? 0;
+  const pl = summary?.totalProfitLoss;
+  const plDisplay = pl == null ? '—' : formatCurrency(pl);
+  const plVariant = pl == null ? 'info' : pl >= 0 ? 'success' : 'danger';
 
   return (
     <ContentCard
@@ -64,10 +66,10 @@ export default function IpoSummaryStats({ summary, loading }) {
         <Col xs={12} sm={8} lg={8}>
           <StatCard
             title="Gross P&L"
-            value={summary ? formatCurrency(pl) : '—'}
+            value={summary ? plDisplay : '—'}
             icon={<RiseOutlined />}
-            variant={pl >= 0 ? 'success' : 'danger'}
-            valueClassName={pnlClassName(pl)}
+            variant={plVariant}
+            valueClassName={pl == null ? undefined : pnlClassName(pl)}
           />
         </Col>
         <Col xs={12} sm={8} lg={8}>
@@ -76,6 +78,14 @@ export default function IpoSummaryStats({ summary, loading }) {
             value={summary ? formatCurrency(summary.shareManagerTotal) : '—'}
             icon={<BankOutlined />}
             variant="info"
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={8}>
+          <StatCard
+            title="Provider share"
+            value={summary ? formatCurrency(summary.shareProviderTotal) : '—'}
+            icon={<FundOutlined />}
+            variant="primary"
           />
         </Col>
       </Row>
@@ -94,8 +104,6 @@ export default function IpoSummaryStats({ summary, loading }) {
             <>
               {' · '}
               P&L splits {summary.profitSharedCount}
-              {' · '}
-              Provider {formatCurrency(summary.shareProviderTotal)}
               {' · '}
               Member {formatCurrency(summary.shareMemberTotal)}
             </>

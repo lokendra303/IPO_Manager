@@ -6,7 +6,7 @@ import {
   categoryTagColor,
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
-import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons';
 import { REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
@@ -18,6 +18,7 @@ import { tableDefaults } from '../utils/table';
 
 export default function IposPage() {
   const [ipos, setIpos] = useState([]);
+  const [invalidIpos, setInvalidIpos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -25,7 +26,15 @@ export default function IposPage() {
 
   const load = () => {
     setLoading(true);
-    client.get('/ipos').then((r) => setIpos(r.data)).finally(() => setLoading(false));
+    Promise.all([
+      client.get('/ipos'),
+      client.get('/ipos', { params: { invalidOnly: 1 } }),
+    ])
+      .then(([active, invalid]) => {
+        setIpos(active.data);
+        setInvalidIpos(invalid.data);
+      })
+      .finally(() => setLoading(false));
   };
 
   useEffect(load, []);
@@ -100,7 +109,7 @@ export default function IposPage() {
     { title: 'Applications', dataIndex: 'application_count' },
     {
       title: 'Actions',
-      width: 220,
+      width: 280,
       render: (_, r) => (
         <Space size="small" onClick={(e) => e.stopPropagation()}>
           <Link to={`/ipos/${r.id}`}>
@@ -144,6 +153,56 @@ export default function IposPage() {
               </Button>
             </Popconfirm>
           )}
+          <Popconfirm
+            title="Mark as invalid IPO?"
+            description="Hides from the main list. Records are kept — you can restore later."
+            onConfirm={async () => {
+              try {
+                await client.post(`/ipos/${r.id}/invalidate`);
+                message.success('IPO marked invalid');
+                load();
+              } catch (err) {
+                message.error(getErrorMessage(err));
+              }
+            }}
+          >
+            <Button size="small" icon={<StopOutlined />}>
+              Invalid
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const invalidColumns = [
+    ...columns.slice(0, -1),
+    {
+      title: 'Actions',
+      width: 200,
+      render: (_, r) => (
+        <Space size="small" onClick={(e) => e.stopPropagation()}>
+          <Link to={`/ipos/${r.id}`}>
+            <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />}>
+              View
+            </Button>
+          </Link>
+          <Popconfirm
+            title="Restore to main IPO list?"
+            onConfirm={async () => {
+              try {
+                await client.post(`/ipos/${r.id}/restore`);
+                message.success('IPO restored');
+                load();
+              } catch (err) {
+                message.error(getErrorMessage(err));
+              }
+            }}
+          >
+            <Button size="small" icon={<RollbackOutlined />}>
+              Restore
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -181,6 +240,21 @@ export default function IposPage() {
           {...tableDefaults}
         />
       </ContentCard>
+
+      {invalidIpos.length > 0 && (
+        <ContentCard title={`Invalid IPOs (${invalidIpos.length})`} style={{ marginTop: 16 }}>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            Duplicate or mistaken IPOs hidden from the main list. Restore to bring back, or view records.
+          </Typography.Paragraph>
+          <Table
+            rowKey="id"
+            loading={loading}
+            columns={invalidColumns}
+            dataSource={invalidIpos}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
 
       <Modal title="Create IPO" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} destroyOnClose width={560}>
         <Form form={form} layout="vertical" onFinish={onCreate}>

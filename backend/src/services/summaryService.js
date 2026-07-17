@@ -39,7 +39,7 @@ const IPO_SUMMARY_SELECT = `
     SUM(CASE WHEN a.allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS not_allotted_count,
     SUM(CASE WHEN a.allotment_status = 'NOT_APPLIED' THEN 1 ELSE 0 END) AS not_applied_count,
     SUM(CASE WHEN a.allotment_status = 'PENDING' THEN 1 ELSE 0 END) AS pending_allotment_count,
-    COALESCE(SUM(CASE WHEN a.allotment_status = 'ALLOTED' THEN a.profit_loss ELSE 0 END), 0) AS total_profit_loss
+    COALESCE(SUM(CASE WHEN a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL THEN a.profit_loss ELSE 0 END), 0) AS total_profit_loss
   FROM ipos i
   LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id`;
 
@@ -62,6 +62,7 @@ export async function getIpoSummaryById(pool, tenantId, ipoId) {
      JOIN ipo_applications a ON a.id = psd.ipo_application_id
      WHERE psd.tenant_id = ? AND a.ipo_id = ?
        AND a.allotment_status = 'ALLOTED'
+       AND a.withdrawal_money IS NOT NULL
        AND a.profit_loss IS NOT NULL
        AND ABS(a.profit_loss - psd.gross_profit_loss) < 0.01`,
     [tenantId, ipoId]
@@ -73,7 +74,7 @@ export async function getIpoSummaryById(pool, tenantId, ipoId) {
 async function getIpoWiseSummary(pool, tenantId) {
   const [ipoRows] = await pool.query(
     `${IPO_SUMMARY_SELECT}
-     WHERE i.tenant_id = ?
+     WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0
      GROUP BY i.id, i.name, i.status, i.ipo_segment, i.created_at
      ORDER BY i.created_at DESC, i.id DESC`,
     [tenantId]
@@ -90,6 +91,7 @@ async function getIpoWiseSummary(pool, tenantId) {
      JOIN ipo_applications a ON a.id = psd.ipo_application_id
      WHERE psd.tenant_id = ?
        AND a.allotment_status = 'ALLOTED'
+       AND a.withdrawal_money IS NOT NULL
        AND a.profit_loss IS NOT NULL
        AND ABS(a.profit_loss - psd.gross_profit_loss) < 0.01
      GROUP BY a.ipo_id`,
@@ -163,7 +165,7 @@ export async function getSummary(pool, tenantId) {
     `SELECT member_id,
             COUNT(*) as ipos_applied,
             SUM(CASE WHEN allotment_status = 'ALLOTED' THEN 1 ELSE 0 END) as ipos_alloted,
-            SUM(CASE WHEN allotment_status = 'ALLOTED' THEN COALESCE(profit_loss, 0) ELSE 0 END) as total_ipo_profit
+            SUM(CASE WHEN allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL THEN COALESCE(profit_loss, 0) ELSE 0 END) as total_ipo_profit
      FROM ipo_applications WHERE tenant_id = ?
      GROUP BY member_id`,
     [tenantId]

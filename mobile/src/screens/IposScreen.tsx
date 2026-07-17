@@ -8,23 +8,30 @@ import ContentCard from '../components/ContentCard';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
+import Banner from '../components/Banner';
 import { categoryTagColor, getLotAmountForCategory, parseAllowedCategories } from '../utils/ipoCategories';
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import SlideModal from '../components/SlideModal';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
-import { Alert, View } from 'react-native';
+import { Alert, Text, View } from 'react-native';
 
 export default function IposScreen() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<any>({ ipoSegment: 'MAINBOARD', enableHni: false });
 
   const fetcher = useCallback(async () => {
-    const { data } = await client.get('/ipos');
-    return data as any[];
+    const [active, invalid] = await Promise.all([
+      client.get('/ipos'),
+      client.get('/ipos', { params: { invalidOnly: 1 } }),
+    ]);
+    return { active: active.data as any[], invalid: invalid.data as any[] };
   }, []);
-  const { data: ipos, loading, refresh } = useQuery(fetcher);
+  const { data, loading, refresh } = useQuery(fetcher);
+
+  const list = data?.active ?? [];
+  const invalidList = data?.invalid ?? [];
 
   const onCreate = async () => {
     try {
@@ -37,10 +44,10 @@ export default function IposScreen() {
         allowedCategories,
       };
       if (form.enableHni && form.lotAmountHni) payload.lotAmountHni = Number(form.lotAmountHni);
-      const { data } = await client.post('/ipos', payload);
+      const { data: created } = await client.post('/ipos', payload);
       setModalOpen(false);
       await refresh();
-      router.push(`/(manager)/ipos/${data.id}`);
+      router.push(`/(manager)/ipos/${created.id}`);
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed'));
     }
@@ -55,9 +62,81 @@ export default function IposScreen() {
     }
   };
 
-  if (loading && !ipos) return <Loading />;
+  const markInvalid = (ipo: any) => {
+    Alert.alert(
+      'Mark as invalid IPO?',
+      'Hides from the main list. Records are kept — you can restore later.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark invalid',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await client.post(`/ipos/${ipo.id}/invalidate`);
+              await refresh();
+            } catch (err) {
+              Alert.alert('Error', getErrorMessage(err));
+            }
+          },
+        },
+      ]
+    );
+  };
 
-  const list = ipos ?? [];
+  const restoreIpo = (ipo: any) => {
+    Alert.alert('Restore to main IPO list?', undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Restore',
+        onPress: async () => {
+          try {
+            await client.post(`/ipos/${ipo.id}/restore`);
+            await refresh();
+          } catch (err) {
+            Alert.alert('Error', getErrorMessage(err));
+          }
+        },
+      },
+    ]);
+  };
+
+  const renderIpoCard = (r: any, { invalid = false } = {}) => {
+    const cats = parseAllowedCategories(r);
+    return (
+      <View key={r.id} style={ui.card}>
+        <ListRow
+          title={r.name}
+          subtitle={`${r.ipo_segment === 'SME' ? 'SME' : 'Mainboard'} · RII ${formatCurrency(getLotAmountForCategory(r, 'RII'))} · ${r.application_count} apps`}
+          onPress={() => router.push(`/(manager)/ipos/${r.id}`)}
+          right={
+            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              <Tag label={r.status} color={r.status === 'OPEN' ? '#059669' : '#dc2626'} />
+              {invalid && <Tag label="INVALID" color="#64748b" />}
+            </View>
+          }
+        />
+        <View style={ui.chipRow}>{cats.map((c) => <Tag key={c} label={c} color={categoryTagColor(c)} />)}</View>
+        <View style={ui.rowActions}>
+          <Button compact onPress={() => router.push(`/(manager)/ipos/${r.id}`)}>View</Button>
+          {invalid ? (
+            <Button compact onPress={() => restoreIpo(r)}>Restore</Button>
+          ) : (
+            <>
+              {r.status === 'OPEN' ? (
+                <Button compact textColor="#dc2626" onPress={() => Alert.alert('Close IPO?', 'Status only — does not return funds.', [{ text: 'Cancel' }, { text: 'Close', onPress: () => toggleStatus(r, 'close') }])}>Close</Button>
+              ) : (
+                <Button compact onPress={() => toggleStatus(r, 'reopen')}>Reopen</Button>
+              )}
+              <Button compact textColor="#64748b" onPress={() => markInvalid(r)}>Invalid</Button>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  if (loading && !data) return <Loading />;
 
   return (
     <Screen>
@@ -72,29 +151,15 @@ export default function IposScreen() {
         }
       />
       <ContentCard title={`IPO List (${list.length})`}>
-        {list.map((r) => {
-          const cats = parseAllowedCategories(r);
-          return (
-            <View key={r.id} style={ui.card}>
-              <ListRow
-                title={r.name}
-                subtitle={`${r.ipo_segment === 'SME' ? 'SME' : 'Mainboard'} · RII ${formatCurrency(getLotAmountForCategory(r, 'RII'))} · ${r.application_count} apps`}
-                onPress={() => router.push(`/(manager)/ipos/${r.id}`)}
-                right={<Tag label={r.status} color={r.status === 'OPEN' ? '#059669' : '#dc2626'} />}
-              />
-              <View style={ui.chipRow}>{cats.map((c) => <Tag key={c} label={c} color={categoryTagColor(c)} />)}</View>
-              <View style={ui.rowActions}>
-                <Button compact onPress={() => router.push(`/(manager)/ipos/${r.id}`)}>View</Button>
-                {r.status === 'OPEN' ? (
-                  <Button compact textColor="#dc2626" onPress={() => Alert.alert('Close IPO?', 'Status only — does not return funds.', [{ text: 'Cancel' }, { text: 'Close', onPress: () => toggleStatus(r, 'close') }])}>Close</Button>
-                ) : (
-                  <Button compact onPress={() => toggleStatus(r, 'reopen')}>Reopen</Button>
-                )}
-              </View>
-            </View>
-          );
-        })}
+        {list.map((r) => renderIpoCard(r))}
       </ContentCard>
+
+      {invalidList.length > 0 && (
+        <ContentCard title={`Invalid IPOs (${invalidList.length})`}>
+          <Banner variant="warn">Duplicate or mistaken IPOs hidden from the main list.</Banner>
+          {invalidList.map((r) => renderIpoCard(r, { invalid: true }))}
+        </ContentCard>
+      )}
 
       <SlideModal visible={modalOpen} title="Create IPO" onClose={() => setModalOpen(false)} closeLabel="Cancel">
         <TextInput label="IPO Name" value={form.name || ''} onChangeText={(v) => setForm({ ...form, name: v })} mode="outlined" style={ui.input} />

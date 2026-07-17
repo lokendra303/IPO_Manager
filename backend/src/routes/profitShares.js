@@ -14,6 +14,8 @@ import {
   deleteRuleTemplate,
   listMembersWithShareRules,
   distributeProfitShares,
+  previewProfitShares,
+  revokeProfitShareDistribution,
   getProfitShareReport,
   getProfitTotalsReport,
   calculateMultiRuleSplit,
@@ -497,68 +499,40 @@ router.post('/preview', async (req, res, next) => {
     const { ipoId, applicationIds } = req.body;
     const conn = await pool.getConnection();
     try {
-      let query = `
-        SELECT a.id, a.member_id, a.ipo_id, a.profit_loss, m.display_name, i.name as ipo_name
-        FROM ipo_applications a
-        JOIN members m ON m.id = a.member_id
-        JOIN ipos i ON i.id = a.ipo_id
-        LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-        WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.profit_loss IS NOT NULL AND psd.id IS NULL
-      `;
-      const params = [req.tenantId];
-      if (ipoId) {
-        query += ' AND a.ipo_id = ?';
-        params.push(ipoId);
-      }
-      if (applicationIds?.length) {
-        query += ` AND a.id IN (${applicationIds.map(() => '?').join(',')})`;
-        params.push(...applicationIds);
-      }
-      const [apps] = await conn.query(query, params);
-
-      const previews = [];
-      for (const app of apps) {
-        const { rules: allRules } = await getMemberShareRules(conn, req.tenantId, app.member_id);
-        const rules = resolveRulesForIpo(allRules, app.ipo_id);
-        const gross = Number(app.profit_loss);
-        let configWarning = null;
-        if (!rules.length) {
-          const ipoHint = app.ipo_name ? ` for ${app.ipo_name}` : '';
-          configWarning = `Add share rule for this member${ipoHint} under Profit Sharing`;
-        }
-        let split;
-        try {
-          split = calculateMultiRuleSplit(gross, rules);
-        } catch (e) {
-          configWarning = e.message || 'Invalid share rules';
-          split = {
-            pnlType: gross >= 0 ? 'PROFIT' : 'LOSS',
-            providerAmount: 0,
-            managerAmount: 0,
-            memberAmount: gross,
-            lines: [],
-          };
-        }
-
-        previews.push({
-          applicationId: app.id,
-          memberName: app.display_name,
-          ipoName: app.ipo_name,
-          grossProfitLoss: gross,
-          pnlType: split.pnlType,
-          ruleCount: rules.length,
-          ruleSource: rules.length ? 'member' : 'none',
-          ruleLines: split.lines,
-          providerAmount: split.totalProvider,
-          managerAmount: split.totalManager,
-          memberAmount: split.memberAmount,
-          configWarning,
-        });
-      }
+      const previews = await previewProfitShares(conn, req.tenantId, { ipoId, applicationIds });
       res.json(previews);
     } finally {
       conn.release();
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/revoke', async (req, res, next) => {
+  try {
+    const applicationIds = [req.body.applicationId, ...(req.body.applicationIds || [])]
+      .filter((id) => id != null)
+      .map((id) => parsePositiveInt(id, 'application id'));
+    if (!applicationIds.length) {
+      throw new AppError('applicationId or applicationIds is required');
+    }
+
+    const results = await withTransaction(async (conn) => {
+      const out = [];
+      for (const applicationId of applicationIds) {
+        const result = await revokeProfitShareDistribution(conn, {
+          tenantId: req.tenantId,
+          applicationId,
+          userId: req.user.userId,
+        });
+        out.push(result);
+      }
+      return out;
+    });
+
+    const revoked = results.filter((r) => r.revoked);
+    res.json({ revoked, count: revoked.length, results });
   } catch (err) {
     next(err);
   }

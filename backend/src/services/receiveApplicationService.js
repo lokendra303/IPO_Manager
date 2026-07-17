@@ -22,9 +22,10 @@ export async function receiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
+  const defaultReceiveAmount = app.withdrawal_money != null ? app.withdrawal_money : app.amount;
   const recvAmount = amount !== undefined
     ? parseAmount(amount, { fieldName: 'receive amount' })
-    : parseAmount(app.amount, { fieldName: 'application amount' });
+    : parseAmount(defaultReceiveAmount, { fieldName: 'receive amount' });
 
   const now = new Date();
   const ledgerNotes = notes || `Return: ${app.ipo_name}`;
@@ -96,7 +97,8 @@ async function receiveOneFromCache(conn, {
 }) {
   if (!app) throw new AppError('Application not found', 404);
 
-  const recvAmount = parseAmount(app.amount, { fieldName: 'application amount' });
+  const defaultReceiveAmount = app.withdrawal_money != null ? app.withdrawal_money : app.amount;
+  const recvAmount = parseAmount(defaultReceiveAmount, { fieldName: 'receive amount' });
   const now = new Date();
   const ledgerNotes = notes || `Return: ${app.ipo_name}`;
 

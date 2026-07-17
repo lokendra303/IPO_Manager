@@ -1006,8 +1006,7 @@ async function applyOrphanedProfitShareCleanupV33(conn) {
      FROM profit_share_distributions psd
      JOIN ipo_applications a ON a.id = psd.ipo_application_id
      WHERE a.allotment_status <> 'ALLOTED'
-        OR a.profit_loss IS NULL
-        OR ABS(a.profit_loss - psd.gross_profit_loss) >= 0.01`
+        OR (a.profit_loss IS NOT NULL AND ABS(a.profit_loss - psd.gross_profit_loss) >= 0.01)`
   );
 
   let cleaned = 0;
@@ -1226,6 +1225,98 @@ async function applyEmailVerificationOtpV40(conn) {
   console.log('Widened users.email_verification_token for OTP hashes');
 }
 
+async function applyProviderProfitAccrualV41(conn) {
+  if (!(await tableExists(conn, 'provider_transactions'))) return;
+
+  const [result] = await conn.query(
+    `UPDATE provider_transactions
+     SET amount = 0
+     WHERE account_label IN ('P&L Share', 'P&L Share (Loss)')
+       AND COALESCE(provider_profit, 0) != 0
+       AND amount != 0`
+  );
+  if (result.affectedRows > 0) {
+    console.log(`Moved ${result.affectedRows} IPO P&L share row(s) to accrual-only (amount=0)`);
+  }
+}
+
+/** Accrual-only payouts (no wallet link) must not reduce principal. */
+async function applyProviderAccrualPrincipalFixV42(conn) {
+  if (!(await tableExists(conn, 'provider_transactions'))) return;
+  if (!(await tableExists(conn, 'wallet_transactions'))) return;
+
+  const [result] = await conn.query(
+    `UPDATE provider_transactions pt
+     LEFT JOIN wallet_transactions wt
+       ON wt.ref_type = 'provider_transaction' AND wt.ref_id = pt.id AND wt.tenant_id = pt.tenant_id
+     SET pt.amount = 0
+     WHERE pt.amount != 0
+       AND pt.provider_profit IS NOT NULL
+       AND pt.provider_profit != 0
+       AND COALESCE(pt.account_label, '') != 'Profit Reinvested'
+       AND wt.id IS NULL`
+  );
+  if (result.affectedRows > 0) {
+    console.log(`Fixed ${result.affectedRows} accrual payout(s) that wrongly hit principal`);
+  }
+}
+
+async function applyWithdrawalMoneyV43(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+  if (await columnExists(conn, 'ipo_applications', 'withdrawal_money')) return;
+
+  await conn.query(
+    `ALTER TABLE ipo_applications
+     ADD COLUMN withdrawal_money DECIMAL(15, 2) DEFAULT NULL AFTER profit_loss`
+  );
+  console.log('Added ipo_applications.withdrawal_money');
+}
+
+async function applyClearOrphanProfitLossV44(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+  if (!(await columnExists(conn, 'ipo_applications', 'withdrawal_money'))) return;
+
+  const [result] = await conn.query(
+    `UPDATE ipo_applications
+     SET withdrawal_money = amount + profit_loss
+     WHERE withdrawal_money IS NULL AND profit_loss IS NOT NULL`
+  );
+  if (result.affectedRows > 0) {
+    console.log(`Backfilled withdrawal_money for ${result.affectedRows} application(s) from profit_loss`);
+  }
+}
+
+async function applyRecoverProfitFromDistributionsV45(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+  if (!(await tableExists(conn, 'profit_share_distributions'))) return;
+  if (!(await columnExists(conn, 'ipo_applications', 'withdrawal_money'))) return;
+
+  const [result] = await conn.query(
+    `UPDATE ipo_applications a
+     JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
+     SET a.profit_loss = psd.gross_profit_loss,
+         a.withdrawal_money = a.amount + psd.gross_profit_loss
+     WHERE a.withdrawal_money IS NULL
+       AND (a.profit_loss IS NULL OR ABS(a.profit_loss - psd.gross_profit_loss) < 0.01)`
+  );
+  if (result.affectedRows > 0) {
+    console.log(`Recovered profit + withdrawal for ${result.affectedRows} application(s) from P&L distributions`);
+  }
+}
+
+async function applyIpoInvalidFlagV46(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+  if (await columnExists(conn, 'ipos', 'is_invalid')) return;
+
+  await conn.query(
+    `ALTER TABLE ipos
+     ADD COLUMN is_invalid TINYINT(1) NOT NULL DEFAULT 0 AFTER status,
+     ADD COLUMN invalidated_at DATETIME DEFAULT NULL AFTER is_invalid,
+     ADD INDEX idx_ipos_tenant_invalid (tenant_id, is_invalid)`
+  );
+  console.log('Added ipos.is_invalid for soft-hiding duplicate/invalid IPOs');
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1272,6 +1363,12 @@ async function migrate() {
   await applyReceivePerfIndexesV38(conn);
   await applyMemberPortalExtensionsV39(conn);
   await applyEmailVerificationOtpV40(conn);
+  await applyProviderProfitAccrualV41(conn);
+  await applyProviderAccrualPrincipalFixV42(conn);
+  await applyWithdrawalMoneyV43(conn);
+  await applyClearOrphanProfitLossV44(conn);
+  await applyRecoverProfitFromDistributionsV45(conn);
+  await applyIpoInvalidFlagV46(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
 import { Button, Checkbox, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -47,6 +48,7 @@ type CoreCache = {
 };
 
 export default function ProfitSharingScreen() {
+  const { presetIpoId, presetIpoName } = useLocalSearchParams<{ presetIpoId?: string; presetIpoName?: string }>();
   const { user } = useAuth();
   const userId = user?.id;
   const [members, setMembers] = useState<any[]>([]);
@@ -194,6 +196,15 @@ export default function ProfitSharingScreen() {
     }
   }, [applyModalOpen]);
 
+  useEffect(() => {
+    if (!presetIpoId) return;
+    setTab('members');
+    Alert.alert(
+      'IPO share rules',
+      `Set share rules scoped to ${presetIpoName || 'this IPO'} when adding or editing member rules.`
+    );
+  }, [presetIpoId]);
+
   const overall = totals?.overall ?? {};
   const distributions = report?.distributions ?? [];
   const pending = report?.pending ?? [];
@@ -234,7 +245,11 @@ export default function ProfitSharingScreen() {
 
   const openCreateRule = (memberIds: number[]) => {
     setRuleContext({ mode: 'create', memberIds });
-    setRuleForm({ ...EMPTY_RULE_FORM, ruleName: `Rule ${memberIds.length > 1 ? '' : (memberRules.length + 1)}` });
+    setRuleForm({
+      ...EMPTY_RULE_FORM,
+      ruleName: `Rule ${memberIds.length > 1 ? '' : (memberRules.length + 1)}`,
+      ipoId: presetIpoId ? String(presetIpoId) : '',
+    });
     setRuleModalOpen(true);
   };
 

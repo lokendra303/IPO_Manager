@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert, Form,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
@@ -24,6 +24,7 @@ import ContentCard from '../components/ContentCard';
 import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
+import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoProfit';
 
 export default function IpoDetailPage() {
   const { id } = useParams();
@@ -128,6 +129,8 @@ export default function IpoDetailPage() {
   };
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const isClosed = ipo?.status === 'CLOSED';
+  const isInvalid = !!ipo?.is_invalid;
+  const isFrozen = isClosed || isInvalid;
   const riiLotAmount = getLotAmountForCategory(ipo, 'RII') ?? 0;
   const hniLotAmount = getLotAmountForCategory(ipo, 'HNI');
   const requiredFundForActiveRii = availableMembers.length * riiLotAmount;
@@ -159,6 +162,24 @@ export default function IpoDetailPage() {
     const app = applications.find((a) => a.id === appId);
     return app && !isFundReturned(app);
   });
+
+  const displaySummary = useMemo(() => {
+    if (!ipoSummary) return null;
+    let hasPnL = false;
+    const totalProfitLoss = applications.reduce((sum, app) => {
+      const edited = editedRows[app.id];
+      const pl = getApplicationProfit({
+        ...app,
+        withdrawalMoney: edited?.withdrawalMoney,
+        profitLoss: edited?.profitLoss,
+        amount: edited?.amount !== undefined ? edited.amount : app.amount,
+      });
+      if (pl == null) return sum;
+      hasPnL = true;
+      return sum + pl;
+    }, 0);
+    return { ...ipoSummary, totalProfitLoss: hasPnL ? totalProfitLoss : null };
+  }, [ipoSummary, applications, editedRows]);
 
   const groupAvailableIds = (group) =>
     group.members.filter((m) => isMemberAvailable(m.id)).map((m) => m.id);
@@ -324,7 +345,7 @@ export default function IpoDetailPage() {
       const { data } = await client.post('/profit-shares/preview', { ipoId: Number(id) });
       setProfitPreview(data);
       setProfitModalOpen(true);
-      if (!data.length) message.info('No pending allotted applications with P&L to distribute');
+      if (!data.length) message.info('No pending or outdated P&L splits for this IPO');
     } catch (err) {
       message.error(getErrorMessage(err));
     } finally {
@@ -416,6 +437,7 @@ export default function IpoDetailPage() {
     const updates = Object.entries(editedRows).map(([appId, vals]) => {
       const update = { id: Number(appId) };
       if (vals.allotmentStatus !== undefined) update.allotmentStatus = vals.allotmentStatus;
+      if (vals.withdrawalMoney !== undefined) update.withdrawalMoney = vals.withdrawalMoney;
       if (vals.profitLoss !== undefined) update.profitLoss = vals.profitLoss;
       if (vals.remarks !== undefined) update.remarks = vals.remarks;
       if (vals.amount !== undefined) update.amount = vals.amount;
@@ -429,10 +451,16 @@ export default function IpoDetailPage() {
     }
 
     for (const u of updates) {
-      if (u.allotmentStatus === 'ALLOTED' && u.profitLoss === undefined) {
-        const row = applications.find((a) => a.id === u.id);
-        if (row?.allotment_status !== 'ALLOTED' && row?.profit_loss == null) {
-          message.warning('Set P&L for newly allotted applications before saving');
+      const row = applications.find((a) => a.id === u.id);
+      const status = u.allotmentStatus ?? row?.allotment_status;
+      if (status === 'ALLOTED') {
+        const withdrawal = u.withdrawalMoney !== undefined
+          ? u.withdrawalMoney
+          : (editedRows[u.id]?.withdrawalMoney ?? row?.withdrawal_money);
+        const wasAllotted = row?.allotment_status === 'ALLOTED';
+        const hadPnL = row?.profit_loss != null || row?.withdrawal_money != null;
+        if (!wasAllotted && !hadPnL && (withdrawal == null || withdrawal === '')) {
+          message.warning('Enter withdrawal money for newly allotted applications before saving');
           return;
         }
       }
@@ -535,6 +563,60 @@ export default function IpoDetailPage() {
     }));
   };
 
+  const updateWithdrawal = (record, withdrawalVal) => {
+    const distributed = getRowVal(record, 'amount', 'amount');
+    const profit = withdrawalVal == null || withdrawalVal === ''
+      ? null
+      : computeProfitFromWithdrawal(withdrawalVal, distributed);
+    setEditedRows((prev) => ({
+      ...prev,
+      [record.id]: {
+        ...(prev[record.id] || {}),
+        id: Number(record.id),
+        withdrawalMoney: withdrawalVal,
+        profitLoss: profit,
+      },
+    }));
+  };
+
+  const updateAmount = (record, amountVal) => {
+    const withdrawal = getRowVal(record, 'withdrawalMoney', 'withdrawal_money');
+    const profit = withdrawal != null && withdrawal !== ''
+      ? computeProfitFromWithdrawal(withdrawal, amountVal)
+      : editedRows[record.id]?.profitLoss;
+    setEditedRows((prev) => ({
+      ...prev,
+      [record.id]: {
+        ...(prev[record.id] || {}),
+        id: Number(record.id),
+        amount: amountVal,
+        ...(withdrawal != null && withdrawal !== '' ? { profitLoss: profit } : {}),
+      },
+    }));
+  };
+
+  const clearAllotmentPnL = (appId) => {
+    setEditedRows((prev) => ({
+      ...prev,
+      [appId]: {
+        ...(prev[appId] || {}),
+        id: Number(appId),
+        profitLoss: null,
+        withdrawalMoney: null,
+      },
+    }));
+  };
+
+  const getComputedProfit = (record) => {
+    const edited = editedRows[record.id];
+    return getApplicationProfit({
+      ...record,
+      withdrawalMoney: edited?.withdrawalMoney,
+      profitLoss: edited?.profitLoss,
+      amount: edited?.amount !== undefined ? edited.amount : record.amount,
+    });
+  };
+
   const getRowVal = (record, field, dbField) => {
     const edited = editedRows[record.id];
     if (edited && edited[field] !== undefined) return edited[field];
@@ -606,7 +688,7 @@ export default function IpoDetailPage() {
           disabled={isClosed}
           style={{ width: '100%' }}
           value={getRowVal(r, 'amount', 'amount')}
-          onChange={(val) => updateRow(r.id, 'amount', val)}
+          onChange={(val) => updateAmount(r, val)}
         />
       ),
     },
@@ -643,7 +725,7 @@ export default function IpoDetailPage() {
           value={getRowVal(r, 'allotmentStatus', 'allotment_status')}
           onChange={(val) => {
             updateRow(r.id, 'allotmentStatus', val);
-            if (val === 'NOT_ALLOTED' || val === 'NOT_APPLIED') updateRow(r.id, 'profitLoss', null);
+            if (val === 'NOT_ALLOTED' || val === 'NOT_APPLIED') clearAllotmentPnL(r.id);
           }}
           options={[
             { value: 'PENDING', label: 'Pending' },
@@ -655,20 +737,37 @@ export default function IpoDetailPage() {
       ),
     },
     {
-      title: 'P&L',
-      dataIndex: 'profit_loss',
-      width: 108,
+      title: 'Withdrawal',
+      dataIndex: 'withdrawal_money',
+      width: 120,
       render: (v, r) => {
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         if (status !== 'ALLOTED') return '—';
         return (
           <InputNumber
             size="small"
+            min={0}
             style={{ width: '100%' }}
-            placeholder="+ / −"
-            value={getRowVal(r, 'profitLoss', 'profit_loss')}
-            onChange={(val) => updateRow(r.id, 'profitLoss', val)}
+            placeholder="Received"
+            value={getRowVal(r, 'withdrawalMoney', 'withdrawal_money')}
+            onChange={(val) => updateWithdrawal(r, val)}
           />
+        );
+      },
+    },
+    {
+      title: 'P&L (profit)',
+      dataIndex: 'profit_loss',
+      width: 108,
+      render: (v, r) => {
+        const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
+        if (status !== 'ALLOTED') return '—';
+        const pl = getComputedProfit(r);
+        if (pl == null) return <Typography.Text type="secondary">—</Typography.Text>;
+        return (
+          <Typography.Text className={pnlClassName(pl)} strong>
+            {formatCurrency(pl)}
+          </Typography.Text>
         );
       },
     },
@@ -684,7 +783,7 @@ export default function IpoDetailPage() {
           );
         }
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
-        const pl = getRowVal(r, 'profitLoss', 'profit_loss');
+        const pl = getComputedProfit(r);
         if (status === 'ALLOTED' && pl != null && Number(pl) !== 0) {
           return <Tag color="gold" style={{ marginInlineEnd: 0 }}>On save</Tag>;
         }
@@ -751,6 +850,7 @@ export default function IpoDetailPage() {
           <Space>
             {ipo?.name}
             <Tag color={isClosed ? 'error' : 'success'}>{isClosed ? 'CLOSED' : 'OPEN'}</Tag>
+            {isInvalid && <Tag color="default">INVALID</Tag>}
           </Space>
         }
         subtitle={
@@ -778,14 +878,16 @@ export default function IpoDetailPage() {
         extra={
           <Space wrap>
             <Link to="/ipos"><Button icon={<ArrowLeftOutlined />}>Back</Button></Link>
-            {!isClosed && (
+            {!isFrozen && (
               <Button onClick={openHniSetup}>
                 {ipoAllowsHni(ipo) ? 'HNI settings' : 'Set up HNI'}
               </Button>
             )}
             <Tooltip
               title={
-                isClosed
+                isInvalid
+                  ? 'Invalid IPO — restore to main list before distributing'
+                  : isClosed
                   ? 'IPO is closed — reopen to distribute funds to more members'
                   : !availableMembers.length
                     ? 'All active members already have an application for this IPO'
@@ -795,7 +897,7 @@ export default function IpoDetailPage() {
               <Button
                 type="primary"
                 onClick={openDistribute}
-                disabled={!availableMembers.length || isClosed}
+                disabled={!availableMembers.length || isFrozen}
               >
                 Distribute Funds
               </Button>
@@ -811,15 +913,41 @@ export default function IpoDetailPage() {
                 Check allotment (PAN)
               </Button>
             )}
+            <Link
+              to="/profit-sharing"
+              state={{ presetIpoId: Number(id), presetIpoName: ipo?.name }}
+            >
+              <Button icon={<TeamOutlined />}>Share rules for this IPO</Button>
+            </Link>
             <Button
               icon={<PercentageOutlined />}
               onClick={onPreviewProfitShare}
               loading={profitLoading}
-              disabled={isClosed}
+              disabled={isFrozen}
             >
-              Distribute pending P&L
+              Split / re-split P&L
             </Button>
-            {isClosed ? (
+            {isInvalid ? (
+              <Popconfirm
+                title="Restore to main IPO list?"
+                onConfirm={async () => {
+                  setStatusLoading(true);
+                  try {
+                    const { data } = await client.post(`/ipos/${id}/restore`);
+                    setIpo(data);
+                    message.success('IPO restored to main list');
+                  } catch (err) {
+                    message.error(getErrorMessage(err));
+                  } finally {
+                    setStatusLoading(false);
+                  }
+                }}
+              >
+                <Button icon={<RollbackOutlined />} loading={statusLoading}>
+                  Restore IPO
+                </Button>
+              </Popconfirm>
+            ) : isClosed ? (
               <Popconfirm
                 title="Reopen this IPO?"
                 description="You will be able to distribute funds to more members again."
@@ -830,25 +958,57 @@ export default function IpoDetailPage() {
                 </Button>
               </Popconfirm>
             ) : (
-              <Popconfirm
-                title="Close this IPO?"
-                description="Close updates status only — no wallet or fund-provider transactions. Reopen to distribute funds or run P&L splits."
-                onConfirm={onCloseIpo}
-              >
-                <Button icon={<LockOutlined />} danger loading={statusLoading}>
-                  Close IPO
-                </Button>
-              </Popconfirm>
+              <>
+                <Popconfirm
+                  title="Close this IPO?"
+                  description="Close updates status only — no wallet or fund-provider transactions. Reopen to distribute funds or run P&L splits."
+                  onConfirm={onCloseIpo}
+                >
+                  <Button icon={<LockOutlined />} danger loading={statusLoading}>
+                    Close IPO
+                  </Button>
+                </Popconfirm>
+                <Popconfirm
+                  title="Mark as invalid IPO?"
+                  description="Hides from the main list. Records are kept — you can restore later."
+                  onConfirm={async () => {
+                    setStatusLoading(true);
+                    try {
+                      const { data } = await client.post(`/ipos/${id}/invalidate`);
+                      setIpo(data);
+                      message.success('IPO marked invalid');
+                    } catch (err) {
+                      message.error(getErrorMessage(err));
+                    } finally {
+                      setStatusLoading(false);
+                    }
+                  }}
+                >
+                  <Button icon={<StopOutlined />} loading={statusLoading}>
+                    Mark invalid
+                  </Button>
+                </Popconfirm>
+              </>
             )}
           </Space>
         }
       />
 
+      {isInvalid && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Invalid IPO"
+          description="This IPO is hidden from the main list. You can still view records here. Restore it to distribute funds or use it normally."
+        />
+      )}
+
       <div style={{ marginBottom: 16 }}>
-        <IpoSummaryStats summary={ipoSummary} loading={loading} />
+        <IpoSummaryStats summary={displaySummary} loading={loading} />
       </div>
 
-      {!isClosed && (
+      {!isFrozen && (
         <Alert
           type="info"
           showIcon
@@ -883,7 +1043,7 @@ export default function IpoDetailPage() {
         />
       )}
 
-      {!isClosed && !ipoAllowsHni(ipo) && (
+      {!isFrozen && !ipoAllowsHni(ipo) && (
         <Alert
           type="info"
           showIcon
@@ -897,7 +1057,7 @@ export default function IpoDetailPage() {
           }
         />
       )}
-      {!isClosed && ipoAllowsHni(ipo) && !ipoHasHniLot(ipo) && (
+      {!isFrozen && ipoAllowsHni(ipo) && !ipoHasHniLot(ipo) && (
         <Alert
           type="warning"
           showIcon
@@ -912,7 +1072,7 @@ export default function IpoDetailPage() {
         />
       )}
 
-      {!isClosed && (
+      {!isFrozen && (
         <Alert
           type="info"
           showIcon
@@ -972,6 +1132,14 @@ export default function IpoDetailPage() {
       <ContentCard
         title={`Applications (${filteredApplications.length}${returnFilter !== 'all' ? ` of ${applications.length}` : ''})`}
       >
+        {applications.length > 0 && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Allotted members: enter Withdrawal money (total received back). P&L = withdrawal − distributed amount. On save, profit is shared using share rules for this IPO."
+          />
+        )}
         {applications.length > 0 && (
           <Space wrap style={{ marginBottom: 16 }}>
             <Segmented
@@ -1035,7 +1203,7 @@ export default function IpoDetailPage() {
       </ContentCard>
 
       <Modal
-        title="Distribute profit & loss (by %)"
+        title="Split / re-split P&L (by %)"
         open={profitModalOpen}
         onCancel={() => setProfitModalOpen(false)}
         width={900}
@@ -1056,8 +1224,8 @@ export default function IpoDetailPage() {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Manual distribute (optional)"
-          description="Pending rows that were not auto-split on save (e.g. missing member rules) can be distributed here."
+          message="Split or re-split P&L"
+          description="Includes new splits and rows where share rules changed since the last split. Re-split reverses the old split first."
         />
         {profitPreview.some((r) => r.configWarning) && (
           <Alert
@@ -1077,6 +1245,12 @@ export default function IpoDetailPage() {
           dataSource={profitPreview}
           columns={[
             { title: 'Member', dataIndex: 'memberName' },
+            {
+              title: 'Status',
+              render: (_, r) => (r.needsResplit
+                ? <Tag color="warning">Re-split</Tag>
+                : <Tag color="processing">New</Tag>),
+            },
             {
               title: 'Gross P&L',
               dataIndex: 'grossProfitLoss',
@@ -1654,7 +1828,7 @@ export default function IpoDetailPage() {
         onClose={() => setAllotmentCheckOpen(false)}
         onApplyStatus={(appId, status) => {
           updateRow(appId, 'allotmentStatus', status);
-          if (status === 'NOT_ALLOTED') updateRow(appId, 'profitLoss', null);
+          if (status === 'NOT_ALLOTED' || status === 'NOT_APPLIED') clearAllotmentPnL(appId);
         }}
       />
     </div>

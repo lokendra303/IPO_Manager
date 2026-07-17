@@ -120,6 +120,20 @@ const RULES = [
   },
   {
     method: 'POST',
+    pattern: /^\/ipos\/\d+\/invalidate$/,
+    action: 'IPO_INVALIDATE',
+    entityType: 'ipo',
+    summary: (_req, path) => `Marked IPO #${idFromPath(path)} as invalid`,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/ipos\/\d+\/restore$/,
+    action: 'IPO_RESTORE',
+    entityType: 'ipo',
+    summary: (_req, path) => `Restored IPO #${idFromPath(path)} to main list`,
+  },
+  {
+    method: 'POST',
     pattern: /^\/ipos\/\d+\/distribute$/,
     action: 'IPO_DISTRIBUTE',
     entityType: 'ipo',
@@ -215,6 +229,16 @@ const RULES = [
     action: 'PROFIT_SHARE_DISTRIBUTE',
     entityType: 'profit_share',
     summary: (req) => `Distributed profit share for IPO #${req.body?.ipoId ?? '?'}`,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/profit-shares\/revoke$/,
+    action: 'PROFIT_SHARE_REVOKE',
+    entityType: 'profit_share',
+    summary: (req) => {
+      const ids = [req.body?.applicationId, ...(req.body?.applicationIds || [])].filter(Boolean);
+      return `Revoked profit share for application #${ids[0] ?? '?'}`;
+    },
   },
   {
     method: 'PATCH',

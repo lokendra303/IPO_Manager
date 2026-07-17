@@ -9,7 +9,6 @@ import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
-import Tag from '../components/Tag';
 import Banner from '../components/Banner';
 import { amountToWordsInr, formatCurrency, formatDateTime } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
@@ -46,6 +45,7 @@ export default function FundProvidersScreen() {
   const [providerModal, setProviderModal] = useState(false);
   const [providerName, setProviderName] = useState('');
 
+  const [viewProviderId, setViewProviderId] = useState<number | null>(null);
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -61,6 +61,8 @@ export default function FundProvidersScreen() {
   const [txnForm, setTxnForm] = useState<any>({});
   const [creditSplits, setCreditSplits] = useState<Record<number, string>>({});
   const [editForm, setEditForm] = useState<any>({});
+  const [reinvestModal, setReinvestModal] = useState(false);
+  const [reinvestForm, setReinvestForm] = useState<any>({ amount: '', notes: 'Profit reinvested into principal' });
 
   const fetcher = useCallback(async (): Promise<FundProvidersCache> => {
     const [p, a] = await Promise.all([client.get('/fund-providers'), client.get('/bank-accounts')]);
@@ -73,12 +75,61 @@ export default function FundProvidersScreen() {
   const loadProviders = () => refresh();
   const loadAccounts = () => refresh();
 
-  const totalLedger = useMemo(
-    () => providers.reduce((s, p) => s + Number(p.ledgerBalance || 0), 0),
+  const totalPrincipal = useMemo(
+    () => providers.reduce((s, p) => s + Number(p.principalBalance ?? p.ledgerBalance ?? 0), 0),
+    [providers]
+  );
+  const totalAccrued = useMemo(
+    () => providers.reduce((s, p) => s + Number(p.accruedProfit ?? p.totalProfit ?? 0), 0),
     [providers]
   );
 
   const activeAccounts = bankAccounts.filter((a) => a.is_active);
+
+  const onReinvestProfit = async () => {
+    if (!selected || saving) return;
+    const entered = Number(reinvestForm.amount);
+    if (!reinvestForm.amount || Number.isNaN(entered) || entered <= 0) {
+      Alert.alert('Error', 'Enter an amount greater than zero');
+      return;
+    }
+    const accrued = Number(selected.accruedProfit ?? selected.totalProfit ?? 0);
+    if (entered > accrued + 0.001) {
+      Alert.alert('Error', `Cannot reinvest more than accrued profit (${formatCurrency(accrued)})`);
+      return;
+    }
+    setSaving(true);
+    try {
+      const { data } = await client.post(`/fund-providers/${selected.id}/reinvest-profit`, {
+        amount: entered,
+        notes: reinvestForm.notes?.trim() || undefined,
+      });
+      setReinvestModal(false);
+      setReinvestForm({ amount: '', notes: 'Profit reinvested into principal' });
+      loadProviders();
+      await refreshLedger();
+      Alert.alert('Success', data.message || 'Profit reinvested into principal');
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Could not reinvest profit'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const viewProvider = viewProviderId ? providers.find((p) => p.id === viewProviderId) : null;
+
+  const displayPrincipal = viewProvider
+    ? Number(viewProvider.principalBalance ?? viewProvider.ledgerBalance ?? 0)
+    : totalPrincipal;
+  const displayAccrued = viewProvider
+    ? Number(viewProvider.accruedProfit ?? viewProvider.totalProfit ?? 0)
+    : totalAccrued;
+  const displayCombined = displayPrincipal + displayAccrued;
+
+  const selectProvider = (provider: any) => {
+    setViewProviderId(provider.id);
+    openLedger(provider);
+  };
 
   const openLedger = async (provider: any) => {
     setSelected(provider);
@@ -201,7 +252,7 @@ export default function FundProvidersScreen() {
         notes: txnForm.notes?.trim() || undefined,
         providerProfit: isShareOnly
           ? (txnForm.providerProfit !== '' && txnForm.providerProfit != null ? Number(txnForm.providerProfit) : entered)
-          : (txnForm.providerProfit !== '' && txnForm.providerProfit != null ? Number(txnForm.providerProfit) : undefined),
+          : undefined,
         creditToWallet: isShareOnly ? false : creditToWallet,
       };
 
@@ -222,7 +273,7 @@ export default function FundProvidersScreen() {
       Alert.alert(
         'Success',
         isShareOnly
-          ? `P&L share recorded — ${formatCurrency(entered)}`
+          ? `P&L share accrued — ${formatCurrency(entered)} (not added to principal yet)`
           : isSend
             ? `Repayment recorded — ${formatCurrency(entered)}`
             : `Funds received — ${formatCurrency(entered)}`
@@ -261,7 +312,6 @@ export default function FundProvidersScreen() {
         amount: signed,
         txnDate: editForm.txnDate || editingTxn.txn_date,
         notes: editForm.notes,
-        providerProfit: editForm.providerProfit !== '' ? Number(editForm.providerProfit) : null,
       });
       setEditTxnModal(false);
       setEditingTxn(null);
@@ -309,11 +359,24 @@ export default function FundProvidersScreen() {
       />
 
       <View style={ui.statRow}>
-        <StatCard title="Providers" value={providers.length} variant="info" />
-        <StatCard title="Combined ledger" value={formatCurrency(totalLedger)} variant="primary" />
+        <StatCard
+          title={viewProvider ? `Principal — ${viewProvider.name}` : 'Total principal'}
+          value={formatCurrency(displayPrincipal)}
+          variant="primary"
+        />
+        <StatCard
+          title={viewProvider ? `Accrued profit — ${viewProvider.name}` : 'Accrued profit'}
+          value={formatCurrency(displayAccrued)}
+          variant="success"
+        />
+        <StatCard
+          title={viewProvider ? `Combined — ${viewProvider.name}` : 'Combined total'}
+          value={formatCurrency(displayCombined)}
+          variant="info"
+        />
       </View>
 
-      <ContentCard title="All fund providers">
+      <ContentCard title="Select provider">
         {providers.length === 0 ? (
           <Text style={ui.muted}>No fund providers yet</Text>
         ) : (
@@ -321,15 +384,15 @@ export default function FundProvidersScreen() {
             <View key={p.id} style={ui.card}>
               <ListRow
                 title={p.name}
-                subtitle={`Ledger ${formatCurrency(p.ledgerBalance ?? 0)}${p.totalProfit ? ` · Profit ${formatCurrency(p.totalProfit)}` : ''}`}
-                onPress={() => openLedger(p)}
+                subtitle={`Principal ${formatCurrency(p.principalBalance ?? p.ledgerBalance ?? 0)} · Accrued ${formatCurrency(p.accruedProfit ?? p.totalProfit ?? 0)} · Combined ${formatCurrency(Number(p.principalBalance ?? p.ledgerBalance ?? 0) + Number(p.accruedProfit ?? p.totalProfit ?? 0))}`}
+                onPress={() => selectProvider(p)}
               />
               <View style={ui.rowActions}>
-                <Button compact onPress={() => openLedger(p)}>Ledger</Button>
-                <Button compact mode="contained" onPress={() => { setSelected(p); openTxnModal('receive'); }}>
+                <Button compact onPress={() => selectProvider(p)}>View ledger</Button>
+                <Button compact mode="contained" onPress={() => { selectProvider(p); openTxnModal('receive'); }}>
                   Receive
                 </Button>
-                <Button compact mode="outlined" textColor="#dc2626" onPress={() => { setSelected(p); openTxnModal('send'); }}>
+                <Button compact mode="outlined" textColor="#dc2626" onPress={() => { selectProvider(p); openTxnModal('send'); }}>
                   Send
                 </Button>
               </View>
@@ -360,15 +423,36 @@ export default function FundProvidersScreen() {
             <Button mode="text" onPress={closeLedger}>Close</Button>
           </View>
           <ScrollView contentContainerStyle={ui.modalBody}>
-            <StatCard title="Ledger balance" value={formatCurrency(selected?.ledgerBalance ?? 0)} variant="primary" />
-            {selected?.totalProfit ? (
-              <Text style={styles.profitLine}>Total profit: {formatCurrency(selected.totalProfit)}</Text>
-            ) : null}
+            <StatCard title="Principal" value={formatCurrency(selected?.principalBalance ?? selected?.ledgerBalance ?? 0)} variant="primary" />
+            <Text style={styles.profitLine}>
+              Accrued profit: {formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}
+            </Text>
+            <Text style={styles.profitLine}>
+              Combined: {formatCurrency(
+                selected?.totalBalance
+                ?? Number(selected?.principalBalance ?? selected?.ledgerBalance ?? 0)
+                  + Number(selected?.accruedProfit ?? selected?.totalProfit ?? 0)
+              )}
+            </Text>
+            <Text style={ui.hint}>
+              Principal = funds in/out. Accrued profit is separate — use Add profit to principal to reinvest.
+            </Text>
 
             <View style={styles.ledgerActions}>
+              <Button
+                mode="outlined"
+                disabled={!(Number(selected?.accruedProfit ?? selected?.totalProfit ?? 0) > 0)}
+                onPress={() => {
+                  const accrued = Number(selected?.accruedProfit ?? selected?.totalProfit ?? 0);
+                  setReinvestForm({ amount: accrued > 0 ? String(accrued) : '', notes: 'Profit reinvested into principal' });
+                  setReinvestModal(true);
+                }}
+              >
+                Add profit to principal
+              </Button>
               <Button mode="contained" onPress={() => openTxnModal('receive')}>Receive funds</Button>
               <Button mode="outlined" textColor="#dc2626" onPress={() => openTxnModal('send')}>Send / repay</Button>
-              <Button mode="outlined" onPress={() => openTxnModal('share')}>P&L share</Button>
+              <Button mode="outlined" onPress={() => openTxnModal('share')}>Accrue P&L</Button>
             </View>
 
             <ContentCard title="Transactions">
@@ -379,24 +463,18 @@ export default function FundProvidersScreen() {
               ) : (
                 transactions.map((t) => {
                   const autoPnL = isAutoPnLEntry(t);
+                  const principal = Number(t.amount);
+                  const profit = t.provider_profit != null ? Number(t.provider_profit) : null;
                   return (
                     <View key={t.id} style={styles.txnRow}>
                       <ListRow
-                        title={formatCurrency(t.amount)}
-                        subtitle={`${formatDateTime(t.txn_date)}${t.account_label ? `\n${t.account_label}` : ''}${t.notes ? `\n${t.notes}` : ''}`}
-                        right={
-                          <Tag
-                            label={Number(t.amount) >= 0 ? 'Received' : 'Sent'}
-                            color={Number(t.amount) >= 0 ? '#059669' : '#dc2626'}
-                          />
-                        }
+                        title={formatDateTime(t.txn_date)}
+                        subtitle={`${principal !== 0 ? `Principal: ${formatCurrency(principal)}` : ''}${profit != null && profit !== 0 ? `${principal !== 0 ? '\n' : ''}Profit: ${formatCurrency(profit)}` : ''}${t.account_label ? `\n${t.account_label}` : ''}${t.notes ? `\n${t.notes}` : ''}`}
                       />
-                      <Text style={styles.words}>{amountToWordsInr(t.amount)}</Text>
-                      {t.provider_profit != null && (
-                        <Text style={styles.profitLine}>Profit: {formatCurrency(t.provider_profit)}</Text>
-                      )}
                       <View style={ui.rowActions}>
-                        <Button compact onPress={() => openEditTxn(t)}>Edit</Button>
+                        {!autoPnL && Number(t.amount) !== 0 && (
+                          <Button compact onPress={() => openEditTxn(t)}>Edit</Button>
+                        )}
                         {!autoPnL && (
                           <Button
                             compact
@@ -441,7 +519,9 @@ export default function FundProvidersScreen() {
               <Banner variant="warn">Money sent / repaid to provider — debited from your wallet</Banner>
             )}
             {txnType === 'share' && (
-              <Text style={ui.hint}>Provider ledger only — wallet bank accounts are not used for P&L share entries.</Text>
+              <Text style={ui.hint}>
+                Adds to accrued profit only. Use Reinvest profit in the ledger when you want it added to principal.
+              </Text>
             )}
 
             <TextInput
@@ -528,14 +608,7 @@ export default function FundProvidersScreen() {
             )}
 
             {txnType === 'receive' && (
-              <TextInput
-                label="Provider profit (optional)"
-                value={String(txnForm.providerProfit ?? '')}
-                onChangeText={(v) => setTxnForm({ ...txnForm, providerProfit: v })}
-                keyboardType="numeric"
-                mode="outlined"
-                style={ui.input}
-              />
+              <Text style={ui.hint}>Records principal only. P&L profit is tracked separately via Accrue P&L.</Text>
             )}
 
             <TextInput
@@ -553,7 +626,7 @@ export default function FundProvidersScreen() {
               onPress={onSaveTxn}
               buttonColor={txnType === 'send' ? '#dc2626' : undefined}
             >
-              {txnType === 'send' ? 'Record send / repay' : txnType === 'share' ? 'Record P&L share' : 'Record receive'}
+              {txnType === 'send' ? 'Record send / repay' : txnType === 'share' ? 'Accrue P&L share' : 'Record receive'}
             </Button>
           </ScrollView>
         </SafeAreaView>
@@ -586,14 +659,6 @@ export default function FundProvidersScreen() {
               style={ui.input}
             />
             <TextInput
-              label="Provider profit"
-              value={editForm.providerProfit || ''}
-              onChangeText={(v) => setEditForm({ ...editForm, providerProfit: v })}
-              keyboardType="numeric"
-              mode="outlined"
-              style={ui.input}
-            />
-            <TextInput
               label="Notes"
               value={editForm.notes || ''}
               onChangeText={(v) => setEditForm({ ...editForm, notes: v })}
@@ -602,6 +667,39 @@ export default function FundProvidersScreen() {
               style={ui.input}
             />
             <Button mode="contained" loading={saving} onPress={onSaveTxnEdit}>Save changes</Button>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal visible={reinvestModal} animationType="slide" onRequestClose={() => setReinvestModal(false)}>
+        <SafeAreaView style={ui.modal}>
+          <View style={ui.modalHeader}>
+            <Text style={ui.modalTitle}>Add profit to principal — {selected?.name}</Text>
+            <Button mode="text" onPress={() => setReinvestModal(false)}>Cancel</Button>
+          </View>
+          <View style={ui.modalBody}>
+            <Text style={ui.hint}>
+              Accrued profit available: {formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}
+            </Text>
+            <TextInput
+              label="Amount to add to principal"
+              value={reinvestForm.amount || ''}
+              onChangeText={(v) => setReinvestForm({ ...reinvestForm, amount: v })}
+              keyboardType="numeric"
+              mode="outlined"
+              style={ui.input}
+            />
+            <TextInput
+              label="Notes"
+              value={reinvestForm.notes || ''}
+              onChangeText={(v) => setReinvestForm({ ...reinvestForm, notes: v })}
+              multiline
+              mode="outlined"
+              style={ui.input}
+            />
+            <Button mode="contained" loading={saving} onPress={onReinvestProfit}>
+              Add to principal
+            </Button>
           </View>
         </SafeAreaView>
       </Modal>
