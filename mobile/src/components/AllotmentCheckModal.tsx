@@ -5,7 +5,7 @@ import { Button } from 'react-native-paper';
 import FilterChips from './FilterChips';
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
-import { copyToClipboard, getAllotmentPortals, openAllotmentPortal, REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
+import { copyToClipboard, getAllotmentPortals, openAllotmentPortal, fetchRegistrarOptions, type RegistrarOption } from '../utils/allotmentCheck';
 import { formatPan } from '../utils/format';
 import Tag from './Tag';
 import { ui } from '../styles/ui';
@@ -21,6 +21,12 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onApplySt
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [savingRegistrar, setSavingRegistrar] = useState(false);
+  const [registrarOptions, setRegistrarOptions] = useState<RegistrarOption[]>([]);
+
+  useEffect(() => {
+    if (!visible) return;
+    fetchRegistrarOptions(client).then(setRegistrarOptions);
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || !ipoId) {
@@ -78,7 +84,7 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onApplySt
             scrollable={false}
             options={[
               { value: '', label: 'None' },
-              ...REGISTRAR_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+              ...registrarOptions.map((o) => ({ value: o.value, label: o.label })),
             ]}
           />
 

@@ -302,13 +302,18 @@ export default function MemberPortalScreen() {
           <StatCard title="Fund returned" value={formatCurrency(stats.totalReceived)} variant="success" />
           <StatCard title="Pending return" value={formatCurrency(pendingReturn)} variant={pendingReturn > 0 ? 'danger' : 'info'} />
           <PnlStatCard title="Your profit share" value={memberProfit} formatted={formatCurrency(memberProfit)} />
+          <PnlStatCard
+            title="Manager profit share"
+            value={Number(stats.totalManagerShare ?? 0)}
+            formatted={formatCurrency(stats.totalManagerShare ?? 0)}
+          />
           {(stats.bonus ?? 0) > 0 ? (
             <StatCard title="Bonus" value={formatCurrency(stats.bonus)} variant="success" />
           ) : null}
         </StatGrid>
         {grossIpoPnL !== 0 && Math.abs(grossIpoPnL - memberProfit) > 0.01 ? (
           <Text style={ui.hint}>
-            Total IPO profit before your team split: {formatCurrency(grossIpoPnL)}. Your share follows rules set by your manager.
+            Gross IPO P&L {formatCurrency(grossIpoPnL)} · Your share {formatCurrency(memberProfit)} · Manager {formatCurrency(stats.totalManagerShare ?? 0)} · Provider {formatCurrency(stats.totalProviderShare ?? 0)}. Open Full ledger under More for every IPO.
           </Text>
         ) : null}
       </ContentCard>

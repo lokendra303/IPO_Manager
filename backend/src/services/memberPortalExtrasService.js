@@ -585,54 +585,20 @@ export async function createFundReturnClaim(pool, tenantId, memberId, body) {
 }
 
 export async function getMemberStatement(pool, tenantId, memberId) {
-  const [memberRows] = await pool.query(
-    'SELECT display_name, pan, email, upi FROM members WHERE id = ? AND tenant_id = ?',
-    [memberId, tenantId]
-  );
-  if (!memberRows.length) throw new AppError('Member not found', 404);
-  const member = memberRows[0];
+  const { getMemberDetail } = await import('./memberDetailService.js');
+  const detail = await getMemberDetail(pool, tenantId, memberId);
+  if (!detail) throw new AppError('Member not found', 404);
 
-  const [ledger] = await pool.query(
-    `SELECT l.type, l.amount, l.txn_date, l.notes, i.name AS ipo_name
-     FROM member_ledger_entries l
-     LEFT JOIN ipo_applications a ON a.id = l.ipo_application_id
-     LEFT JOIN ipos i ON i.id = a.ipo_id
-     WHERE l.member_id = ? AND l.tenant_id = ?
-     ORDER BY l.txn_date DESC, l.id DESC`,
-    [memberId, tenantId]
-  );
+  const [tenantRows] = await pool.query('SELECT name FROM tenants WHERE id = ?', [tenantId]);
+  const teamName = tenantRows[0]?.name ?? 'IPO Team';
 
-  const [apps] = await pool.query(
-    `SELECT a.amount, a.allotment_status, a.profit_loss, a.trns_received, a.investor_category,
-            i.name AS ipo_name, psd.member_amount
-     FROM ipo_applications a
-     JOIN ipos i ON i.id = a.ipo_id
-     LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-     WHERE a.member_id = ? AND a.tenant_id = ?
-     ORDER BY i.name`,
-    [memberId, tenantId]
-  );
-
-  let totalGiven = 0;
-  let totalReceived = 0;
-  let totalBonus = 0;
-  for (const row of ledger) {
-    if (row.type === 'GIVEN') totalGiven += Number(row.amount);
-    if (row.type === 'RECEIVED') totalReceived += Number(row.amount);
-    if (row.type === 'BONUS') totalBonus += Number(row.amount);
-  }
-
-  let grossIpoPnL = 0;
-  let totalMemberShare = 0;
-  for (const row of apps) {
-    if (row.allotment_status === 'ALLOTED' && row.profit_loss != null) {
-      grossIpoPnL += Number(row.profit_loss);
-    }
-    if (row.member_amount != null) totalMemberShare += Number(row.member_amount);
-  }
+  const { member, stats, ipoApplications, ledgerEntries } = detail;
 
   return {
     generatedAt: new Date().toISOString(),
+    teamName,
+    appName: 'IPO Team Manager',
+    developerName: 'Lokendra',
     member: {
       displayName: member.display_name,
       pan: formatPan(member.pan),
@@ -640,29 +606,40 @@ export async function getMemberStatement(pool, tenantId, memberId) {
       upi: member.upi ?? null,
     },
     summary: {
-      totalGiven,
-      totalReceived,
-      totalBonus,
-      pendingReturn: totalGiven - totalReceived,
-      grossIpoPnL,
-      totalMemberShare,
-      iposApplied: apps.length,
+      totalGiven: stats.totalGiven,
+      totalReceived: stats.totalReceived,
+      totalBonus: stats.bonus,
+      pendingReturn: stats.willReceiveFromTeam,
+      grossIpoPnL: stats.totalIpoProfit,
+      totalMemberShare: stats.totalMemberShare,
+      totalManagerShare: stats.totalManagerShare,
+      totalProviderShare: stats.totalProviderShare,
+      iposApplied: stats.iposApplied,
+      iposAlloted: stats.iposAlloted,
+      iposPending: stats.iposPending,
+      iposNotAlloted: stats.iposNotAlloted,
     },
-    ledger: ledger.map((row) => ({
-      type: row.type,
-      amount: Number(row.amount),
-      txnDate: row.txn_date,
-      ipoName: row.ipo_name ?? null,
-      notes: row.notes ?? null,
+    ledger: ledgerEntries.map((entry) => ({
+      type: entry.type,
+      amount: Number(entry.amount),
+      txnDate: entry.txn_date,
+      ipoName: entry.ipo_name ?? null,
+      notes: entry.notes ?? null,
     })),
-    ipoApplications: apps.map((row) => ({
-      ipoName: row.ipo_name,
-      amount: Number(row.amount),
-      allotmentStatus: row.allotment_status,
-      investorCategory: row.investor_category,
-      grossProfitLoss: row.profit_loss != null ? Number(row.profit_loss) : null,
-      memberShare: row.member_amount != null ? Number(row.member_amount) : null,
-      fundReturned: row.trns_received === 'Received',
+    ipoApplications: ipoApplications.map((app) => ({
+      id: app.id,
+      ipoId: app.ipo_id,
+      ipoName: app.ipo_name,
+      ipoStatus: app.ipo_status,
+      amount: Number(app.amount),
+      allotmentStatus: app.allotment_status,
+      investorCategory: app.investor_category,
+      grossProfitLoss: app.profit_loss != null ? Number(app.profit_loss) : null,
+      memberShare: app.member_share != null ? Number(app.member_share) : null,
+      managerShare: app.manager_share != null ? Number(app.manager_share) : null,
+      providerShare: app.provider_share != null ? Number(app.provider_share) : null,
+      shareStatus: app.share_status ?? null,
+      fundReturned: app.trns_received === 'Received',
     })),
   };
 }

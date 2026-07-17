@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
 import { SegmentedButtons, TextInput, Button } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -36,6 +36,7 @@ async function verifyEmailChangeAndPatch({ verifyOtp, patch, newEmail, currentOt
 
 export default function SettingsScreen() {
   const { user, setSessionUser } = useAuth();
+  const [account, setAccount] = useState<any>(null);
   const [tab, setTab] = useState('team');
   const [teamName, setTeamName] = useState('');
   const [teamLoading, setTeamLoading] = useState(false);
@@ -55,6 +56,23 @@ export default function SettingsScreen() {
     if (user?.tenantName) setTeamName(user.tenantName);
     if (user?.email) setEmail(user.email);
   }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    client
+      .get('/settings/account')
+      .then(async (res) => {
+        if (cancelled) return;
+        setAccount(res.data);
+        await setSessionUser(res.data);
+        if (res.data.tenantName) setTeamName(res.data.tenantName);
+        if (res.data.email) setEmail(res.data.email);
+      })
+      .catch(() => {
+        if (!cancelled) setAccount(null);
+      });
+    return () => { cancelled = true; };
+  }, [setSessionUser]);
 
   const onTeamSave = async () => {
     setTeamLoading(true);
@@ -138,7 +156,18 @@ export default function SettingsScreen() {
 
   return (
     <Screen>
-      <PageHeader title="Settings" subtitle={user?.email} />
+      <PageHeader title="Settings" subtitle={account?.email || user?.email} />
+
+      {(account || user) && (
+        <ContentCard title="Account">
+          <Text style={{ marginBottom: 4 }}>Team: {account?.tenantName || user?.tenantName || '—'}</Text>
+          <Text style={{ marginBottom: 4 }}>Email: {account?.email || user?.email || '—'}</Text>
+          {account?.id != null && <Text style={{ marginBottom: 4 }}>Account #{account.id}</Text>}
+          {account?.tenantId != null && <Text style={{ marginBottom: 4 }}>Team #{account.tenantId}</Text>}
+          {account?.role && <Text>Role: {account.role}</Text>}
+        </ContentCard>
+      )}
+
       <SegmentedButtons
         value={tab}
         onValueChange={setTab}

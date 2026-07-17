@@ -41,7 +41,10 @@ export function summarizeIpoGroupRows(rows) {
 
 export function statementToText(statement) {
   const lines = [
-    'IPO Member Statement',
+    'IPO Member Full Ledger',
+    `App: ${statement.appName || 'IPO Team Manager'}`,
+    `Team: ${statement.teamName || 'IPO Team'}`,
+    `Developer: ${statement.developerName || 'Lokendra'}`,
     `Generated: ${new Date(statement.generatedAt).toLocaleString()}`,
     '',
     `Member: ${statement.member.displayName}`,
@@ -52,19 +55,38 @@ export function statementToText(statement) {
     `Fund received: ${formatCurrency(statement.summary.totalGiven)}`,
     `Fund returned: ${formatCurrency(statement.summary.totalReceived)}`,
     `Pending return: ${formatCurrency(statement.summary.pendingReturn)}`,
+    `IPOs applied: ${statement.summary.iposApplied ?? 0}`,
+    `IPOs allotted: ${statement.summary.iposAlloted ?? 0}`,
     `Gross IPO P&L: ${formatCurrency(statement.summary.grossIpoPnL)}`,
     `Your profit share: ${formatCurrency(statement.summary.totalMemberShare)}`,
+    `Manager profit share: ${formatCurrency(statement.summary.totalManagerShare ?? 0)}`,
+    `Provider profit share: ${formatCurrency(statement.summary.totalProviderShare ?? 0)}`,
     '',
-    'IPO Applications',
+    'IPO Applications (full ledger)',
   ].filter(Boolean);
 
   for (const app of statement.ipoApplications ?? []) {
     lines.push(
-      `- ${app.ipoName}: ${app.allotmentStatus}, ${formatCurrency(app.amount)}` +
-        (app.grossProfitLoss != null ? `, P&L ${formatCurrency(app.grossProfitLoss)}` : '') +
-        (app.memberShare != null ? `, share ${formatCurrency(app.memberShare)}` : '')
+      `- ${app.ipoName}: ${app.allotmentStatus}, fund ${formatCurrency(app.amount)}` +
+        (app.fundReturned ? ', returned' : ', pending return') +
+        (app.grossProfitLoss != null ? `, gross P&L ${formatCurrency(app.grossProfitLoss)}` : '') +
+        (app.memberShare != null ? `, your share ${formatCurrency(app.memberShare)}` : '') +
+        (app.managerShare != null ? `, manager share ${formatCurrency(app.managerShare)}` : '') +
+        (app.providerShare != null ? `, provider share ${formatCurrency(app.providerShare)}` : '')
     );
   }
+
+  if (statement.ledger?.length) {
+    lines.push('', 'Fund transactions');
+    for (const row of statement.ledger) {
+      lines.push(
+        `- ${row.type}: ${formatCurrency(row.amount)}` +
+          (row.ipoName ? ` (${row.ipoName})` : '') +
+          (row.notes ? ` — ${row.notes}` : '')
+      );
+    }
+  }
+
   return lines.join('\n');
 }
 

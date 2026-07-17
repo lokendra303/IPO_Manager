@@ -7,6 +7,7 @@ export type User = {
   id: number;
   email?: string;
   role: string;
+  tenantId?: number;
   tenantName?: string;
   displayName?: string;
   pan?: string;

@@ -133,6 +133,26 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
         );
       },
     },
+    {
+      title: 'Manager share',
+      dataIndex: 'manager_share',
+      render: (v, r) => {
+        if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
+        if (v == null) return '—';
+        const n = Number(v);
+        return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
+      },
+    },
+    {
+      title: 'Provider share',
+      dataIndex: 'provider_share',
+      render: (v, r) => {
+        if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
+        if (v == null) return '—';
+        const n = Number(v);
+        return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
+      },
+    },
     { title: 'Remarks', dataIndex: 'remarks', ellipsis: true },
     { title: 'Date', dataIndex: 'created_at', render: (v) => dayjs(v).format('DD MMM YYYY') },
   ];
@@ -288,14 +308,14 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
             items={[
               {
                 key: 'ipos',
-                label: `IPO Applications (${data.ipoApplications.length})`,
+                label: `Full ledger — IPOs (${data.ipoApplications.length})`,
                 children: data.ipoApplications.length ? (
                   <Table
                     rowKey="id"
                     columns={ipoColumns}
                     dataSource={data.ipoApplications}
                     pagination={{ pageSize: 10 }}
-                    scroll={{ x: 960 }}
+                    scroll={{ x: 1200 }}
                     className="pro-table"
                     size="middle"
                   />
@@ -305,7 +325,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
               },
               {
                 key: 'ledger',
-                label: `Transactions (${data.ledgerEntries.length})`,
+                label: `Fund ledger (${data.ledgerEntries.length})`,
                 children: data.ledgerEntries.length ? (
                   <Table
                     rowKey="id"

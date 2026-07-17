@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { router } from 'expo-router';
 import { Button, Checkbox, TextInput } from 'react-native-paper';
 import client from '../api/client';
@@ -13,6 +13,8 @@ import { categoryTagColor, getLotAmountForCategory, parseAllowedCategories } fro
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import SlideModal from '../components/SlideModal';
+import FilterChips from '../components/FilterChips';
+import { fetchRegistrarOptions, type RegistrarOption } from '../utils/allotmentCheck';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
 import { Alert, Text, View } from 'react-native';
@@ -20,6 +22,11 @@ import { Alert, Text, View } from 'react-native';
 export default function IposScreen() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<any>({ ipoSegment: 'MAINBOARD', enableHni: false });
+  const [registrarOptions, setRegistrarOptions] = useState<RegistrarOption[]>([]);
+
+  useEffect(() => {
+    fetchRegistrarOptions(client).then(setRegistrarOptions);
+  }, []);
 
   const fetcher = useCallback(async () => {
     const [active, invalid] = await Promise.all([
@@ -165,7 +172,16 @@ export default function IposScreen() {
         <TextInput label="IPO Name" value={form.name || ''} onChangeText={(v) => setForm({ ...form, name: v })} mode="outlined" style={ui.input} />
         <TextInput label="Segment (MAINBOARD/SME)" value={form.ipoSegment || 'MAINBOARD'} onChangeText={(v) => setForm({ ...form, ipoSegment: v })} mode="outlined" style={ui.input} />
         <TextInput label="RII lot amount" value={String(form.lotAmountRii || '')} onChangeText={(v) => setForm({ ...form, lotAmountRii: v })} keyboardType="numeric" mode="outlined" style={ui.input} />
-        <TextInput label="Registrar (KFIN, LINK_INTIME, etc.)" value={form.registrar || ''} onChangeText={(v) => setForm({ ...form, registrar: v })} mode="outlined" style={ui.input} />
+        <Text style={ui.sectionLabel}>Allotment registrar (optional)</Text>
+        <FilterChips
+          value={form.registrar || ''}
+          onChange={(v) => setForm({ ...form, registrar: v || undefined })}
+          scrollable={false}
+          options={[
+            { value: '', label: 'None' },
+            ...registrarOptions.map((o) => ({ value: o.value, label: o.label })),
+          ]}
+        />
         <Checkbox.Item label="Enable HNI" status={form.enableHni ? 'checked' : 'unchecked'} onPress={() => setForm({ ...form, enableHni: !form.enableHni })} />
         {form.enableHni && (
           <TextInput label="HNI lot amount" value={String(form.lotAmountHni || '')} onChangeText={(v) => setForm({ ...form, lotAmountHni: v })} keyboardType="numeric" mode="outlined" style={ui.input} />

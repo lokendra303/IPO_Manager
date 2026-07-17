@@ -19,7 +19,7 @@ import {
 } from '@ant-design/icons';
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
-import { openAllotmentPortal, copyToClipboard, REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
+import { openAllotmentPortal, copyToClipboard, fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { tableDefaults } from '../utils/table';
 import { formatPan } from '../utils/format';
 
@@ -33,6 +33,12 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [savingRegistrar, setSavingRegistrar] = useState(false);
+  const [registrarOptions, setRegistrarOptions] = useState([]);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchRegistrarOptions(client).then(setRegistrarOptions);
+  }, [open]);
 
   useEffect(() => {
     if (!open || !ipoId) {
@@ -145,7 +151,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
           loading={savingRegistrar}
           value={data?.ipo?.registrar}
           onChange={saveRegistrar}
-          options={REGISTRAR_OPTIONS}
+          options={registrarOptions}
         />
       </div>
 

@@ -19,6 +19,10 @@ export default function FundProvidersPage() {
   const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [providerModal, setProviderModal] = useState(false);
+  const [editProviderModal, setEditProviderModal] = useState(false);
+  const [editingProvider, setEditingProvider] = useState(null);
+  const [editProviderForm] = Form.useForm();
+  const [savingProviderEdit, setSavingProviderEdit] = useState(false);
   const [txnModal, setTxnModal] = useState(false);
   const [editTxnModal, setEditTxnModal] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -137,6 +141,29 @@ export default function FundProvidersPage() {
       message.error(getErrorMessage(err, 'Failed'));
     } finally {
       setSavingProvider(false);
+    }
+  };
+
+  const openEditProvider = (provider) => {
+    setEditingProvider(provider);
+    editProviderForm.setFieldsValue({ name: provider.name });
+    setEditProviderModal(true);
+  };
+
+  const onSaveProviderEdit = async (values) => {
+    if (!editingProvider || savingProviderEdit) return;
+    setSavingProviderEdit(true);
+    try {
+      await client.patch(`/fund-providers/${editingProvider.id}`, { name: values.name.trim() });
+      message.success('Fund provider updated');
+      setEditProviderModal(false);
+      setEditingProvider(null);
+      editProviderForm.resetFields();
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to update provider'));
+    } finally {
+      setSavingProviderEdit(false);
     }
   };
 
@@ -341,6 +368,9 @@ export default function FundProvidersPage() {
           <Button icon={<TransactionOutlined />} onClick={() => openLedger(r)}>
             Ledger
           </Button>
+          <Button icon={<EditOutlined />} onClick={() => openEditProvider(r)}>
+            Edit
+          </Button>
           <Button
             type="primary"
             size="small"
@@ -479,6 +509,9 @@ export default function FundProvidersPage() {
           title={`${viewProvider.name} — Transactions`}
           extra={(
             <Space wrap>
+              <Button icon={<EditOutlined />} onClick={() => openEditProvider(viewProvider)}>
+                Edit provider
+              </Button>
               <Button
                 onClick={openReinvestModal}
                 disabled={!selected?.accruedProfit || Number(selected.accruedProfit) <= 0}
@@ -519,6 +552,22 @@ export default function FundProvidersPage() {
         <Form form={form} layout="vertical" onFinish={onSaveProvider}>
           <Form.Item name="name" label="Name" rules={[{ required: true }]}>
             <Input placeholder="Sagar Gupta" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Edit Fund Provider"
+        open={editProviderModal}
+        onCancel={() => !savingProviderEdit && setEditProviderModal(false)}
+        onOk={() => editProviderForm.submit()}
+        confirmLoading={savingProviderEdit}
+        maskClosable={!savingProviderEdit}
+        destroyOnClose
+      >
+        <Form form={editProviderForm} layout="vertical" onFinish={onSaveProviderEdit}>
+          <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Enter provider name' }]}>
+            <Input placeholder="Provider name" />
           </Form.Item>
         </Form>
       </Modal>

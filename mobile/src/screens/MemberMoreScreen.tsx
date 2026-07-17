@@ -10,7 +10,7 @@ const LINKS = [
   { title: 'Report an issue', subtitle: 'Payment, profit, allotment problems', href: '/(member)/issues' },
   { title: 'Edit profile', subtitle: 'Update email and UPI ID', href: '/(member)/profile' },
   { title: 'Report fund return', subtitle: 'Tell manager you paid them back', href: '/(member)/fund-return' },
-  { title: 'Download statement', subtitle: 'Share your fund and IPO summary', href: '/(member)/statement' },
+  { title: 'Full ledger', subtitle: 'All IPOs, allotment, your & manager profit', href: '/(member)/statement' },
   { title: 'Collect from members', subtitle: 'Sub-group leaders — who still owes fund', href: '/(member)/collections' },
 ];
 

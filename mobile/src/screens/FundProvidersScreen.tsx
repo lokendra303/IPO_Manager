@@ -43,7 +43,10 @@ export default function FundProvidersScreen() {
   const [rollingBackId, setRollingBackId] = useState<number | null>(null);
 
   const [providerModal, setProviderModal] = useState(false);
+  const [editProviderModal, setEditProviderModal] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<any>(null);
   const [providerName, setProviderName] = useState('');
+  const [editProviderName, setEditProviderName] = useState('');
 
   const [viewProviderId, setViewProviderId] = useState<number | null>(null);
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -196,6 +199,32 @@ export default function FundProvidersScreen() {
       Alert.alert('Success', 'Fund provider added');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEditProvider = (provider: any) => {
+    setEditingProvider(provider);
+    setEditProviderName(provider.name || '');
+    setEditProviderModal(true);
+  };
+
+  const onSaveProviderEdit = async () => {
+    if (!editingProvider || !editProviderName.trim()) {
+      Alert.alert('Error', 'Provider name is required');
+      return;
+    }
+    setSaving(true);
+    try {
+      await client.patch(`/fund-providers/${editingProvider.id}`, { name: editProviderName.trim() });
+      setEditProviderModal(false);
+      setEditingProvider(null);
+      setEditProviderName('');
+      loadProviders();
+      Alert.alert('Success', 'Fund provider updated');
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Failed to update provider'));
     } finally {
       setSaving(false);
     }
@@ -389,6 +418,7 @@ export default function FundProvidersScreen() {
               />
               <View style={ui.rowActions}>
                 <Button compact onPress={() => selectProvider(p)}>View ledger</Button>
+                <Button compact onPress={() => openEditProvider(p)}>Edit</Button>
                 <Button compact mode="contained" onPress={() => { selectProvider(p); openTxnModal('receive'); }}>
                   Receive
                 </Button>
@@ -411,6 +441,20 @@ export default function FundProvidersScreen() {
           <View style={ui.modalBody}>
             <TextInput label="Name" value={providerName} onChangeText={setProviderName} mode="outlined" style={ui.input} />
             <Button mode="contained" loading={saving} onPress={onSaveProvider}>Save</Button>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Edit provider */}
+      <Modal visible={editProviderModal} animationType="slide" onRequestClose={() => setEditProviderModal(false)}>
+        <SafeAreaView style={ui.modal}>
+          <View style={ui.modalHeader}>
+            <Text style={ui.modalTitle}>Edit fund provider</Text>
+            <Button mode="text" onPress={() => setEditProviderModal(false)}>Cancel</Button>
+          </View>
+          <View style={ui.modalBody}>
+            <TextInput label="Name" value={editProviderName} onChangeText={setEditProviderName} mode="outlined" style={ui.input} />
+            <Button mode="contained" loading={saving} onPress={onSaveProviderEdit}>Save</Button>
           </View>
         </SafeAreaView>
       </Modal>
@@ -439,6 +483,7 @@ export default function FundProvidersScreen() {
             </Text>
 
             <View style={styles.ledgerActions}>
+              <Button mode="text" onPress={() => selected && openEditProvider(selected)}>Edit provider</Button>
               <Button
                 mode="outlined"
                 disabled={!(Number(selected?.accruedProfit ?? selected?.totalProfit ?? 0) > 0)}

@@ -7,7 +7,7 @@ import {
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
 import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons';
-import { REGISTRAR_OPTIONS } from '../utils/allotmentCheck';
+import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
@@ -21,6 +21,7 @@ export default function IposPage() {
   const [invalidIpos, setInvalidIpos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [registrarOptions, setRegistrarOptions] = useState([]);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
@@ -38,6 +39,10 @@ export default function IposPage() {
   };
 
   useEffect(load, []);
+
+  useEffect(() => {
+    fetchRegistrarOptions(client).then(setRegistrarOptions);
+  }, []);
 
   const onCreate = async (values) => {
     try {
@@ -284,7 +289,7 @@ export default function IposPage() {
             }
           </Form.Item>
           <Form.Item name="registrar" label="Allotment registrar (optional)">
-            <Select allowClear placeholder="KFintech, Link Intime, etc." options={REGISTRAR_OPTIONS} />
+            <Select allowClear placeholder="KFintech, Link Intime, etc." options={registrarOptions} />
           </Form.Item>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             New IPOs start as OPEN. Close from the IPO page when finished.

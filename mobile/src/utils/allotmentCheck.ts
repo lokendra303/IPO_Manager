@@ -77,3 +77,16 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     return false;
   }
 }
+
+export type RegistrarOption = { value: string; label: string };
+
+/** Load registrar dropdown options from API; falls back to static list if unavailable. */
+export async function fetchRegistrarOptions(apiClient: { get: (url: string) => Promise<{ data: unknown }> }): Promise<RegistrarOption[]> {
+  try {
+    const { data } = await apiClient.get('/ipos/registrars');
+    if (Array.isArray(data) && data.length) return data as RegistrarOption[];
+  } catch {
+    /* use fallback */
+  }
+  return REGISTRAR_OPTIONS;
+}

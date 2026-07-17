@@ -32,6 +32,7 @@ import {
   CrownOutlined,
   RollbackOutlined,
   WhatsAppOutlined,
+  WalletOutlined,
 } from '@ant-design/icons';import dayjs from 'dayjs';
 import {
   getAllotmentPortals,
@@ -55,6 +56,8 @@ import {
   statementToText,
   summarizeIpoGroupRows,
 } from '../utils/memberPortal';
+import { downloadMemberFullLedgerPdf, downloadGroupFullLedgerPdf } from '../utils/memberLedgerPdf';
+
 const allotmentColors = {
   PENDING: 'processing',
   ALLOTED: 'success',
@@ -77,6 +80,7 @@ export default function MemberPortalPage() {
   const [profileForm] = Form.useForm();
   const [claimForm] = Form.useForm();
   const [ipoDrawerId, setIpoDrawerId] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
 
   const groupAppsEarly = dashboard?.subGroup?.groupApplications ?? [];
   const isGroupLeaderEarly = dashboard?.subGroup?.isLeader === true;
@@ -225,6 +229,58 @@ export default function MemberPortalPage() {
       message.error(getErrorMessage(err, 'Could not download statement'));
     }
   };
+
+  const downloadPdfReport = async () => {
+    setPdfLoading(true);
+    try {
+      const { data } = await client.get('/member-portal/statement');
+      if (!data.teamName && dashboard?.teamName) data.teamName = dashboard.teamName;
+
+      const group = dashboard?.subGroup;
+      const groupPayload =
+        group?.isLeader
+          ? {
+              isLeader: true,
+              teamName: data.teamName || dashboard?.teamName,
+              groupName: group.name,
+              leaderName: dashboard?.member?.displayName,
+              groupStats: group.groupStats || {},
+              groupApplications: group.groupApplications || [],
+              members: group.members || [],
+            }
+          : null;
+
+      downloadMemberFullLedgerPdf(data, groupPayload);
+      message.success(
+        groupPayload
+          ? 'PDF downloaded — includes your ledger and full sub-group report'
+          : 'PDF report downloaded'
+      );
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not generate PDF'));
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const downloadGroupPdfReport = () => {
+    const group = dashboard?.subGroup;
+    if (!group?.isLeader) return;
+    try {
+      downloadGroupFullLedgerPdf({
+        isLeader: true,
+        teamName: dashboard?.teamName,
+        groupName: group.name,
+        leaderName: dashboard?.member?.displayName,
+        groupStats: group.groupStats || {},
+        groupApplications: group.groupApplications || [],
+        members: group.members || [],
+      });
+      message.success('Group PDF report downloaded');
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not generate group PDF'));
+    }
+  };
   if (loading) return <PageLoading />;
 
   if (loadError && !dashboard) {
@@ -346,6 +402,19 @@ export default function MemberPortalPage() {
       },
     },
     {
+      title: 'Manager share',
+      dataIndex: 'managerShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return '—';
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        );
+      },
+    },
+    {
       title: 'Check status',
       key: 'check',
       render: (_, row) =>
@@ -361,6 +430,84 @@ export default function MemberPortalPage() {
         ) : (
           '—'
         ),
+    },
+  ];
+
+  const fullLedgerCols = [
+    {
+      title: 'IPO',
+      dataIndex: 'ipoName',
+      render: (v, row) => (
+        <Button type="link" style={{ padding: 0 }} onClick={() => openIpoDetail(row.ipoId)}>
+          {v}
+        </Button>
+      ),
+    },
+    { title: 'Fund given', dataIndex: 'amount', render: (v) => formatCurrency(v) },
+    {
+      title: 'Allotment',
+      dataIndex: 'allotmentStatus',
+      render: (s) => <Tag color={allotmentColors[s]}>{s.replace(/_/g, ' ')}</Tag>,
+    },
+    {
+      title: 'Fund return',
+      dataIndex: 'fundReturned',
+      render: (returned, row) =>
+        returned ? (
+          <Tag color="success">Returned</Tag>
+        ) : (
+          <Tag color="warning">Pending {formatCurrency(row.amount)}</Tag>
+        ),
+    },
+    {
+      title: 'Gross P&L',
+      dataIndex: 'grossProfitLoss',
+      render: (v, row) =>
+        row.allotmentStatus !== 'ALLOTED' || v == null ? '—' : (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        ),
+    },
+    {
+      title: 'Your share',
+      dataIndex: 'memberShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return <Tag color="warning">Pending</Tag>;
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+            {row.shareStatus === 'pending' ? ' *' : ''}
+          </span>
+        );
+      },
+    },
+    {
+      title: 'Manager share',
+      dataIndex: 'managerShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return '—';
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        );
+      },
+    },
+    {
+      title: 'Provider share',
+      dataIndex: 'providerShare',
+      render: (v, row) => {
+        if (row.allotmentStatus !== 'ALLOTED' || row.grossProfitLoss == null) return '—';
+        if (v == null) return '—';
+        return (
+          <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>
+            {formatCurrency(v)}
+          </span>
+        );
+      },
     },
   ];
 
@@ -755,10 +902,20 @@ export default function MemberPortalPage() {
         </Col>
         <Col xs={24} lg={12}>
           <ContentCard title="Statement & fund return claims">
-            <Space style={{ marginBottom: 16 }}>
-              <Button onClick={() => downloadStatement('text')}>Download statement (TXT)</Button>
-              <Button onClick={() => downloadStatement('json')}>Download statement (JSON)</Button>
+            <Space wrap style={{ marginBottom: 16 }}>
+              <Button type="primary" loading={pdfLoading} onClick={downloadPdfReport}>
+                {dashboard?.subGroup?.isLeader ? 'Download full PDF (you + group)' : 'Download PDF report'}
+              </Button>
+              <Button onClick={() => downloadStatement('text')}>TXT</Button>
+              <Button onClick={() => downloadStatement('json')}>JSON</Button>
             </Space>
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+              PDF includes team name, allotment counts, profit by IPO, and your total member profit.
+              {dashboard?.subGroup?.isLeader
+                ? ' As sub-group leader, the same PDF also includes the full group ledger for all members.'
+                : ''}
+              {' '}App: IPO Team Manager · Developer: Lokendra.
+            </Typography.Paragraph>
             <Table
               rowKey="id"
               size="small"
@@ -833,6 +990,12 @@ export default function MemberPortalPage() {
             variant={memberProfit >= 0 ? 'success' : 'danger'}
             valueClassName={memberProfit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
           />
+          <StatCard
+            title="Manager profit share"
+            value={formatCurrency(stats.totalManagerShare ?? 0)}
+            icon={<WalletOutlined />}
+            variant="primary"
+          />
           {(stats.bonus ?? 0) > 0 && (
             <StatCard
               title="Bonus"
@@ -846,7 +1009,11 @@ export default function MemberPortalPage() {
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 12, fontSize: 13 }}>
             Total IPO profit before your team split: {formatCurrency(grossIpoPnL)}
             {' · '}
-            Your share is based on rules set by your manager.
+            Your share {formatCurrency(memberProfit)}
+            {' · '}
+            Manager share {formatCurrency(stats.totalManagerShare ?? 0)}
+            {' · '}
+            Provider share {formatCurrency(stats.totalProviderShare ?? 0)}
           </Typography.Text>
         )}
       </ContentCard>
@@ -1152,8 +1319,142 @@ export default function MemberPortalPage() {
         </ContentCard>
       )}
 
+      {(dashboard?.ipoApplications ?? []).length > 0 && (
+        <ContentCard
+          id="member-full-ledger"
+          title="Full ledger — your IPOs"
+          style={{ marginBottom: 24 }}
+          extra={(
+            <Space wrap>
+              <Button type="primary" size="small" loading={pdfLoading} onClick={downloadPdfReport}>
+                {dashboard?.subGroup?.isLeader ? 'Download PDF (you + group)' : 'Download PDF'}
+              </Button>
+              <Tag>Applied {stats.iposApplied ?? 0}</Tag>
+              <Tag color="green">Allotted {stats.iposAlloted ?? 0}</Tag>
+              <Tag color="blue">Your share {formatCurrency(memberProfit)}</Tag>
+              <Tag color="purple">Manager {formatCurrency(stats.totalManagerShare ?? 0)}</Tag>
+            </Space>
+          )}
+        >
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            Your personal IPO ledger with allotment and member profit. Use <strong>Download PDF</strong> for a branded report
+            {dashboard?.subGroup?.isLeader
+              ? ' — as sub-group leader it also includes the full group ledger for all members (like Rinku’s group).'
+              : '.'}
+          </Typography.Paragraph>
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Gross IPO P&L" value={formatCurrency(grossIpoPnL)} variant={grossIpoPnL >= 0 ? 'success' : 'danger'} />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Your total profit" value={formatCurrency(memberProfit)} variant={memberProfit >= 0 ? 'success' : 'danger'} />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Manager total profit" value={formatCurrency(stats.totalManagerShare ?? 0)} variant="primary" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Provider total" value={formatCurrency(stats.totalProviderShare ?? 0)} variant="info" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Allotted IPOs" value={stats.iposAlloted ?? 0} variant="success" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Applied IPOs" value={stats.iposApplied ?? 0} variant="primary" />
+            </Col>
+          </Row>
+          <Table
+            rowKey="id"
+            columns={fullLedgerCols}
+            dataSource={dashboard.ipoApplications}
+            pagination={dashboard.ipoApplications.length > 15 ? { pageSize: 15 } : false}
+            scroll={{ x: 'max-content' }}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
+
+      {isGroupLeader && groupApps.length > 0 && (
+        <ContentCard
+          id="group-full-ledger"
+          title={`Full ledger — sub-group (${subGroup?.name || 'group'})`}
+          style={{ marginBottom: 24 }}
+          extra={(
+            <Space wrap>
+              <Button type="primary" size="small" onClick={downloadGroupPdfReport}>
+                Download group PDF
+              </Button>
+              <Tag color="gold">Leader only</Tag>
+            </Space>
+          )}
+        >
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+            Only you (sub-group leader) can see the full group IPO profit ledger for all members.
+            <strong> Download PDF</strong> above already includes this full group section; use
+            <strong> Download group PDF</strong> for a group-only file.
+          </Typography.Paragraph>
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Group gross P&L" value={formatCurrency(groupStats.grossIpoPnL ?? 0)} variant="success" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Member profit total" value={formatCurrency(groupStats.totalMemberShare ?? 0)} variant="info" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Manager profit total" value={formatCurrency(groupStats.totalManagerShare ?? 0)} variant="primary" />
+            </Col>
+            <Col xs={12} sm={8} md={4}>
+              <StatCard title="Provider total" value={formatCurrency(groupStats.totalProviderShare ?? 0)} variant="warning" />
+            </Col>
+          </Row>
+          <Table
+            rowKey="id"
+            size="small"
+            dataSource={groupApps}
+            pagination={groupApps.length > 20 ? { pageSize: 20 } : false}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: 'Member', dataIndex: 'memberName' },
+              { title: 'IPO', dataIndex: 'ipoName' },
+              {
+                title: 'Allotment',
+                dataIndex: 'allotmentStatus',
+                render: (s) => <Tag color={allotmentColors[s]}>{String(s || '').replace(/_/g, ' ')}</Tag>,
+              },
+              { title: 'Fund', dataIndex: 'amount', render: (v) => formatCurrency(v) },
+              {
+                title: 'Gross P&L',
+                dataIndex: 'grossProfitLoss',
+                render: (v, row) =>
+                  row.allotmentStatus !== 'ALLOTED' || v == null ? '—' : (
+                    <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>{formatCurrency(v)}</span>
+                  ),
+              },
+              {
+                title: 'Member share',
+                dataIndex: 'memberShare',
+                render: (v, row) =>
+                  row.allotmentStatus !== 'ALLOTED' ? '—' : v == null ? '—' : formatCurrency(v),
+              },
+              {
+                title: 'Manager share',
+                dataIndex: 'managerShare',
+                render: (v, row) =>
+                  row.allotmentStatus !== 'ALLOTED' ? '—' : v == null ? '—' : formatCurrency(v),
+              },
+              {
+                title: 'Provider share',
+                dataIndex: 'providerShare',
+                render: (v, row) =>
+                  row.allotmentStatus !== 'ALLOTED' ? '—' : v == null ? '—' : formatCurrency(v),
+              },
+            ]}
+            {...tableDefaults}
+          />
+        </ContentCard>
+      )}
+
       {(dashboard?.ledgerEntries ?? []).length > 0 && (
-        <ContentCard title="Your transactions" style={{ marginBottom: 24 }}>
+        <ContentCard title="Your fund transactions" style={{ marginBottom: 24 }}>
           {isGroupLeader ? (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
               Your personal fund ledger — not collections from sub-group members. Each row is your own IPO

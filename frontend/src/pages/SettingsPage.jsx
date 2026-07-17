@@ -30,6 +30,8 @@ function FormFooter({ loading, label }) {
 
 export default function SettingsPage() {
   const { user, setSessionUser } = useAuth();
+  const [account, setAccount] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(true);
   const [teamLoading, setTeamLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [passLoading, setPassLoading] = useState(false);
@@ -46,6 +48,26 @@ export default function SettingsPage() {
       teamForm.setFieldsValue({ tenantName: user.tenantName });
     }
   }, [user, teamForm]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAccountLoading(true);
+    client
+      .get('/settings/account')
+      .then((res) => {
+        if (cancelled) return;
+        setAccount(res.data);
+        setSessionUser(res.data);
+        teamForm.setFieldsValue({ tenantName: res.data.tenantName });
+      })
+      .catch(() => {
+        if (!cancelled) setAccount(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAccountLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [setSessionUser, teamForm]);
 
   const onTeamSave = async (values) => {
     setTeamLoading(true);
@@ -268,9 +290,16 @@ export default function SettingsPage() {
         <Avatar size={64} icon={<UserOutlined />} className="settings-profile-avatar" />
         <div className="settings-profile-info">
           <Typography.Title level={4} className="settings-profile-name">
-            {user?.tenantName || 'My Team'}
+            {account?.tenantName || user?.tenantName || 'My Team'}
           </Typography.Title>
-          <Typography.Text className="settings-profile-email">{user?.email}</Typography.Text>
+          <Typography.Text className="settings-profile-email">{account?.email || user?.email}</Typography.Text>
+          {!accountLoading && account && (
+            <Typography.Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+              Account #{account.id}
+              {account.tenantId != null ? ` · Team #${account.tenantId}` : ''}
+              {account.role ? ` · ${account.role}` : ''}
+            </Typography.Text>
+          )}
         </div>
         <div className="settings-profile-badges">
           <span className="settings-badge settings-badge--team">

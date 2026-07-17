@@ -1,7 +1,63 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { parseAmount } from '../utils/validate.js';
 import { requireBankAccountId, syncOwnerWalletTotal } from './bankAccountService.js';
+import { resolveApplicationProfitSplit } from './profitShareService.js';
 import { creditWallet, ensureWallet } from './walletService.js';
+
+async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
+  const [rows] = await conn.query(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM wallet_transactions
+     WHERE tenant_id = ? AND ref_type = 'profit_share' AND ref_id = ?`,
+    [tenantId, applicationId]
+  );
+  return Number(rows[0]?.total ?? 0);
+}
+
+/**
+ * Member ledger: distributed principal only (matches GIVEN). Member profit was already
+ * kept by the member when P&L was split — it must not inflate RECEIVED or reduce pending return.
+ * Wallet: withdrawal minus member profit (principal + manager + provider shares).
+ * If manager share was already credited via old profit-share wallet entries, subtract that too.
+ */
+async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
+  const distributedAmount = parseAmount(app.amount, { fieldName: 'distributed amount' });
+  const withdrawalAmount =
+    app.withdrawal_money != null
+      ? parseAmount(app.withdrawal_money, { fieldName: 'withdrawal amount' })
+      : distributedAmount;
+
+  if (explicitAmount !== undefined) {
+    const explicit = parseAmount(explicitAmount, { fieldName: 'receive amount' });
+    return {
+      ledgerAmount: explicit,
+      walletAmount: explicit,
+      managerShare: 0,
+      providerShare: 0,
+      memberShareExcluded: 0,
+    };
+  }
+
+  const { managerAmount, providerAmount, memberAmount } = await resolveApplicationProfitSplit(
+    conn,
+    tenantId,
+    app
+  );
+
+  const managerAlreadyInWallet = await getManagerShareAlreadyInWallet(conn, tenantId, app.id);
+
+  // Wallet = cash returned to team = withdrawal − member profit (− legacy manager wallet credits)
+  const walletAmount = Math.round(
+    (withdrawalAmount - memberAmount - managerAlreadyInWallet) * 100
+  ) / 100;
+
+  return {
+    ledgerAmount: distributedAmount,
+    walletAmount,
+    managerShare: Math.round((managerAmount - managerAlreadyInWallet) * 100) / 100,
+    providerShare: providerAmount,
+    memberShareExcluded: memberAmount,
+  };
+}
 
 export async function receiveIpoApplication(conn, {
   tenantId,
@@ -22,10 +78,7 @@ export async function receiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
-  const defaultReceiveAmount = app.withdrawal_money != null ? app.withdrawal_money : app.amount;
-  const recvAmount = amount !== undefined
-    ? parseAmount(amount, { fieldName: 'receive amount' })
-    : parseAmount(defaultReceiveAmount, { fieldName: 'receive amount' });
+  const amounts = await resolveReceiveAmounts(conn, tenantId, app, amount);
 
   const now = new Date();
   const ledgerNotes = notes || `Return: ${app.ipo_name}`;
@@ -54,7 +107,7 @@ export async function receiveIpoApplication(conn, {
     await conn.query(
       `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
        VALUES (?, ?, 'RECEIVED', ?, ?, ?, ?)`,
-      [app.member_id, tenantId, recvAmount, now, appId, ledgerNotes]
+      [app.member_id, tenantId, amounts.ledgerAmount, now, appId, ledgerNotes]
     );
   } else if (app.trns_received !== 'Received') {
     await conn.query(
@@ -70,7 +123,7 @@ export async function receiveIpoApplication(conn, {
 
     await creditWallet(conn, {
       tenantId,
-      amount: recvAmount,
+      amount: amounts.walletAmount,
       bankAccountId,
       type: 'RETURN_IN',
       refType: 'ipo_application',
@@ -81,7 +134,15 @@ export async function receiveIpoApplication(conn, {
     });
   }
 
-  return { appId, memberId: app.member_id, amount: recvAmount };
+  return {
+    appId,
+    memberId: app.member_id,
+    amount: amounts.ledgerAmount,
+    walletAmount: amounts.walletAmount,
+    managerShare: amounts.managerShare,
+    providerShare: amounts.providerShare,
+    memberShareExcluded: amounts.memberShareExcluded,
+  };
 }
 
 async function receiveOneFromCache(conn, {
@@ -97,8 +158,7 @@ async function receiveOneFromCache(conn, {
 }) {
   if (!app) throw new AppError('Application not found', 404);
 
-  const defaultReceiveAmount = app.withdrawal_money != null ? app.withdrawal_money : app.amount;
-  const recvAmount = parseAmount(defaultReceiveAmount, { fieldName: 'receive amount' });
+  const amounts = await resolveReceiveAmounts(conn, tenantId, app);
   const now = new Date();
   const ledgerNotes = notes || `Return: ${app.ipo_name}`;
 
@@ -115,7 +175,7 @@ async function receiveOneFromCache(conn, {
     await conn.query(
       `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
        VALUES (?, ?, 'RECEIVED', ?, ?, ?, ?)`,
-      [app.member_id, tenantId, recvAmount, now, appId, ledgerNotes]
+      [app.member_id, tenantId, amounts.ledgerAmount, now, appId, ledgerNotes]
     );
   } else if (app.trns_received !== 'Received') {
     await conn.query(
@@ -131,7 +191,7 @@ async function receiveOneFromCache(conn, {
 
     await creditWallet(conn, {
       tenantId,
-      amount: recvAmount,
+      amount: amounts.walletAmount,
       bankAccountId: resolvedBankAccountId,
       type: 'RETURN_IN',
       refType: 'ipo_application',
@@ -145,7 +205,15 @@ async function receiveOneFromCache(conn, {
     });
   }
 
-  return { appId, memberId: app.member_id, amount: recvAmount };
+  return {
+    appId,
+    memberId: app.member_id,
+    amount: amounts.ledgerAmount,
+    walletAmount: amounts.walletAmount,
+    managerShare: amounts.managerShare,
+    providerShare: amounts.providerShare,
+    memberShareExcluded: amounts.memberShareExcluded,
+  };
 }
 
 export async function receiveIpoApplicationsBulk(conn, {

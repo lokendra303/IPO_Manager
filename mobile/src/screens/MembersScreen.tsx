@@ -313,13 +313,17 @@ export default function MembersScreen() {
                         <PnlStatCard title="Gross IPO P&L" value={s.totalIpoProfit ?? 0} formatted={formatCurrency(s.totalIpoProfit ?? 0)} />
                         <PnlStatCard title="Member share" value={s.totalMemberShare ?? 0} formatted={formatCurrency(s.totalMemberShare ?? 0)} />
                       </View>
+                      <View style={styles.statRow}>
+                        <PnlStatCard title="Manager share" value={s.totalManagerShare ?? 0} formatted={formatCurrency(s.totalManagerShare ?? 0)} />
+                        <StatCard title="Provider share" value={formatCurrency(s.totalProviderShare ?? 0)} variant="info" />
+                      </View>
                     </ContentCard>
                   )}
                 </>
               )}
 
               {detailTab === 'ipos' && (
-                <ContentCard title="IPO applications">
+                <ContentCard title="Full ledger — IPOs">
                   {(detail.ipoApplications?.length ?? 0) === 0 ? (
                     <Text style={styles.muted}>No IPO applications yet</Text>
                   ) : (
@@ -327,7 +331,15 @@ export default function MembersScreen() {
                       <ListRow
                         key={a.id}
                         title={a.ipo_name}
-                        subtitle={`${a.allotment_status} · ${formatCurrency(a.amount)}${a.profit_loss != null ? ` · P&L ${formatCurrency(a.profit_loss)}` : ''}`}
+                        subtitle={[
+                          a.allotment_status,
+                          formatCurrency(a.amount),
+                          a.profit_loss != null ? `Gross ${formatCurrency(a.profit_loss)}` : null,
+                          a.member_share != null ? `Member ${formatCurrency(a.member_share)}` : null,
+                          a.manager_share != null ? `Manager ${formatCurrency(a.manager_share)}` : null,
+                          a.provider_share != null ? `Provider ${formatCurrency(a.provider_share)}` : null,
+                          a.share_status === 'pending' ? 'Pending split' : null,
+                        ].filter(Boolean).join(' · ')}
                         right={a.investor_category ? <Tag label={a.investor_category} /> : undefined}
                       />
                     ))
@@ -336,7 +348,7 @@ export default function MembersScreen() {
               )}
 
               {detailTab === 'ledger' && (
-                <ContentCard title="Transactions">
+                <ContentCard title="Fund ledger">
                   {(detail.ledgerEntries?.length ?? 0) === 0 ? (
                     <Text style={styles.muted}>No transactions yet</Text>
                   ) : (

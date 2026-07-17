@@ -616,6 +616,39 @@ export function calculateMultiRuleSplit(grossProfitLoss, rules) {
   };
 }
 
+/** Manager/provider/member split for an application (stored distribution or live rules). */
+export async function resolveApplicationProfitSplit(conn, tenantId, app) {
+  const distribution = await getDistributionForApplication(conn, tenantId, app.id);
+  if (distribution) {
+    return {
+      managerAmount: Number(distribution.manager_amount ?? 0),
+      providerAmount: Number(distribution.provider_amount ?? 0),
+      memberAmount: Number(distribution.member_amount ?? 0),
+    };
+  }
+
+  let gross = app.profit_loss != null ? Number(app.profit_loss) : 0;
+  if (!gross && app.withdrawal_money != null && app.amount != null) {
+    gross = Math.round((Number(app.withdrawal_money) - Number(app.amount)) * 100) / 100;
+  }
+  if (!gross) {
+    return { managerAmount: 0, providerAmount: 0, memberAmount: 0 };
+  }
+
+  const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
+  const rules = resolveRulesForIpo(allRules, app.ipo_id);
+  if (!rules.length) {
+    return { managerAmount: 0, providerAmount: 0, memberAmount: gross };
+  }
+
+  const split = calculateMultiRuleSplit(gross, rules);
+  return {
+    managerAmount: split.totalManager,
+    providerAmount: split.totalProvider,
+    memberAmount: split.memberAmount,
+  };
+}
+
 /** @deprecated Use getMemberShareRules — returns summary of global rules (or all if IPO-only) */
 export async function getMemberShareRule(conn, tenantId, memberId) {
   const { rules, hasRules } = await getMemberShareRules(conn, tenantId, memberId);
@@ -937,22 +970,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
       }
     }
 
-    if (totalManager !== 0) {
-      const { applyWalletDelta } = await import('./walletService.js');
-      await applyWalletDelta(conn, {
-        tenantId,
-        delta: totalManager,
-        type: totalManager > 0 ? 'RETURN_IN' : 'ADJUSTMENT',
-        refType: 'profit_share',
-        refId: app.id,
-        txnDate: now,
-        notes: isLoss
-          ? `Manager loss share — ${app.display_name} (${app.ipo_name})`
-          : `Manager profit share — ${app.display_name} (${app.ipo_name})`,
-        userId,
-        allowNegativeBalance: isLoss,
-      });
-    }
+    // Manager share is credited to wallet when fund return is received (not here).
 
     const providerNames = [...new Set(lines.map((l) => l.providerName).filter(Boolean))].join(', ');
 

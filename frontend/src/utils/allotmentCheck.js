@@ -76,3 +76,14 @@ export async function copyToClipboard(text) {
     return false;
   }
 }
+
+/** Load registrar dropdown options from API; falls back to static list if unavailable. */
+export async function fetchRegistrarOptions(apiClient) {
+  try {
+    const { data } = await apiClient.get('/ipos/registrars');
+    if (Array.isArray(data) && data.length) return data;
+  } catch {
+    /* use fallback */
+  }
+  return REGISTRAR_OPTIONS;
+}

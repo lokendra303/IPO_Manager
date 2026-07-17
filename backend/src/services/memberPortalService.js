@@ -53,13 +53,15 @@ function computeAllottedAppShare(appRow, memberRules) {
   const gross =
     appRow.allotment_status === 'ALLOTED' ? Number(appRow.profit_loss ?? 0) : 0;
   if (appRow.allotment_status !== 'ALLOTED' || appRow.profit_loss == null || gross === 0) {
-    return { gross: 0, memberShare: null, shareStatus: null };
+    return { gross: 0, memberShare: null, managerShare: null, providerShare: null, shareStatus: null };
   }
 
   if (appRow.profit_share_distribution_id) {
     return {
       gross,
       memberShare: Number(appRow.distributed_member_amount ?? 0),
+      managerShare: Number(appRow.distributed_manager_amount ?? 0),
+      providerShare: Number(appRow.distributed_provider_amount ?? 0),
       shareStatus: 'distributed',
     };
   }
@@ -71,12 +73,14 @@ function computeAllottedAppShare(appRow, memberRules) {
       return {
         gross,
         memberShare: split.memberAmount,
+        managerShare: split.totalManager,
+        providerShare: split.totalProvider,
         shareStatus: 'pending',
       };
     }
   }
 
-  return { gross, memberShare: null, shareStatus: null };
+  return { gross, memberShare: null, managerShare: null, providerShare: null, shareStatus: null };
 }
 
 async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
@@ -147,7 +151,9 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
             a.trns_received, m.id AS member_id, m.display_name, m.pan,
             i.id AS ipo_id, i.name AS ipo_name, i.status AS ipo_status,
             psd.id AS profit_share_distribution_id,
-            psd.member_amount AS distributed_member_amount
+            psd.member_amount AS distributed_member_amount,
+            psd.manager_amount AS distributed_manager_amount,
+            psd.provider_amount AS distributed_provider_amount
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      JOIN ipos i ON i.id = a.ipo_id
@@ -174,20 +180,34 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   const memberPnL = new Map();
   let groupGrossIpoPnL = 0;
   let groupTotalMemberShare = 0;
+  let groupTotalManagerShare = 0;
+  let groupTotalProviderShare = 0;
 
   const enrichedGroupApps = groupApps.map((row) => {
     const memberRules = rulesByMemberId.get(row.member_id) ?? [];
-    const { gross, memberShare, shareStatus } = computeAllottedAppShare(row, memberRules);
+    const { gross, memberShare, managerShare, providerShare, shareStatus } = computeAllottedAppShare(
+      row,
+      memberRules
+    );
 
-    const agg = memberPnL.get(row.member_id) ?? { grossIpoPnL: 0, totalMemberShare: 0 };
+    const agg = memberPnL.get(row.member_id) ?? {
+      grossIpoPnL: 0,
+      totalMemberShare: 0,
+      totalManagerShare: 0,
+      totalProviderShare: 0,
+    };
     agg.grossIpoPnL += gross;
     if (memberShare != null) agg.totalMemberShare += memberShare;
+    if (managerShare != null) agg.totalManagerShare += managerShare;
+    if (providerShare != null) agg.totalProviderShare += providerShare;
     memberPnL.set(row.member_id, agg);
 
     return {
       row,
       gross,
       memberShare,
+      managerShare,
+      providerShare,
       shareStatus,
     };
   });
@@ -195,6 +215,8 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   for (const agg of memberPnL.values()) {
     groupGrossIpoPnL += agg.grossIpoPnL;
     groupTotalMemberShare += agg.totalMemberShare;
+    groupTotalManagerShare += agg.totalManagerShare;
+    groupTotalProviderShare += agg.totalProviderShare;
   }
 
   return {
@@ -204,9 +226,16 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
       ...groupStats,
       grossIpoPnL: groupGrossIpoPnL,
       totalMemberShare: groupTotalMemberShare,
+      totalManagerShare: groupTotalManagerShare,
+      totalProviderShare: groupTotalProviderShare,
     },
     members: members.map((m) => {
-      const pnl = memberPnL.get(m.id) ?? { grossIpoPnL: 0, totalMemberShare: 0 };
+      const pnl = memberPnL.get(m.id) ?? {
+        grossIpoPnL: 0,
+        totalMemberShare: 0,
+        totalManagerShare: 0,
+        totalProviderShare: 0,
+      };
       return {
         id: m.id,
         displayName: m.display_name,
@@ -220,25 +249,31 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
         iposNotAlloted: Number(m.ipos_not_alloted),
         grossIpoPnL: pnl.grossIpoPnL,
         totalMemberShare: pnl.totalMemberShare,
+        totalManagerShare: pnl.totalManagerShare,
+        totalProviderShare: pnl.totalProviderShare,
         isLeader: Number(m.id) === Number(memberId),
       };
     }),
-    groupApplications: enrichedGroupApps.map(({ row, memberShare, shareStatus }) => ({
-      id: row.id,
-      ipoId: row.ipo_id,
-      ipoName: row.ipo_name,
-      ipoStatus: row.ipo_status,
-      memberId: row.member_id,
-      memberName: row.display_name,
-      memberPan: formatPan(row.pan),
-      amount: Number(row.amount),
-      allotmentStatus: row.allotment_status,
-      investorCategory: row.investor_category ?? null,
-      grossProfitLoss: row.profit_loss != null ? Number(row.profit_loss) : null,
-      memberShare,
-      shareStatus,
-      fundReturned: row.trns_received === 'Received',
-    })),
+    groupApplications: enrichedGroupApps.map(
+      ({ row, memberShare, managerShare, providerShare, shareStatus }) => ({
+        id: row.id,
+        ipoId: row.ipo_id,
+        ipoName: row.ipo_name,
+        ipoStatus: row.ipo_status,
+        memberId: row.member_id,
+        memberName: row.display_name,
+        memberPan: formatPan(row.pan),
+        amount: Number(row.amount),
+        allotmentStatus: row.allotment_status,
+        investorCategory: row.investor_category ?? null,
+        grossProfitLoss: row.profit_loss != null ? Number(row.profit_loss) : null,
+        memberShare,
+        managerShare,
+        providerShare,
+        shareStatus,
+        fundReturned: row.trns_received === 'Received',
+      })
+    ),
     bulkPayments: bulkPayments.map((bp) => ({
       id: bp.id,
       ipoName: bp.ipoName,
@@ -254,6 +289,9 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
   const detail = await getMemberDetail(pool, tenantId, memberId);
   if (!detail) return null;
 
+  const [tenantRows] = await pool.query('SELECT name FROM tenants WHERE id = ?', [tenantId]);
+  const teamName = tenantRows[0]?.name ?? 'IPO Team';
+
   const { member, stats, ipoApplications, ledgerEntries } = detail;
   const subGroup = await getSubGroupPortalInfo(
     pool,
@@ -263,6 +301,9 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
   );
 
   const dashboardCore = {
+    teamName,
+    appName: 'IPO Team Manager',
+    developerName: 'Lokendra',
     member: {
       id: member.id,
       displayName: member.display_name,
@@ -283,6 +324,9 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       iposNotAlloted: stats.iposNotAlloted,
       grossIpoPnL: stats.totalIpoProfit,
       totalMemberShare: stats.totalMemberShare,
+      totalManagerShare: stats.totalManagerShare,
+      totalProviderShare: stats.totalProviderShare,
+      pendingShareGross: stats.pendingShareGross,
     },
     ipoApplications: ipoApplications.map((app) => ({
       id: app.id,
@@ -294,6 +338,8 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       investorCategory: app.investor_category,
       grossProfitLoss: app.profit_loss != null ? Number(app.profit_loss) : null,
       memberShare: app.member_share != null ? Number(app.member_share) : null,
+      managerShare: app.manager_share != null ? Number(app.manager_share) : null,
+      providerShare: app.provider_share != null ? Number(app.provider_share) : null,
       shareStatus: app.share_status ?? null,
       fundReturned: app.trns_received === 'Received',
       dateGiven: app.date_given,
