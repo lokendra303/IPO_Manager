@@ -30,14 +30,21 @@ export function errorHandler(err, req, res, _next) {
 
   console.error(err);
   const status = err.status || 500;
-  res.status(status).json({
+  const body = {
     error: err.message || 'Internal server error',
-  });
+  };
+  if (err.code) body.code = err.code;
+  if (err.details) body.details = err.details;
+  res.status(status).json(body);
 }
 
 export class AppError extends Error {
-  constructor(message, status = 400) {
+  constructor(message, status = 400, extras = {}) {
     super(message);
     this.status = status;
+    if (extras && typeof extras === 'object') {
+      if (extras.code) this.code = extras.code;
+      if (extras.details) this.details = extras.details;
+    }
   }
 }

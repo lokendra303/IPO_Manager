@@ -1,14 +1,14 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert, Form,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
 import {
   categoryCompactOptionsForIpo,
   categoryOptionsForIpo,
@@ -28,6 +28,7 @@ import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoP
 
 export default function IpoDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [ipo, setIpo] = useState(null);
   const [applications, setApplications] = useState([]);
   const [members, setMembers] = useState([]);
@@ -57,9 +58,14 @@ export default function IpoDetailPage() {
   const [hniModalOpen, setHniModalOpen] = useState(false);
   const [hniSaving, setHniSaving] = useState(false);
   const [hniForm] = Form.useForm();
+  const [editIpoModalOpen, setEditIpoModalOpen] = useState(false);
+  const [editIpoSaving, setEditIpoSaving] = useState(false);
+  const [editIpoForm] = Form.useForm();
   const [returnFilter, setReturnFilter] = useState('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
   const [receivingAppId, setReceivingAppId] = useState(null);
+  const [undoingAppId, setUndoingAppId] = useState(null);
+  const [revokingProfitAppId, setRevokingProfitAppId] = useState(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ipoSummary, setIpoSummary] = useState(null);
@@ -142,10 +148,12 @@ export default function IpoDetailPage() {
     editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
   const isNotApplied = (app) => getAllotmentStatus(app) === 'NOT_APPLIED';
   const isAllotted = (app) => getAllotmentStatus(app) === 'ALLOTED';
+  const isNotAllotted = (app) => getAllotmentStatus(app) === 'NOT_ALLOTED';
   const returnedCount = applications.filter(isFundReturned).length;
   const pendingReturnCount = applications.length - returnedCount;
   const notAppliedCount = applications.filter(isNotApplied).length;
   const allottedCount = applications.filter(isAllotted).length;
+  const notAllottedCount = applications.filter(isNotAllotted).length;
   const allotmentSortOrder = (app) => {
     const rank = { ALLOTED: 0, PENDING: 1, NOT_ALLOTED: 2, NOT_APPLIED: 3 };
     return rank[getAllotmentStatus(app)] ?? 9;
@@ -156,6 +164,7 @@ export default function IpoDetailPage() {
     if (returnFilter === 'pending') return !isFundReturned(app);
     if (returnFilter === 'not_applied') return isNotApplied(app);
     if (returnFilter === 'allotted') return isAllotted(app);
+    if (returnFilter === 'not_allotted') return isNotAllotted(app);
     return true;
   });
   const receivableSelectedIds = selectedReceiveIds.filter((appId) => {
@@ -230,6 +239,25 @@ export default function IpoDetailPage() {
       lotAmountHni: ipo?.lot_amount_hni ?? undefined,
     });
     setHniModalOpen(true);
+  };
+
+  const openEditIpo = () => {
+    editIpoForm.setFieldsValue({ name: ipo?.name || '' });
+    setEditIpoModalOpen(true);
+  };
+
+  const onSaveEditIpo = async (values) => {
+    setEditIpoSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, { name: values.name?.trim() });
+      setIpo(data);
+      message.success('IPO name updated');
+      setEditIpoModalOpen(false);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not update IPO'));
+    } finally {
+      setEditIpoSaving(false);
+    }
   };
 
   const onSaveHniConfig = async (values) => {
@@ -523,6 +551,69 @@ export default function IpoDetailPage() {
     }
   };
 
+  const onUndoReceive = async (appId, { revokeProfitSplit = false } = {}) => {
+    setUndoingAppId(appId);
+    try {
+      const { data } = await client.post(`/ipos/applications/${appId}/undo-receive`, {
+        revokeProfitSplit,
+      });
+      message.success(
+        revokeProfitSplit && data.profitRevoked
+          ? 'Settle undone and P&L split revoked'
+          : 'Settle undone — wallet and member ledger reversed'
+      );
+      await refreshReceiveData();
+    } catch (err) {
+      const info = getUndoSettleBlockedModal(err);
+      Modal.warning({
+        title: info.title,
+        width: 520,
+        okText: 'Got it',
+        content: (
+          <div>
+            <Typography.Paragraph style={{ marginBottom: 12 }}>
+              {info.summary}
+            </Typography.Paragraph>
+            {info.rows.length > 0 && (
+              <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+                {info.rows.map((row) => (
+                  <div
+                    key={row.label}
+                    style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}
+                  >
+                    <Typography.Text type="secondary">{row.label}</Typography.Text>
+                    <Typography.Text strong>{row.value}</Typography.Text>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Typography.Text strong>What to do</Typography.Text>
+            <ol style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+              {info.steps.map((step) => (
+                <li key={step} style={{ marginBottom: 4 }}>{step}</li>
+              ))}
+            </ol>
+          </div>
+        ),
+      });
+    } finally {
+      setUndoingAppId(null);
+    }
+  };
+
+  const onRevokeProfitSplit = async (appId) => {
+    setRevokingProfitAppId(appId);
+    try {
+      await client.post('/profit-shares/revoke', { applicationId: appId });
+      message.success('P&L split revoked — provider accruals reversed');
+      await refreshReceiveData();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not revoke P&L split'));
+    } finally {
+      setRevokingProfitAppId(null);
+    }
+  };
+
   const onReceiveBulk = async () => {
     if (!receivableSelectedIds.length) {
       message.warning('Select members whose funds you have received back');
@@ -805,18 +896,72 @@ export default function IpoDetailPage() {
     {
       title: 'Action',
       fixed: 'right',
-      width: 104,
+      width: 200,
       align: 'center',
-      render: (_, r) =>
-        r.trns_received === 'Received' ? (
-          <Tag color="green" style={{ marginInlineEnd: 0 }}>Settled</Tag>
-        ) : (
-          <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
-            <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
-              Receive
-            </Button>
-          </Popconfirm>
-        ),
+      render: (_, r) => {
+        const hasProfitSplit = Boolean(r.profit_share_distribution_id);
+        if (r.trns_received === 'Received') {
+          return (
+            <Space size={4} wrap>
+              <Tag color="green" style={{ marginInlineEnd: 0 }}>Settled</Tag>
+              <Popconfirm
+                title="Undo settle for this member?"
+                description="Reverses wallet credit and member RECEIVED ledger. Blocked if wallet balance is too low (e.g. you already repaid a provider)."
+                onConfirm={() => onUndoReceive(r.id, { revokeProfitSplit: false })}
+                okText="Undo settle"
+              >
+                <Button
+                  size="small"
+                  danger
+                  ghost
+                  icon={<UndoOutlined />}
+                  loading={undoingAppId === r.id}
+                >
+                  Undo
+                </Button>
+              </Popconfirm>
+              {hasProfitSplit && (
+                <Popconfirm
+                  title="Also undo settle and revoke P&L split?"
+                  description="Undoes fund settle and removes the profit split (provider accruals reversed)."
+                  onConfirm={() => onUndoReceive(r.id, { revokeProfitSplit: true })}
+                  okText="Undo all"
+                >
+                  <Button size="small" type="link" danger loading={undoingAppId === r.id}>
+                    + P&L
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          );
+        }
+        return (
+          <Space size={4} wrap>
+            <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
+              <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
+                Receive
+              </Button>
+            </Popconfirm>
+            {hasProfitSplit && (
+              <Popconfirm
+                title="Revoke P&L profit split?"
+                description="Removes the split and reverses provider accruals. Does not undo fund settle."
+                onConfirm={() => onRevokeProfitSplit(r.id)}
+                okText="Revoke split"
+              >
+                <Button
+                  size="small"
+                  type="link"
+                  danger
+                  loading={revokingProfitAppId === r.id}
+                >
+                  Undo P&L
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -851,6 +996,9 @@ export default function IpoDetailPage() {
             {ipo?.name}
             <Tag color={isClosed ? 'error' : 'success'}>{isClosed ? 'CLOSED' : 'OPEN'}</Tag>
             {isInvalid && <Tag color="default">INVALID</Tag>}
+            <Button size="small" type="text" icon={<EditOutlined />} onClick={openEditIpo}>
+              Edit
+            </Button>
           </Space>
         }
         subtitle={
@@ -928,25 +1076,49 @@ export default function IpoDetailPage() {
               Split / re-split P&L
             </Button>
             {isInvalid ? (
-              <Popconfirm
-                title="Restore to main IPO list?"
-                onConfirm={async () => {
-                  setStatusLoading(true);
-                  try {
-                    const { data } = await client.post(`/ipos/${id}/restore`);
-                    setIpo(data);
-                    message.success('IPO restored to main list');
-                  } catch (err) {
-                    message.error(getErrorMessage(err));
-                  } finally {
-                    setStatusLoading(false);
-                  }
-                }}
-              >
-                <Button icon={<RollbackOutlined />} loading={statusLoading}>
-                  Restore IPO
-                </Button>
-              </Popconfirm>
+              <>
+                <Popconfirm
+                  title="Restore to main IPO list?"
+                  onConfirm={async () => {
+                    setStatusLoading(true);
+                    try {
+                      const { data } = await client.post(`/ipos/${id}/restore`);
+                      setIpo(data);
+                      message.success('IPO restored to main list');
+                    } catch (err) {
+                      message.error(getErrorMessage(err));
+                    } finally {
+                      setStatusLoading(false);
+                    }
+                  }}
+                >
+                  <Button icon={<RollbackOutlined />} loading={statusLoading}>
+                    Restore IPO
+                  </Button>
+                </Popconfirm>
+                <Popconfirm
+                  title="Permanently delete this IPO?"
+                  description="Only empty invalid IPOs can be deleted. This cannot be undone."
+                  okText="Delete"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={async () => {
+                    setStatusLoading(true);
+                    try {
+                      await client.delete(`/ipos/${id}`);
+                      message.success('IPO deleted');
+                      navigate('/ipos');
+                    } catch (err) {
+                      message.error(getErrorMessage(err));
+                    } finally {
+                      setStatusLoading(false);
+                    }
+                  }}
+                >
+                  <Button danger icon={<DeleteOutlined />} loading={statusLoading}>
+                    Delete IPO
+                  </Button>
+                </Popconfirm>
+              </>
             ) : isClosed ? (
               <Popconfirm
                 title="Reopen this IPO?"
@@ -1148,9 +1320,10 @@ export default function IpoDetailPage() {
               options={[
                 { label: `All (${applications.length})`, value: 'all' },
                 { label: `Returned (${returnedCount})`, value: 'returned' },
-                { label: `Pending (${pendingReturnCount})`, value: 'pending' },
+                { label: `Pending payment (${pendingReturnCount})`, value: 'pending' },
                 { label: `Did not apply (${notAppliedCount})`, value: 'not_applied' },
                 { label: `Alloted (${allottedCount})`, value: 'allotted' },
+                { label: `Not Alloted (${notAllottedCount})`, value: 'not_allotted' },
               ]}
             />
             {returnedCount > 0 && (
@@ -1197,7 +1370,9 @@ export default function IpoDetailPage() {
                   ? 'No members marked as did not apply'
                   : returnFilter === 'allotted'
                     ? 'No members marked as alloted yet'
-                    : 'All members have returned funds',
+                    : returnFilter === 'not_allotted'
+                      ? 'No members marked as not alloted yet'
+                      : 'All members have returned funds',
           }}
         />
       </ContentCard>
@@ -1792,6 +1967,25 @@ export default function IpoDetailPage() {
             )}
           </>
         )}
+      </Modal>
+
+      <Modal
+        title="Edit IPO"
+        open={editIpoModalOpen}
+        onCancel={() => setEditIpoModalOpen(false)}
+        onOk={() => editIpoForm.submit()}
+        confirmLoading={editIpoSaving}
+        destroyOnClose
+      >
+        <Form form={editIpoForm} layout="vertical" onFinish={onSaveEditIpo}>
+          <Form.Item
+            name="name"
+            label="IPO name"
+            rules={[{ required: true, message: 'Enter IPO name' }, { whitespace: true, message: 'Enter IPO name' }]}
+          >
+            <Input placeholder="e.g. Acme Industries" maxLength={120} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal

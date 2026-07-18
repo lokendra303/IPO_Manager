@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography, Select, Checkbox } from 'antd';
 import {
   IPO_SEGMENT_OPTIONS,
-  parseAllowedCategories,
-  categoryTagColor,
+  ipoAllowsHni,
+  ipoHasHniLot,
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
-import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import client from '../api/client';
@@ -68,55 +68,77 @@ export default function IposPage() {
   };
 
   const columns = [
-    { title: 'IPO Name', dataIndex: 'name', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
+    {
+      title: 'IPO name',
+      dataIndex: 'name',
+      ellipsis: true,
+      render: (v) => <span style={{ fontWeight: 600 }}>{v}</span>,
+    },
     {
       title: 'Segment',
       dataIndex: 'ipo_segment',
-      width: 120,
-      render: (v) => <Tag>{v === 'SME' ? 'SME' : 'Mainboard'}</Tag>,
-    },
-    {
-      title: 'Categories',
-      dataIndex: 'allowed_categories',
-      render: (v, r) => {
-        const cats = parseAllowedCategories(r);
-        return (
-          <Space size={[4, 4]} wrap>
-            {cats.map((c) => (
-              <Tag key={c} color={categoryTagColor(c)}>{c}</Tag>
-            ))}
-          </Space>
-        );
-      },
+      width: 110,
+      align: 'center',
+      render: (v) => (
+        <Tag style={{ marginInlineEnd: 0 }}>{v === 'SME' ? 'SME' : 'Mainboard'}</Tag>
+      ),
     },
     {
       title: 'Lot amounts',
       key: 'lots',
-      render: (_, r) => (
-        <Space direction="vertical" size={0} style={{ fontSize: 13 }}>
-          <span>RII: {formatCurrency(getLotAmountForCategory(r, 'RII'))}</span>
-          {parseAllowedCategories(r).includes('HNI') && (
-            <span>
-              HNI:{' '}
-              {r.lot_amount_hni != null
-                ? formatCurrency(getLotAmountForCategory(r, 'HNI'))
-                : 'Not set'}
-            </span>
-          )}
-        </Space>
-      ),
+      width: 160,
+      render: (_, r) => {
+        const rii = formatCurrency(getLotAmountForCategory(r, 'RII'));
+        const showHni = ipoAllowsHni(r);
+        return (
+          <div style={{ fontSize: 13, lineHeight: 1.45, fontVariantNumeric: 'tabular-nums' }}>
+            <div>
+              <span style={{ color: '#64748b', marginRight: 6 }}>RII</span>
+              {rii}
+            </div>
+            {showHni && (
+              <div>
+                <span style={{ color: '#64748b', marginRight: 6 }}>HNI</span>
+                {ipoHasHniLot(r)
+                  ? formatCurrency(getLotAmountForCategory(r, 'HNI'))
+                  : 'Not set'}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      render: (s) => <Tag color={s === 'OPEN' ? 'success' : 'error'}>{s}</Tag>,
+      title: 'Applications',
+      dataIndex: 'application_count',
+      width: 110,
+      align: 'center',
+      render: (v) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v ?? 0}</span>,
     },
-    { title: 'Applications', dataIndex: 'application_count' },
+    {
+      title: 'Pending return',
+      dataIndex: 'pending_return_count',
+      width: 120,
+      align: 'center',
+      render: (v) => {
+        const n = Number(v) || 0;
+        if (n <= 0) {
+          return <span style={{ color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>0</span>;
+        }
+        return (
+          <Tag color="warning" style={{ marginInlineEnd: 0, minWidth: 28, textAlign: 'center' }}>
+            {n}
+          </Tag>
+        );
+      },
+    },
     {
       title: 'Actions',
-      width: 280,
+      width: 268,
+      align: 'right',
+      fixed: 'right',
       render: (_, r) => (
-        <Space size="small" onClick={(e) => e.stopPropagation()}>
+        <Space size={6} wrap={false} onClick={(e) => e.stopPropagation()}>
           <Link to={`/ipos/${r.id}`}>
             <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />}>
               View
@@ -184,9 +206,11 @@ export default function IposPage() {
     ...columns.slice(0, -1),
     {
       title: 'Actions',
-      width: 200,
+      width: 260,
+      align: 'right',
+      fixed: 'right',
       render: (_, r) => (
-        <Space size="small" onClick={(e) => e.stopPropagation()}>
+        <Space size={6} wrap={false} onClick={(e) => e.stopPropagation()}>
           <Link to={`/ipos/${r.id}`}>
             <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />}>
               View
@@ -206,6 +230,25 @@ export default function IposPage() {
           >
             <Button size="small" icon={<RollbackOutlined />}>
               Restore
+            </Button>
+          </Popconfirm>
+          <Popconfirm
+            title="Permanently delete this IPO?"
+            description="Only empty invalid IPOs can be deleted. This cannot be undone."
+            okText="Delete"
+            okButtonProps={{ danger: true }}
+            onConfirm={async () => {
+              try {
+                await client.delete(`/ipos/${r.id}`);
+                message.success('IPO deleted');
+                load();
+              } catch (err) {
+                message.error(getErrorMessage(err));
+              }
+            }}
+          >
+            <Button size="small" danger icon={<DeleteOutlined />}>
+              Delete
             </Button>
           </Popconfirm>
         </Space>
@@ -249,7 +292,7 @@ export default function IposPage() {
       {invalidIpos.length > 0 && (
         <ContentCard title={`Invalid IPOs (${invalidIpos.length})`} style={{ marginTop: 16 }}>
           <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-            Duplicate or mistaken IPOs hidden from the main list. Restore to bring back, or view records.
+            Duplicate or mistaken IPOs hidden from the main list. Restore to bring back, or delete if there are no applications.
           </Typography.Paragraph>
           <Table
             rowKey="id"

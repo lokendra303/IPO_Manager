@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   Table, Tag, Row, Col, Button, Modal, Form, Input, message, Space, Select, InputNumber, DatePicker,
+  Typography, Alert,
 } from 'antd';
-import { WalletOutlined, PlusOutlined, BankOutlined, SwapOutlined, EditOutlined } from '@ant-design/icons';
+import {
+  WalletOutlined, PlusOutlined, BankOutlined, SwapOutlined, EditOutlined, UserOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
@@ -22,10 +25,12 @@ const typeColors = {
   ADJUSTMENT: 'default',
   TRANSFER_OUT: 'orange',
   TRANSFER_IN: 'cyan',
+  PERSONAL_OUT: 'magenta',
 };
 
 export default function WalletPage() {
   const [balance, setBalance] = useState(0);
+  const [managerProfit, setManagerProfit] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,10 +39,14 @@ export default function WalletPage() {
   const [savingAccount, setSavingAccount] = useState(false);
   const [transferModal, setTransferModal] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [personalModal, setPersonalModal] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
   const [form] = Form.useForm();
   const [transferForm] = Form.useForm();
+  const [personalForm] = Form.useForm();
 
   const activeAccounts = accounts.filter((a) => a.is_active);
+  const maxWithdraw = Number(managerProfit?.maxWithdraw ?? 0);
 
   const load = () => {
     setLoading(true);
@@ -48,6 +57,7 @@ export default function WalletPage() {
     ])
       .then(([w, accts, t]) => {
         setBalance(w.data.balance);
+        setManagerProfit(w.data.managerProfit || null);
         setAccounts(accts.data.accounts || []);
         setTxns(t.data);
       })
@@ -136,6 +146,36 @@ export default function WalletPage() {
     }
   };
 
+  const openPersonalWithdraw = () => {
+    personalForm.resetFields();
+    const defaultAccount = activeAccounts.find((a) => a.is_default) || activeAccounts[0];
+    personalForm.setFieldsValue({
+      bankAccountId: defaultAccount?.id,
+      txnDate: dayjs(),
+    });
+    setPersonalModal(true);
+  };
+
+  const onPersonalWithdraw = async (values) => {
+    setWithdrawing(true);
+    try {
+      await client.post('/wallet/personal-withdraw', {
+        amount: values.amount,
+        bankAccountId: values.bankAccountId,
+        notes: values.notes,
+        txnDate: values.txnDate?.toISOString(),
+      });
+      message.success('Personal withdrawal recorded from manager profit');
+      setPersonalModal(false);
+      personalForm.resetFields();
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Withdrawal failed'));
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
   const accountOptions = activeAccounts.map((a) => ({
     value: a.id,
     label: `${a.label} — ${formatCurrency(a.balance)}`,
@@ -204,9 +244,16 @@ export default function WalletPage() {
     <div>
       <PageHeader
         title="Owner Wallet"
-        subtitle="Total across all accounts — transfer between your own bank accounts anytime"
+        subtitle="Total across all accounts — personal withdrawals use manager profit only"
         extra={(
           <Space wrap>
+            <Button
+              icon={<UserOutlined />}
+              onClick={openPersonalWithdraw}
+              disabled={maxWithdraw <= 0 || activeAccounts.length === 0}
+            >
+              Personal withdrawal
+            </Button>
             <Button
               icon={<SwapOutlined />}
               onClick={openTransfer}
@@ -220,8 +267,8 @@ export default function WalletPage() {
           </Space>
         )}
       />
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} md={8}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} sm={12} md={6}>
           <StatCard
             title="Total Available"
             value={formatCurrency(balance)}
@@ -229,15 +276,41 @@ export default function WalletPage() {
             variant="primary"
           />
         </Col>
-        <Col xs={24} sm={12} md={8}>
+        <Col xs={24} sm={12} md={6}>
           <StatCard
-            title="Active Accounts"
-            value={activeAccounts.length}
+            title="Available manager profit"
+            value={formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
+            icon={<UserOutlined />}
+            variant="success"
+          />
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <StatCard
+            title="Personal withdrawn"
+            value={formatCurrency(managerProfit?.personalWithdrawn ?? 0)}
+            variant="warning"
+          />
+        </Col>
+        <Col xs={24} sm={12} md={6}>
+          <StatCard
+            title="Max personal withdraw"
+            value={formatCurrency(maxWithdraw)}
             icon={<BankOutlined />}
             variant="info"
           />
         </Col>
       </Row>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 24 }}
+        message="Personal withdrawal uses manager IPO profit only. Provider profit is reserved in the wallet and must be handled under Fund Providers."
+        description={
+          managerProfit?.providerAccruedProfit > 0
+            ? `Provider profit reserved: ${formatCurrency(managerProfit.providerAccruedProfit)} (not withdrawable here).`
+            : undefined
+        }
+      />
 
       <ContentCard title="Bank Accounts" style={{ marginBottom: 24 }}>
         <Table
@@ -339,6 +412,58 @@ export default function WalletPage() {
           </Form.Item>
           <Form.Item name="notes" label="Notes (optional)">
             <Input.TextArea rows={2} placeholder="e.g. Moved to SBI for IPO payout" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Personal withdrawal (manager profit)"
+        open={personalModal}
+        onCancel={() => setPersonalModal(false)}
+        onOk={() => personalForm.submit()}
+        confirmLoading={withdrawing}
+        okButtonProps={{ disabled: maxWithdraw <= 0 }}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Max withdraw: {formatCurrency(maxWithdraw)} (manager profit{' '}
+          {formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
+          {managerProfit?.providerAccruedProfit > 0
+            ? `, provider profit reserved ${formatCurrency(managerProfit.providerAccruedProfit)}`
+            : ''}
+          , wallet {formatCurrency(balance)}). Provider profit cannot be withdrawn here.
+        </Typography.Paragraph>
+        <Form form={personalForm} layout="vertical" onFinish={onPersonalWithdraw}>
+          <Form.Item
+            name="bankAccountId"
+            label="From account"
+            rules={[{ required: true, message: 'Select account' }]}
+          >
+            <Select options={accountOptions} showSearch optionFilterProp="label" />
+          </Form.Item>
+          <Form.Item
+            name="amount"
+            label="Amount"
+            rules={[
+              { required: true, message: 'Enter amount' },
+              {
+                validator: (_, value) => {
+                  if (value == null) return Promise.resolve();
+                  if (Number(value) > maxWithdraw) {
+                    return Promise.reject(new Error(`Max is ${formatCurrency(maxWithdraw)}`));
+                  }
+                  return Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <InputNumber min={0.01} max={maxWithdraw || undefined} style={{ width: '100%' }} prefix="₹" />
+          </Form.Item>
+          <Form.Item name="txnDate" label="Date">
+            <DatePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="notes" label="Notes (optional)">
+            <Input.TextArea rows={2} placeholder="e.g. Personal expense" />
           </Form.Item>
         </Form>
       </Modal>

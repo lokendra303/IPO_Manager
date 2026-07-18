@@ -1317,6 +1317,73 @@ async function applyIpoInvalidFlagV46(conn) {
   console.log('Added ipos.is_invalid for soft-hiding duplicate/invalid IPOs');
 }
 
+async function applyPersonalWithdrawV47(conn) {
+  if (!(await tableExists(conn, 'wallet_transactions'))) return;
+  const [col] = await conn.query(
+    `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wallet_transactions' AND COLUMN_NAME = 'type'`
+  );
+  const columnType = col[0]?.COLUMN_TYPE || '';
+  if (columnType.includes('PERSONAL_OUT')) return;
+
+  await conn.query(
+    `ALTER TABLE wallet_transactions
+     MODIFY COLUMN type ENUM(
+       'PROVIDER_IN', 'DISTRIBUTE_OUT', 'RETURN_IN', 'ADJUSTMENT', 'PROVIDER_OUT',
+       'TRANSFER_OUT', 'TRANSFER_IN', 'PERSONAL_OUT'
+     ) NOT NULL`
+  );
+  console.log('Added PERSONAL_OUT to wallet_transactions.type');
+}
+
+/**
+ * Early HNI rollout defaulted allowed_categories to ["RII","HNI"] and copied
+ * lot_amount into lot_amount_hni. Strip unused HNI so RII-only IPOs don't show
+ * a duplicate HNI lot. Keep HNI when there are HNI applications or a distinct lot.
+ */
+async function applyStripUnusedDefaultHniV48(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+
+  const [rows] = await conn.query(
+    `SELECT i.id, i.allowed_categories, i.lot_amount_rii, i.lot_amount_hni, i.lot_amount
+     FROM ipos i
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ipo_applications a
+       WHERE a.ipo_id = i.id AND a.investor_category = 'HNI'
+     )`
+  );
+
+  let updated = 0;
+  for (const row of rows) {
+    let cats = row.allowed_categories;
+    if (typeof cats === 'string') {
+      try {
+        cats = JSON.parse(cats);
+      } catch {
+        continue;
+      }
+    }
+    if (!Array.isArray(cats)) continue;
+    const upper = cats.map((c) => String(c).toUpperCase());
+    if (!upper.includes('HNI')) continue;
+
+    const rii = Number(row.lot_amount_rii ?? row.lot_amount);
+    const hni = row.lot_amount_hni != null ? Number(row.lot_amount_hni) : null;
+    const hniLooksDefault = hni == null || (!Number.isNaN(rii) && hni === rii);
+    if (!hniLooksDefault) continue;
+
+    await conn.query(
+      `UPDATE ipos SET allowed_categories = ?, lot_amount_hni = NULL WHERE id = ?`,
+      [JSON.stringify(['RII']), row.id]
+    );
+    updated += 1;
+  }
+
+  if (updated) {
+    console.log(`Stripped unused default HNI from ${updated} IPO(s)`);
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1369,6 +1436,8 @@ async function migrate() {
   await applyClearOrphanProfitLossV44(conn);
   await applyRecoverProfitFromDistributionsV45(conn);
   await applyIpoInvalidFlagV46(conn);
+  await applyPersonalWithdrawV47(conn);
+  await applyStripUnusedDefaultHniV48(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

@@ -3,6 +3,64 @@ export function getErrorMessage(err: unknown, fallback = 'Something went wrong')
   return e?.response?.data?.error || e?.message || fallback;
 }
 
+type UndoSettleRow = { label: string; value: string };
+
+/** Structured undo-settle failure for Alert popups. */
+export function getUndoSettleBlockedModal(err: unknown): {
+  title: string;
+  summary: string;
+  rows: UndoSettleRow[];
+  steps: string[];
+} {
+  const data = (err as { response?: { data?: any } })?.response?.data || {};
+  const code = data.code || '';
+  const d = data.details || {};
+  const money = (v: unknown) =>
+    `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+  if (code === 'UNDO_SETTLE_INSUFFICIENT_WALLET' || code === 'UNDO_SETTLE_INSUFFICIENT_ACCOUNT') {
+    const accountLine = d.accountLabel
+      ? `Account "${d.accountLabel}" no longer has enough balance.`
+      : 'The wallet no longer has enough balance.';
+    return {
+      title: 'Cannot undo settle yet',
+      summary: `${accountLine} The returned money was likely paid to a fund provider or withdrawn as manager profit.`,
+      rows: [
+        d.memberName ? { label: 'Member', value: String(d.memberName) } : null,
+        d.ipoName ? { label: 'IPO', value: String(d.ipoName) } : null,
+        d.accountLabel ? { label: 'Account', value: String(d.accountLabel) } : null,
+        { label: 'Return credited', value: money(d.credited) },
+        { label: 'Available now', value: money(d.walletBalance) },
+        { label: 'Short by', value: money(d.shortfall) },
+      ].filter(Boolean) as UndoSettleRow[],
+      steps: [
+        'Reverse the provider payout, or put the same amount back into the wallet.',
+        'If you used Personal withdrawal, reverse that too if needed.',
+        'Then tap Undo settle again.',
+      ],
+    };
+  }
+
+  if (code === 'UNDO_SETTLE_ACCOUNT_MISSING') {
+    return {
+      title: 'Cannot undo settle yet',
+      summary: 'The bank account that received this return is missing.',
+      rows: [
+        d.memberName ? { label: 'Member', value: String(d.memberName) } : null,
+        d.ipoName ? { label: 'IPO', value: String(d.ipoName) } : null,
+      ].filter(Boolean) as UndoSettleRow[],
+      steps: ['Restore that bank account under Wallet, then try Undo settle again.'],
+    };
+  }
+
+  return {
+    title: 'Cannot undo settle yet',
+    summary: getErrorMessage(err, 'Undo settle is not available right now.'),
+    rows: [],
+    steps: ['Check wallet balance and provider payouts, then try again.'],
+  };
+}
+
 export function getAuthErrorModal(err: unknown, context: 'manager' | 'member' | 'register' = 'manager') {
   const raw = getErrorMessage(err, '');
   const lower = raw.toLowerCase();

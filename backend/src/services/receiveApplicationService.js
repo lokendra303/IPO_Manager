@@ -1,8 +1,12 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { parseAmount } from '../utils/validate.js';
 import { requireBankAccountId, syncOwnerWalletTotal } from './bankAccountService.js';
-import { resolveApplicationProfitSplit } from './profitShareService.js';
-import { creditWallet, ensureWallet } from './walletService.js';
+import { resolveApplicationProfitSplit, revokeProfitShareDistribution } from './profitShareService.js';
+import { applyWalletDelta, creditWallet, ensureWallet } from './walletService.js';
+
+function round2(n) {
+  return Math.round(Number(n || 0) * 100) / 100;
+}
 
 async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
   const [rows] = await conn.query(
@@ -294,4 +298,190 @@ export async function receiveIpoApplicationsBulk(conn, {
   }
 
   return { received: results, failed, receivedCount: results.length };
+}
+
+/**
+ * Undo a mistaken fund settle (Receive).
+ * Reverses wallet RETURN_IN, deletes member RECEIVED ledger, clears trns_received.
+ * Optionally revokes the P&L profit split as well.
+ */
+export async function undoReceiveIpoApplication(conn, {
+  tenantId,
+  appId,
+  userId,
+  revokeProfitSplit = false,
+}) {
+  const [apps] = await conn.query(
+    `SELECT a.*, i.name AS ipo_name, m.display_name
+     FROM ipo_applications a
+     JOIN ipos i ON i.id = a.ipo_id
+     JOIN members m ON m.id = a.member_id
+     WHERE a.id = ? AND a.tenant_id = ?`,
+    [appId, tenantId]
+  );
+  if (!apps.length) throw new AppError('Application not found', 404);
+
+  const app = apps[0];
+
+  const [walletRows] = await conn.query(
+    `SELECT * FROM wallet_transactions
+     WHERE tenant_id = ? AND type = 'RETURN_IN' AND ref_type = 'ipo_application' AND ref_id = ?
+     ORDER BY id DESC`,
+    [tenantId, appId]
+  );
+
+  const [ledgerRows] = await conn.query(
+    `SELECT id, amount FROM member_ledger_entries
+     WHERE tenant_id = ? AND ipo_application_id = ? AND type = 'RECEIVED'`,
+    [tenantId, appId]
+  );
+
+  if (!walletRows.length && !ledgerRows.length && app.trns_received !== 'Received') {
+    throw new AppError('This application is not settled — nothing to undo');
+  }
+
+  // Must reverse RETURN_IN cash. If wallet was already paid out (e.g. provider repayment),
+  // block undo so books stay consistent.
+  const totalToReverse = round2(
+    walletRows.reduce((sum, wt) => sum + Math.max(0, Number(wt.amount || 0)), 0)
+  );
+  if (totalToReverse > 0) {
+    const walletBalance = round2(await syncOwnerWalletTotal(conn, tenantId));
+    if (walletBalance + 0.001 < totalToReverse) {
+      const shortfall = round2(totalToReverse - walletBalance);
+      throw new AppError(
+        `Undo settle is not available for ${app.display_name} because the wallet no longer holds the full returned amount.`,
+        400,
+        {
+          code: 'UNDO_SETTLE_INSUFFICIENT_WALLET',
+          details: {
+            memberName: app.display_name,
+            ipoName: app.ipo_name,
+            credited: totalToReverse,
+            walletBalance,
+            shortfall,
+            reason: 'provider_or_personal_payout',
+          },
+        }
+      );
+    }
+
+    for (const wt of walletRows) {
+      const amount = round2(Math.max(0, Number(wt.amount || 0)));
+      if (amount <= 0 || !wt.bank_account_id) continue;
+      const [accRows] = await conn.query(
+        `SELECT label, balance FROM manager_bank_accounts
+         WHERE id = ? AND tenant_id = ?`,
+        [wt.bank_account_id, tenantId]
+      );
+      const acc = accRows[0];
+      if (!acc) {
+        throw new AppError(
+          `Undo settle is not available for ${app.display_name} because the bank account that received this return is missing.`,
+          400,
+          {
+            code: 'UNDO_SETTLE_ACCOUNT_MISSING',
+            details: {
+              memberName: app.display_name,
+              ipoName: app.ipo_name,
+              credited: amount,
+            },
+          }
+        );
+      }
+      if (round2(acc.balance) + 0.001 < amount) {
+        const shortfall = round2(amount - Number(acc.balance));
+        throw new AppError(
+          `Undo settle is not available for ${app.display_name} because account "${acc.label}" no longer holds the returned amount.`,
+          400,
+          {
+            code: 'UNDO_SETTLE_INSUFFICIENT_ACCOUNT',
+            details: {
+              memberName: app.display_name,
+              ipoName: app.ipo_name,
+              accountLabel: acc.label,
+              credited: amount,
+              walletBalance: round2(acc.balance),
+              shortfall,
+              reason: 'provider_or_personal_payout',
+            },
+          }
+        );
+      }
+    }
+  }
+
+  const now = new Date();
+  let walletReversed = 0;
+
+  for (const wt of walletRows) {
+    const amount = Number(wt.amount);
+    if (amount !== 0) {
+      try {
+        await applyWalletDelta(conn, {
+          tenantId,
+          delta: -amount,
+          bankAccountId: wt.bank_account_id,
+          type: 'ADJUSTMENT',
+          refType: 'receive_reversal',
+          refId: appId,
+          txnDate: now,
+          notes: `Undo settle — ${app.display_name} (${app.ipo_name})`,
+          userId,
+          allowNegativeBalance: false,
+        });
+      } catch (err) {
+        if (err instanceof AppError) {
+          throw new AppError(
+            `Undo settle is not available right now for ${app.display_name}. ${err.message} ` +
+              'Put the money back into the wallet first, then try again.',
+            err.status || 400
+          );
+        }
+        throw err;
+      }
+      walletReversed += amount;
+    }
+    await conn.query('DELETE FROM wallet_transactions WHERE id = ? AND tenant_id = ?', [
+      wt.id,
+      tenantId,
+    ]);
+  }
+
+  if (ledgerRows.length) {
+    await conn.query(
+      `DELETE FROM member_ledger_entries
+       WHERE tenant_id = ? AND ipo_application_id = ? AND type = 'RECEIVED'`,
+      [tenantId, appId]
+    );
+  }
+
+  await conn.query(
+    `UPDATE ipo_applications
+     SET trns_received = NULL, date_received = NULL
+     WHERE id = ? AND tenant_id = ?`,
+    [appId, tenantId]
+  );
+
+  let profitRevoked = false;
+  if (revokeProfitSplit) {
+    const result = await revokeProfitShareDistribution(conn, {
+      tenantId,
+      applicationId: appId,
+      userId,
+    });
+    profitRevoked = Boolean(result.revoked);
+  }
+
+  await syncOwnerWalletTotal(conn, tenantId);
+
+  return {
+    appId,
+    memberName: app.display_name,
+    ipoName: app.ipo_name,
+    walletReversed: Math.round(walletReversed * 100) / 100,
+    ledgerCleared: ledgerRows.length,
+    settledFlagCleared: true,
+    profitRevoked,
+  };
 }

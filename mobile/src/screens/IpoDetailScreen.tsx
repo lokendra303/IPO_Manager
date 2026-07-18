@@ -28,7 +28,7 @@ import {
 } from '../utils/ipoCategories';
 import { formatCurrency, formatPan, pnlColor } from '../utils/format';
 import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoProfit';
-import { getErrorMessage } from '../utils/errors';
+import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
 import { colors } from '../theme';
 
 const ALLOTMENT_OPTIONS = [
@@ -38,7 +38,7 @@ const ALLOTMENT_OPTIONS = [
   { value: 'NOT_APPLIED', label: 'Did not apply' },
 ];
 
-type ReturnFilter = 'all' | 'returned' | 'pending' | 'not_applied' | 'allotted';
+type ReturnFilter = 'all' | 'returned' | 'pending' | 'not_applied' | 'allotted' | 'not_allotted';
 
 function isFundReturned(app: any) {
   return app.trns_received === 'Received';
@@ -67,11 +67,15 @@ export default function IpoDetailScreen() {
   const [hniSaving, setHniSaving] = useState(false);
   const [enableHni, setEnableHni] = useState(false);
   const [lotAmountHni, setLotAmountHni] = useState('');
+  const [editIpoModalOpen, setEditIpoModalOpen] = useState(false);
+  const [editIpoSaving, setEditIpoSaving] = useState(false);
+  const [editIpoName, setEditIpoName] = useState('');
   const [returnFilter, setReturnFilter] = useState<ReturnFilter>('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState<number[]>([]);
   const [receiveAccountId, setReceiveAccountId] = useState<number | null>(null);
   const [receivingAppId, setReceivingAppId] = useState<number | null>(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
+  const [undoingAppId, setUndoingAppId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [distributeOpen, setDistributeOpen] = useState(false);
@@ -166,11 +170,13 @@ export default function IpoDetailScreen() {
     editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
   const isNotApplied = (app: any) => getAllotmentStatus(app) === 'NOT_APPLIED';
   const isAllotted = (app: any) => getAllotmentStatus(app) === 'ALLOTED';
+  const isNotAllotted = (app: any) => getAllotmentStatus(app) === 'NOT_ALLOTED';
 
   const returnedCount = applications.filter(isFundReturned).length;
   const pendingReturnCount = applications.length - returnedCount;
   const notAppliedCount = applications.filter(isNotApplied).length;
   const allottedCount = applications.filter(isAllotted).length;
+  const notAllottedCount = applications.filter(isNotAllotted).length;
   const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app));
 
   const filteredApplications = applications.filter((app) => {
@@ -178,6 +184,7 @@ export default function IpoDetailScreen() {
     if (returnFilter === 'pending') return !isFundReturned(app);
     if (returnFilter === 'not_applied') return isNotApplied(app);
     if (returnFilter === 'allotted') return isAllotted(app);
+    if (returnFilter === 'not_allotted') return isNotAllotted(app);
     return true;
   });
 
@@ -339,6 +346,30 @@ export default function IpoDetailScreen() {
     setEnableHni(ipoAllowsHni(ipo));
     setLotAmountHni(ipo?.lot_amount_hni != null ? String(ipo.lot_amount_hni) : '');
     setHniModalOpen(true);
+  };
+
+  const openEditIpo = () => {
+    setEditIpoName(ipo?.name || '');
+    setEditIpoModalOpen(true);
+  };
+
+  const onSaveEditIpo = async () => {
+    const name = editIpoName.trim();
+    if (!name) {
+      Alert.alert('Error', 'Enter IPO name');
+      return;
+    }
+    setEditIpoSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, { name });
+      setIpo(data);
+      setEditIpoModalOpen(false);
+      Alert.alert('Success', 'IPO name updated');
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Could not update IPO'));
+    } finally {
+      setEditIpoSaving(false);
+    }
   };
 
   const onSaveHniConfig = async () => {
@@ -509,6 +540,75 @@ export default function IpoDetailScreen() {
     }
   };
 
+  const onUndoReceive = (appId: number, revokeProfitSplit = false) => {
+    Alert.alert(
+      revokeProfitSplit ? 'Undo settle + P&L split?' : 'Undo settle?',
+      revokeProfitSplit
+        ? 'Reverses fund return to wallet and revokes the profit split. Blocked if wallet does not have enough cash (e.g. provider already repaid).'
+        : 'Reverses wallet credit and member RECEIVED ledger. Blocked if wallet does not have enough cash (e.g. provider already repaid).',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: revokeProfitSplit ? 'Undo all' : 'Undo settle',
+          style: 'destructive',
+          onPress: async () => {
+            setUndoingAppId(appId);
+            try {
+              const { data } = await client.post(`/ipos/applications/${appId}/undo-receive`, {
+                revokeProfitSplit,
+              });
+              await refreshReceiveData();
+              Alert.alert(
+                'Done',
+                revokeProfitSplit && data.profitRevoked
+                  ? 'Settle undone and P&L split revoked'
+                  : 'Settle undone — wallet and ledger reversed'
+              );
+            } catch (err) {
+              const info = getUndoSettleBlockedModal(err);
+              Alert.alert(
+                info.title,
+                [
+                  info.summary,
+                  '',
+                  ...info.rows.map((r) => `${r.label}: ${r.value}`),
+                  '',
+                  'What to do:',
+                  ...info.steps.map((s, i) => `${i + 1}. ${s}`),
+                ].join('\n')
+              );
+            } finally {
+              setUndoingAppId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const onRevokeProfitSplit = (appId: number) => {
+    Alert.alert(
+      'Revoke P&L profit split?',
+      'Removes the split and reverses provider accruals. Does not undo fund settle.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Revoke split',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await client.post('/profit-shares/revoke', { applicationId: appId });
+              await refreshReceiveData();
+              Alert.alert('Done', 'P&L split revoked');
+            } catch (err) {
+              Alert.alert('Error', getErrorMessage(err, 'Could not revoke P&L split'));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const onReceiveBulk = async () => {
     if (!receivableSelectedIds.length) {
       Alert.alert('Warning', 'Select members whose funds you have received back');
@@ -620,7 +720,12 @@ export default function IpoDetailScreen() {
             ? ` · HNI ${ipoHasHniLot(ipo) ? formatCurrency(getLotAmountForCategory(ipo, 'HNI')) : 'not set'}`
             : '')
         }
-        extra={<Button compact mode="outlined" onPress={() => router.back()}>Back</Button>}
+        extra={
+          <View style={{ gap: 6, alignItems: 'flex-end' }}>
+            <Button compact mode="outlined" onPress={openEditIpo}>Edit</Button>
+            <Button compact mode="outlined" onPress={() => router.back()}>Back</Button>
+          </View>
+        }
       />
 
       {allowedCategoryTags.length > 0 && (
@@ -747,31 +852,65 @@ export default function IpoDetailScreen() {
           )}
           <ActionCell>
             {isInvalid ? (
-              <Button
-                loading={statusLoading}
-                onPress={() =>
-                  Alert.alert('Restore to main IPO list?', undefined, [
-                    { text: 'Cancel' },
-                    {
-                      text: 'Restore',
-                      onPress: async () => {
-                        setStatusLoading(true);
-                        try {
-                          const { data } = await client.post(`/ipos/${id}/restore`);
-                          setIpo(data);
-                        } catch (err) {
-                          Alert.alert('Error', getErrorMessage(err));
-                        } finally {
-                          setStatusLoading(false);
-                        }
+              <>
+                <Button
+                  loading={statusLoading}
+                  onPress={() =>
+                    Alert.alert('Restore to main IPO list?', undefined, [
+                      { text: 'Cancel' },
+                      {
+                        text: 'Restore',
+                        onPress: async () => {
+                          setStatusLoading(true);
+                          try {
+                            const { data } = await client.post(`/ipos/${id}/restore`);
+                            setIpo(data);
+                          } catch (err) {
+                            Alert.alert('Error', getErrorMessage(err));
+                          } finally {
+                            setStatusLoading(false);
+                          }
+                        },
                       },
-                    },
-                  ])
-                }
-                style={styles.fullBtn}
-              >
-                Restore IPO
-              </Button>
+                    ])
+                  }
+                  style={styles.fullBtn}
+                >
+                  Restore IPO
+                </Button>
+                <Button
+                  mode="outlined"
+                  textColor="#dc2626"
+                  loading={statusLoading}
+                  onPress={() =>
+                    Alert.alert(
+                      'Permanently delete this IPO?',
+                      'Only empty invalid IPOs can be deleted. This cannot be undone.',
+                      [
+                        { text: 'Cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: async () => {
+                            setStatusLoading(true);
+                            try {
+                              await client.delete(`/ipos/${id}`);
+                              router.replace('/(manager)/ipos');
+                            } catch (err) {
+                              Alert.alert('Error', getErrorMessage(err));
+                            } finally {
+                              setStatusLoading(false);
+                            }
+                          },
+                        },
+                      ]
+                    )
+                  }
+                  style={[styles.fullBtn, { marginTop: 8 }]}
+                >
+                  Delete IPO
+                </Button>
+              </>
             ) : isClosed ? (
               <Button loading={statusLoading} onPress={onReopenIpo} style={styles.fullBtn}>Reopen IPO</Button>
             ) : (
@@ -875,9 +1014,10 @@ export default function IpoDetailScreen() {
             options={[
               { value: 'all', label: `All (${applications.length})` },
               { value: 'returned', label: `Returned (${returnedCount})` },
-              { value: 'pending', label: `Pending (${pendingReturnCount})` },
+              { value: 'pending', label: `Pending payment (${pendingReturnCount})` },
               { value: 'not_applied', label: `No apply (${notAppliedCount})` },
               { value: 'allotted', label: `Alloted (${allottedCount})` },
+              { value: 'not_allotted', label: `Not alloted (${notAllottedCount})` },
             ]}
             />
           </View>
@@ -913,8 +1053,13 @@ export default function IpoDetailScreen() {
                 )
               }
               onReceive={() => onReceive(app.id)}
+              onUndoReceive={() => onUndoReceive(app.id, false)}
+              onUndoReceiveWithProfit={() => onUndoReceive(app.id, true)}
+              onRevokeProfitSplit={() => onRevokeProfitSplit(app.id)}
               receiving={receivingAppId === app.id}
+              undoing={undoingAppId === app.id}
               canReceive={!isFundReturned(app)}
+              hasProfitSplit={Boolean(app.profit_share_distribution_id)}
             />
           ))
         )}
@@ -1178,6 +1323,25 @@ export default function IpoDetailScreen() {
         </SafeAreaView>
       </Modal>
 
+      {/* Edit IPO name modal */}
+      <Modal visible={editIpoModalOpen} animationType="slide" transparent onRequestClose={() => setEditIpoModalOpen(false)}>
+        <View style={ui.modalBg}>
+          <View style={ui.modalCard}>
+            <Text style={ui.modalTitle}>Edit IPO</Text>
+            <TextInput
+              label="IPO name"
+              value={editIpoName}
+              onChangeText={setEditIpoName}
+              mode="outlined"
+              style={ui.input}
+              maxLength={120}
+            />
+            <Button mode="contained" loading={editIpoSaving} onPress={onSaveEditIpo}>Save</Button>
+            <Button mode="text" onPress={() => setEditIpoModalOpen(false)}>Cancel</Button>
+          </View>
+        </View>
+      </Modal>
+
       {/* HNI modal */}
       <Modal visible={hniModalOpen} animationType="slide" transparent onRequestClose={() => setHniModalOpen(false)}>
         <View style={ui.modalBg}>
@@ -1266,8 +1430,13 @@ function ApplicationCard({
   selected,
   onToggleSelect,
   onReceive,
+  onUndoReceive,
+  onUndoReceiveWithProfit,
+  onRevokeProfitSplit,
   receiving,
+  undoing,
   canReceive,
+  hasProfitSplit,
 }: any) {
   const status = getRowVal(app, 'allotmentStatus', 'allotment_status');
   const pnl = getComputedProfit(app);
@@ -1387,11 +1556,28 @@ function ApplicationCard({
       />
 
       {canReceive ? (
-        <Button compact mode="contained" loading={receiving} onPress={onReceive}>
-          Receive — return to wallet
-        </Button>
+        <View style={{ gap: 8 }}>
+          <Button compact mode="contained" loading={receiving} onPress={onReceive}>
+            Receive — return to wallet
+          </Button>
+          {hasProfitSplit ? (
+            <Button compact mode="outlined" textColor="#dc2626" onPress={onRevokeProfitSplit}>
+              Undo P&L split
+            </Button>
+          ) : null}
+        </View>
       ) : (
-        <Tag label="Settled" color="#059669" />
+        <View style={{ gap: 8 }}>
+          <Tag label="Settled" color="#059669" />
+          <Button compact mode="outlined" textColor="#dc2626" loading={undoing} onPress={onUndoReceive}>
+            Undo settle
+          </Button>
+          {hasProfitSplit ? (
+            <Button compact mode="text" textColor="#dc2626" loading={undoing} onPress={onUndoReceiveWithProfit}>
+              Undo settle + P&L
+            </Button>
+          ) : null}
+        </View>
       )}
     </InfoCard>
   );

@@ -861,6 +861,7 @@ body {
 
 .pro-table .ant-table-tbody > tr > td {
   font-size: 13px;
+  vertical-align: middle;
 }
 
 .allotment-check-modal .allotment-check-portals {

@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler.js';
 
 import { distributeIpo } from '../services/distributeService.js';
 
-import { receiveIpoApplication, receiveIpoApplicationsBulk } from '../services/receiveApplicationService.js';
+import { receiveIpoApplication, receiveIpoApplicationsBulk, undoReceiveIpoApplication } from '../services/receiveApplicationService.js';
 import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
@@ -38,7 +38,11 @@ router.get('/', async (req, res, next) => {
 
       `SELECT i.*,
 
-        (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count
+        (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count,
+
+        (SELECT COUNT(*) FROM ipo_applications a
+          WHERE a.ipo_id = i.id
+            AND (a.trns_received IS NULL OR a.trns_received <> 'Received')) as pending_return_count
 
        FROM ipos i WHERE i.tenant_id = ? ${invalidFilter} ORDER BY i.created_at DESC`,
 
@@ -365,6 +369,48 @@ router.post('/:id/restore', async (req, res, next) => {
   }
 });
 
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [existing] = await pool.query(
+      'SELECT * FROM ipos WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    if (!existing.length) throw new AppError('IPO not found', 404);
+    if (!existing[0].is_invalid) {
+      throw new AppError('Only invalid IPOs can be deleted. Mark as invalid first.', 409);
+    }
+
+    const [[appCount]] = await pool.query(
+      'SELECT COUNT(*) AS cnt FROM ipo_applications WHERE ipo_id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    if (Number(appCount.cnt) > 0) {
+      throw new AppError(
+        'This IPO has applications and cannot be deleted. Keep it as invalid, or undo distributions/settlements first.',
+        409
+      );
+    }
+
+    const [[walletCount]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM wallet_transactions
+       WHERE tenant_id = ? AND ref_type = 'ipo' AND ref_id = ?`,
+      [req.tenantId, ipoId]
+    );
+    if (Number(walletCount.cnt) > 0) {
+      throw new AppError(
+        'This IPO has wallet history and cannot be deleted. Keep it as invalid.',
+        409
+      );
+    }
+
+    await pool.query('DELETE FROM ipos WHERE id = ? AND tenant_id = ?', [ipoId, req.tenantId]);
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id/applications', async (req, res, next) => {
 
   try {
@@ -593,6 +639,26 @@ router.post('/applications/:appId/receive', async (req, res, next) => {
 });
 
 
+
+router.post('/applications/:appId/undo-receive', async (req, res, next) => {
+  try {
+    const appId = parsePositiveInt(req.params.appId, 'application id');
+    const revokeProfitSplit = req.body.revokeProfitSplit === true;
+
+    const result = await withTransaction(async (conn) =>
+      undoReceiveIpoApplication(conn, {
+        tenantId: req.tenantId,
+        appId,
+        userId: req.user.userId,
+        revokeProfitSplit,
+      })
+    );
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;
 

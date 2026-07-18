@@ -133,6 +133,13 @@ const RULES = [
     summary: (_req, path) => `Restored IPO #${idFromPath(path)} to main list`,
   },
   {
+    method: 'DELETE',
+    pattern: /^\/ipos\/\d+$/,
+    action: 'IPO_DELETE',
+    entityType: 'ipo',
+    summary: (_req, path) => `Deleted invalid IPO #${idFromPath(path)}`,
+  },
+  {
     method: 'POST',
     pattern: /^\/ipos\/\d+\/distribute$/,
     action: 'IPO_DISTRIBUTE',

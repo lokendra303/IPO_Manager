@@ -1,7 +1,11 @@
 import { Router } from 'express';
-import { pool } from '../db/pool.js';
+import { pool, withTransaction } from '../db/pool.js';
 import { ensureWallet } from '../services/walletService.js';
 import { listBankAccounts } from '../services/bankAccountService.js';
+import {
+  getManagerProfitSummary,
+  personalWithdraw,
+} from '../services/managerProfitService.js';
 
 const router = Router();
 
@@ -11,9 +15,11 @@ router.get('/', async (req, res, next) => {
     try {
       const wallet = await ensureWallet(conn, req.tenantId);
       const accounts = await listBankAccounts(conn, req.tenantId);
+      const managerProfit = await getManagerProfitSummary(conn, req.tenantId);
       res.json({
         balance: Number(wallet.balance),
         accounts,
+        managerProfit,
       });
     } finally {
       conn.release();
@@ -34,6 +40,24 @@ router.get('/transactions', async (req, res, next) => {
       [req.tenantId]
     );
     res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/personal-withdraw', async (req, res, next) => {
+  try {
+    const result = await withTransaction((conn) =>
+      personalWithdraw(conn, {
+        tenantId: req.tenantId,
+        amount: req.body.amount,
+        bankAccountId: req.body.bankAccountId,
+        notes: req.body.notes,
+        userId: req.user?.id,
+        txnDate: req.body.txnDate,
+      })
+    );
+    res.json(result);
   } catch (err) {
     next(err);
   }

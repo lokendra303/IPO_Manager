@@ -9,7 +9,7 @@ import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import Banner from '../components/Banner';
-import { categoryTagColor, getLotAmountForCategory, parseAllowedCategories } from '../utils/ipoCategories';
+import { getLotAmountForCategory, ipoAllowsHni, ipoHasHniLot } from '../utils/ipoCategories';
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import SlideModal from '../components/SlideModal';
@@ -17,7 +17,8 @@ import FilterChips from '../components/FilterChips';
 import { fetchRegistrarOptions, type RegistrarOption } from '../utils/allotmentCheck';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
-import { Alert, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
+import { colors } from '../theme';
 
 export default function IposScreen() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -108,26 +109,69 @@ export default function IposScreen() {
     ]);
   };
 
+  const deleteIpo = (ipo: any) => {
+    Alert.alert(
+      'Permanently delete this IPO?',
+      'Only empty invalid IPOs can be deleted. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await client.delete(`/ipos/${ipo.id}`);
+              await refresh();
+            } catch (err) {
+              Alert.alert('Error', getErrorMessage(err));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const renderIpoCard = (r: any, { invalid = false } = {}) => {
-    const cats = parseAllowedCategories(r);
+    const pendingReturn = Number(r.pending_return_count) || 0;
+    const apps = Number(r.application_count) || 0;
     return (
       <View key={r.id} style={ui.card}>
         <ListRow
           title={r.name}
-          subtitle={`${r.ipo_segment === 'SME' ? 'SME' : 'Mainboard'} · RII ${formatCurrency(getLotAmountForCategory(r, 'RII'))} · ${r.application_count} apps`}
+          subtitle={r.ipo_segment === 'SME' ? 'SME' : 'Mainboard'}
           onPress={() => router.push(`/(manager)/ipos/${r.id}`)}
-          right={
-            <View style={{ alignItems: 'flex-end', gap: 4 }}>
-              <Tag label={r.status} color={r.status === 'OPEN' ? '#059669' : '#dc2626'} />
-              {invalid && <Tag label="INVALID" color="#64748b" />}
-            </View>
-          }
+          right={invalid ? <Tag label="INVALID" color="#64748b" /> : undefined}
         />
-        <View style={ui.chipRow}>{cats.map((c) => <Tag key={c} label={c} color={categoryTagColor(c)} />)}</View>
+        <View style={styles.metaBlock}>
+          <Text style={styles.metaLine}>
+            <Text style={styles.metaLabel}>RII </Text>
+            {formatCurrency(getLotAmountForCategory(r, 'RII'))}
+            {ipoAllowsHni(r) ? (
+              <>
+                {'  ·  '}
+                <Text style={styles.metaLabel}>HNI </Text>
+                {ipoHasHniLot(r) ? formatCurrency(getLotAmountForCategory(r, 'HNI')) : 'Not set'}
+              </>
+            ) : null}
+          </Text>
+          <View style={styles.statsRow}>
+            <Text style={styles.statItem}>
+              <Text style={styles.metaLabel}>Apps </Text>
+              {apps}
+            </Text>
+            <Text style={[styles.statItem, pendingReturn > 0 && styles.pendingWarn]}>
+              <Text style={styles.metaLabel}>Pending return </Text>
+              {pendingReturn}
+            </Text>
+          </View>
+        </View>
         <View style={ui.rowActions}>
           <Button compact onPress={() => router.push(`/(manager)/ipos/${r.id}`)}>View</Button>
           {invalid ? (
-            <Button compact onPress={() => restoreIpo(r)}>Restore</Button>
+            <>
+              <Button compact onPress={() => restoreIpo(r)}>Restore</Button>
+              <Button compact textColor="#dc2626" onPress={() => deleteIpo(r)}>Delete</Button>
+            </>
           ) : (
             <>
               {r.status === 'OPEN' ? (
@@ -163,7 +207,9 @@ export default function IposScreen() {
 
       {invalidList.length > 0 && (
         <ContentCard title={`Invalid IPOs (${invalidList.length})`}>
-          <Banner variant="warn">Duplicate or mistaken IPOs hidden from the main list.</Banner>
+          <Banner variant="warn">
+            Duplicate or mistaken IPOs. Restore to bring back, or delete if there are no applications.
+          </Banner>
           {invalidList.map((r) => renderIpoCard(r, { invalid: true }))}
         </ContentCard>
       )}
@@ -191,3 +237,12 @@ export default function IposScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  metaBlock: { marginTop: 4, marginBottom: 4, gap: 6 },
+  metaLine: { fontSize: 13, color: colors.text, lineHeight: 20 },
+  metaLabel: { color: colors.textSecondary, fontWeight: '500' },
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  statItem: { fontSize: 13, color: colors.text, fontVariant: ['tabular-nums'] },
+  pendingWarn: { color: '#d97706', fontWeight: '600' },
+});
