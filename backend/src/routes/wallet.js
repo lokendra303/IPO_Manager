@@ -31,13 +31,17 @@ router.get('/', async (req, res, next) => {
 
 router.get('/transactions', async (req, res, next) => {
   try {
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500)
+      : 500;
     const [rows] = await pool.query(
       `SELECT wt.*, mba.label as bank_account_label
        FROM wallet_transactions wt
        LEFT JOIN manager_bank_accounts mba ON mba.id = wt.bank_account_id
        WHERE wt.tenant_id = ?
-       ORDER BY wt.txn_date DESC, wt.id DESC LIMIT 500`,
-      [req.tenantId]
+       ORDER BY wt.txn_date DESC, wt.id DESC LIMIT ?`,
+      [req.tenantId, limit]
     );
     res.json(rows);
   } catch (err) {

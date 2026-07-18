@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -11,8 +11,10 @@ import Banner from '../components/Banner';
 import Tag from '../components/Tag';
 import { formatDateTime } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
 import { useQuery } from '../hooks/useQuery';
 import { useAuth } from '../context/AuthContext';
+import { colors } from '../theme';
 import { ui } from '../styles/ui';
 
 const CATEGORIES = [
@@ -58,6 +60,22 @@ export default function MemberIssuesScreen() {
     }
   };
 
+  const openIssueMore = (issue: any) => {
+    openActionSheet(
+      `${issue.category || 'OTHER'} · ${issue.status}`,
+      [],
+      [
+        formatDateTime(issue.created_at),
+        issue.note,
+        issue.resolution_note ? `Manager: ${issue.resolution_note}` : null,
+      ].filter(Boolean).join('\n\n')
+    );
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Issues', [{ text: 'Refresh', onPress: refresh }]);
+  };
+
   if (loading && !issues.length) return <Loading />;
 
   const openCount = issues.filter((i) => i.status === 'OPEN').length;
@@ -66,14 +84,17 @@ export default function MemberIssuesScreen() {
     <Screen bottomNavInset>
       <PageHeader
         title="Issues"
-        subtitle={openCount > 0 ? `${openCount} open issue${openCount === 1 ? '' : 's'}` : 'Report problems and track manager responses'}
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
+        subtitle={openCount > 0 ? `${openCount} open` : 'Report and track'}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
 
       {error ? <Banner variant="warn">{error}</Banner> : null}
 
       <ContentCard title="Report an issue">
-        <Text style={ui.hint}>Choose a category and describe the problem for your manager.</Text>
         <View style={ui.chipRow}>
           {CATEGORIES.map((c) => (
             <Button
@@ -88,22 +109,36 @@ export default function MemberIssuesScreen() {
           ))}
         </View>
         <TextInput label="Describe your issue" value={note} onChangeText={setNote} multiline mode="outlined" style={ui.input} />
-        <Button mode="contained" loading={submitting} onPress={submitIssue}>Submit to manager</Button>
+        <Button mode="contained" loading={submitting} onPress={submitIssue}>Submit</Button>
       </ContentCard>
       <ContentCard title={`Your issues (${issues.length})`}>
         {!issues.length ? (
-          <ListRow title="No issues yet" subtitle="Use the form above if something needs attention" />
+          <ListRow title="No issues yet" subtitle="Use the form above" />
         ) : (
           issues.map((issue) => (
-            <ListRow
-              key={issue.id}
-              title={`${issue.category || 'OTHER'} · ${issue.status === 'OPEN' ? 'Open' : 'Resolved'}`}
-              subtitle={`${formatDateTime(issue.created_at)}\n${issue.note}${issue.resolution_note ? `\nManager: ${issue.resolution_note}` : ''}`}
-              right={<Tag label={issue.status} color={issue.status === 'OPEN' ? '#d97706' : '#059669'} />}
-            />
+            <View key={issue.id} style={styles.compactRow}>
+              <View style={styles.compactRowMain}>
+                <ListRow
+                  title={`${issue.category || 'OTHER'} · ${issue.status === 'OPEN' ? 'Open' : 'Resolved'}`}
+                  subtitle={formatDateTime(issue.created_at)}
+                  right={<Tag label={issue.status} color={issue.status === 'OPEN' ? '#d97706' : '#059669'} />}
+                  onPress={() => openIssueMore(issue)}
+                />
+              </View>
+              <Pressable hitSlop={12} onPress={() => openIssueMore(issue)} style={styles.moreBtn}>
+                <Text style={styles.moreText}>···</Text>
+              </Pressable>
+            </View>
           ))
         )}
       </ContentCard>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'expo-router';
-import adminClient, { setAdminUnauthorizedHandler } from '../api/adminClient';
+import adminClient, { setAdminUnauthorizedHandler, setCachedAdminToken } from '../api/adminClient';
 import { storage } from '../api/storage';
+import { clearCachedAdminToken } from '../api/tokenCache';
 
 export type AdminUser = {
   id: number;
@@ -26,6 +27,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setAdminUnauthorizedHandler(() => {
+      clearCachedAdminToken();
       setAdminState(null);
       router.replace('/(admin-auth)/login');
     });
@@ -36,9 +38,11 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
     (async () => {
       const token = await storage.getItem('adminToken');
       if (!token) {
+        setCachedAdminToken(null);
         setLoading(false);
         return;
       }
+      setCachedAdminToken(token);
       try {
         const stored = await storage.getItem('adminUser');
         if (stored) setAdminState(JSON.parse(stored));
@@ -46,6 +50,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
         setAdminState(data);
         await storage.setItem('adminUser', JSON.stringify(data));
       } catch {
+        clearCachedAdminToken();
         await storage.removeItem('adminToken');
         await storage.removeItem('adminUser');
         setAdminState(null);
@@ -57,6 +62,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
 
   const adminLogin = async (email: string, password: string) => {
     const { data } = await adminClient.post('/admin/auth/login', { email, password });
+    setCachedAdminToken(data.token);
     await storage.setItem('adminToken', data.token);
     await storage.setItem('adminUser', JSON.stringify(data.user));
     setAdminState(data.user);
@@ -64,6 +70,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   };
 
   const adminLogout = async () => {
+    clearCachedAdminToken();
     await storage.removeItem('adminToken');
     await storage.removeItem('adminUser');
     setAdminState(null);

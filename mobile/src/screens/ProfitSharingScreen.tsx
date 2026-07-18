@@ -9,16 +9,15 @@ import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard, { PnlStatCard } from '../components/StatCard';
-import StatGrid from '../components/StatGrid';
 import FilterChips from '../components/FilterChips';
-import InfoCard from '../components/InfoCard';
-import InfoLine from '../components/InfoLine';
 import Banner from '../components/Banner';
 import Loading from '../components/Loading';
+import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
-import { formatCurrency, formatDateTime, formatPan, pnlColor } from '../utils/format';
+import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
-import { spacing } from '../theme';
+import { openActionSheet } from '../utils/actionSheet';
+import { colors, radii, spacing } from '../theme';
 import { ui } from '../styles/ui';
 
 type Tab = 'totals' | 'rules' | 'members' | 'history' | 'pending';
@@ -427,35 +426,112 @@ export default function ProfitSharingScreen() {
     }
   };
 
+  const openHeaderMore = () => {
+    openActionSheet('Profit Sharing', [{ text: 'Refresh', onPress: load }]);
+  };
+
+  const openMemberMore = (m: any) => {
+    const items: { text: string; onPress: () => void }[] = [
+      { text: 'Custom rule', onPress: () => openCreateRule([m.memberId]) },
+    ];
+    if (m.ruleCount > 0) {
+      items.push({ text: 'Manage rules', onPress: () => openManageMember(m) });
+    }
+    openActionSheet(
+      m.displayName,
+      items,
+      m.hasShareRule
+        ? `Profit ${pctSummary(m.effectiveProfitProviderPercent, m.effectiveProfitManagerPercent)}`
+        : 'No share rule yet'
+    );
+  };
+
+  const openTemplateMore = (t: any) => {
+    openActionSheet(t.ruleName, [
+      { text: 'Edit', onPress: () => openTemplateModal(t) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert('Delete rule?', '', [
+            { text: 'Cancel' },
+            { text: 'Delete', style: 'destructive', onPress: () => onDeleteTemplate(t.id) },
+          ]),
+      },
+    ], t.providerName);
+  };
+
+  const openDistributionMore = (r: any) => {
+    openActionSheet(r.display_name, [
+      {
+        text: 'View details',
+        onPress: () =>
+          Alert.alert(
+            r.ipo_name,
+            [
+              `Gross P&L: ${formatCurrency(r.gross_profit_loss)}`,
+              `Provider: ${formatCurrency(r.provider_amount)}`,
+              `Manager: ${formatCurrency(r.manager_amount)}`,
+              `Member: ${formatCurrency(r.member_amount)}`,
+              formatDateTime(r.distributed_at),
+            ].join('\n')
+          ),
+      },
+    ], `${r.ipo_name} · ${formatDateTime(r.distributed_at)}`);
+  };
+
+  const openMemberTotalsMore = (r: any) => {
+    openActionSheet(r.displayName, [
+      {
+        text: 'View breakdown',
+        onPress: () =>
+          Alert.alert(
+            r.displayName,
+            [
+              `Gross IPO P&L: ${formatCurrency(r.grossIpoPnL)}`,
+              `Split: ${formatCurrency(r.grossDistributed)}`,
+              `Pending: ${r.pendingGross ? formatCurrency(r.pendingGross) : '—'}`,
+              `Provider: ${formatCurrency(r.providerShare)}`,
+              `Manager: ${formatCurrency(r.managerShare)}`,
+              `Member keeps: ${formatCurrency(r.memberShare)}`,
+            ].join('\n')
+          ),
+      },
+    ], `PAN ${formatPan(r.pan)} · ${r.ipoCount} IPOs`);
+  };
+
   if (loading && !members.length) return <Loading />;
 
   return (
     <Screen>
       <PageHeader
         title="Profit Sharing"
-        subtitle="Configure share rules and view distribution history"
-        extra={<Button compact mode="outlined" onPress={load}>Refresh</Button>}
+        subtitle={`${members.length} members · ${distributions.length} splits`}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
 
       {unconfiguredMembers.length > 0 && (
         <Banner variant="warn">
-          {`${unconfiguredMembers.length} member(s) still need share rules before P&L can be distributed.`}
+          {`${unconfiguredMembers.length} member(s) need share rules.`}
         </Banner>
       )}
 
-      <View style={{ marginBottom: spacing.lg }}>
+      <View style={{ marginBottom: spacing.md }}>
         {loadingTotals && !totalsLoaded ? (
-          <View style={{ paddingVertical: spacing.lg, alignItems: 'center' }}>
+          <View style={{ paddingVertical: spacing.md, alignItems: 'center' }}>
             <ActivityIndicator color="#0d9488" />
-            <Text style={ui.muted}>Loading P&L summary…</Text>
+            <Text style={ui.muted}>Loading P&L…</Text>
           </View>
         ) : (
-          <StatGrid>
-            <PnlStatCard title="Gross IPO P&L" value={overall.grossIpoPnL ?? 0} formatted={formatCurrency(overall.grossIpoPnL ?? 0)} />
-            <StatCard title="Provider share" value={formatCurrency(overall.providerShare ?? 0)} variant="info" />
+          <View style={ui.statRow}>
+            <PnlStatCard title="Gross P&L" value={overall.grossIpoPnL ?? 0} formatted={formatCurrency(overall.grossIpoPnL ?? 0)} />
             <StatCard title="Manager (you)" value={formatCurrency(overall.managerShare ?? 0)} variant="success" />
             <StatCard title="Members kept" value={formatCurrency(overall.memberShare ?? 0)} variant="default" />
-          </StatGrid>
+          </View>
         )}
       </View>
 
@@ -497,14 +573,16 @@ export default function ProfitSharingScreen() {
                 <Text style={ui.muted}>No allotted IPO P&L yet</Text>
               ) : (
                 totals.byMember.map((r: any) => (
-                  <InfoCard key={r.memberId} variant="muted" title={r.displayName} meta={`PAN ${formatPan(r.pan)} · ${r.ipoCount} IPOs`}>
-                    <InfoLine label="Gross IPO P&L" value={formatCurrency(r.grossIpoPnL)} valueColor={pnlColor(r.grossIpoPnL)} />
-                    <InfoLine label="Split (gross)" value={formatCurrency(r.grossDistributed)} />
-                    <InfoLine label="Pending split" value={r.pendingGross ? formatCurrency(r.pendingGross) : '—'} />
-                    <InfoLine label="Provider got" value={formatCurrency(r.providerShare)} />
-                    <InfoLine label="Manager got" value={formatCurrency(r.managerShare)} />
-                    <InfoLine label="Member keeps" value={formatCurrency(r.memberShare)} />
-                  </InfoCard>
+                  <View key={r.memberId} style={styles.compactRow}>
+                    <View style={styles.compactRowMain}>
+                      <ListRow
+                        title={r.displayName}
+                        subtitle={`${formatCurrency(r.grossIpoPnL)} gross · ${formatCurrency(r.memberShare)} kept`}
+                        onPress={() => openMemberTotalsMore(r)}
+                        right={<Tag label={`${r.ipoCount} IPOs`} color="#64748b" />}
+                      />
+                    </View>
+                  </View>
                 ))
               )}
             </>
@@ -516,26 +594,32 @@ export default function ProfitSharingScreen() {
                 <Text style={ui.muted}>No provider shares recorded yet</Text>
               ) : (
                 totals.byProvider.map((r: any) => (
-                  <InfoCard key={r.fundProviderId} variant="muted" title={r.providerName}>
-                    <InfoLine label="Distributions" value={String(r.distributionCount)} />
-                    <InfoLine label="Total share" value={formatCurrency(r.totalShare)} valueColor={pnlColor(r.totalShare)} />
-                    <InfoLine label="From profits" value={formatCurrency(r.profitShare)} />
-                    <InfoLine label="From losses" value={formatCurrency(r.lossShare)} />
-                  </InfoCard>
+                  <ListRow
+                    key={r.fundProviderId}
+                    title={r.providerName}
+                    subtitle={`${formatCurrency(r.totalShare)} total · ${r.distributionCount} splits`}
+                    onPress={() =>
+                      openActionSheet(r.providerName, [], `Profit ${formatCurrency(r.profitShare)} · Loss ${formatCurrency(r.lossShare)}`)
+                    }
+                  />
                 ))
               )}
             </>
           )}
 
           {totalsView === 'manager' && (
-            <InfoCard variant="highlight">
-              <InfoLine label="Your total share" value={formatCurrency(totals?.manager?.totalShare ?? 0)} valueColor={pnlColor(totals?.manager?.totalShare)} />
-              <InfoLine label="Gross split (distributed)" value={formatCurrency(overall.grossDistributed ?? 0)} />
-              <InfoLine label="Pending to split" value={`${formatCurrency(overall.grossPending ?? 0)} (${overall.pendingCount ?? 0} apps)`} />
-              <InfoLine label="IPO profit (allotted)" value={formatCurrency(overall.ipoProfit ?? 0)} valueColor="#059669" />
-              <InfoLine label="IPO loss (allotted)" value={formatCurrency(overall.ipoLoss ?? 0)} valueColor="#dc2626" />
-              <InfoLine label="Splits done" value={String(overall.distributionCount ?? 0)} />
-            </InfoCard>
+            <ListRow
+              title="Your total share"
+              subtitle={`${formatCurrency(totals?.manager?.totalShare ?? 0)} · ${overall.distributionCount ?? 0} splits done`}
+              onPress={() =>
+                openActionSheet('Manager totals', [], [
+                  `Distributed: ${formatCurrency(overall.grossDistributed ?? 0)}`,
+                  `Pending: ${formatCurrency(overall.grossPending ?? 0)} (${overall.pendingCount ?? 0} apps)`,
+                  `IPO profit: ${formatCurrency(overall.ipoProfit ?? 0)}`,
+                  `IPO loss: ${formatCurrency(overall.ipoLoss ?? 0)}`,
+                ].join('\n'))
+              }
+            />
           )}
             </>
           )}
@@ -551,31 +635,22 @@ export default function ProfitSharingScreen() {
             <Text style={ui.muted}>No rules yet — add one to apply to members</Text>
           ) : (
             templates.map((t) => (
-              <InfoCard key={t.id} title={t.ruleName} meta={t.providerName}>
-                <InfoLine
-                  label="On profit"
-                  value={t.hasRule ? `${t.profitProviderPercent}% provider · ${t.profitManagerPercent}% manager` : 'Not set'}
-                />
-                <InfoLine
-                  label="On loss"
-                  value={t.hasRule ? `${t.lossProviderPercent}% provider · ${t.lossManagerPercent}% manager` : '—'}
-                />
-                <View style={ui.rowActions}>
-                  <Button compact onPress={() => openTemplateModal(t)}>Edit</Button>
-                  <Button
-                    compact
-                    textColor="#dc2626"
-                    onPress={() =>
-                      Alert.alert('Delete rule?', '', [
-                        { text: 'Cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => onDeleteTemplate(t.id) },
-                      ])
+              <View key={t.id} style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={t.ruleName}
+                    subtitle={
+                      t.hasRule
+                        ? `${t.providerName} · ${t.profitProviderPercent}/${t.profitManagerPercent}% profit`
+                        : 'Not configured'
                     }
-                  >
-                    Delete
-                  </Button>
+                    onPress={() => openTemplateMore(t)}
+                  />
                 </View>
-              </InfoCard>
+                <Pressable hitSlop={12} onPress={() => openTemplateMore(t)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
+              </View>
             ))
           )}
         </ContentCard>
@@ -618,45 +693,38 @@ export default function ProfitSharingScreen() {
           />
 
           {filteredMembers.map((m) => (
-            <InfoCard key={m.memberId} variant={!m.hasShareRule ? 'warn' : 'default'}>
-              <View style={ui.cardHeader}>
-                <Checkbox
-                  status={selectedMemberIds.includes(m.memberId) ? 'checked' : 'unchecked'}
-                  onPress={() =>
-                    setSelectedMemberIds((prev) =>
-                      prev.includes(m.memberId) ? prev.filter((id) => id !== m.memberId) : [...prev, m.memberId]
+            <View key={m.memberId} style={[styles.compactRow, !m.hasShareRule && styles.compactRowWarn]}>
+              <Checkbox
+                status={selectedMemberIds.includes(m.memberId) ? 'checked' : 'unchecked'}
+                onPress={() =>
+                  setSelectedMemberIds((prev) =>
+                    prev.includes(m.memberId) ? prev.filter((id) => id !== m.memberId) : [...prev, m.memberId]
+                  )
+                }
+              />
+              <View style={styles.compactRowMain}>
+                <ListRow
+                  title={m.displayName}
+                  subtitle={[
+                    formatPan(m.pan),
+                    m.hasShareRule ? pctSummary(m.effectiveProfitProviderPercent, m.effectiveProfitManagerPercent) : null,
+                  ].filter(Boolean).join(' · ')}
+                  right={
+                    m.hasShareRule ? (
+                      <Tag label={`${m.ruleCount} rules`} color="#059669" />
+                    ) : (
+                      <Tag label="Need rule" color="#d97706" />
                     )
                   }
                 />
-                <View style={{ flex: 1 }}>
-                  <Text style={ui.cardTitle}>{m.displayName}</Text>
-                  <Text style={ui.cardMeta}>PAN {formatPan(m.pan)}</Text>
-                  {m.effectiveProviderName ? (
-                    <Text style={ui.cardMeta}>Fund provider: {m.effectiveProviderName}</Text>
-                  ) : null}
-                </View>
-                {m.hasShareRule ? (
-                  <Tag label={`${m.ruleCount} rules`} color="#059669" />
-                ) : (
-                  <Tag label="Need rule" color="#d97706" />
-                )}
+                <Button compact mode="contained" onPress={() => openApplyTemplate([m.memberId])} style={styles.primaryBtn}>
+                  Apply rule
+                </Button>
               </View>
-
-              {m.hasShareRule ? (
-                <>
-                  <InfoLine label="Profit %" value={pctSummary(m.effectiveProfitProviderPercent, m.effectiveProfitManagerPercent)} />
-                  <InfoLine label="Loss %" value={pctSummary(m.effectiveLossProviderPercent, m.effectiveLossManagerPercent)} />
-                </>
-              ) : null}
-
-              <View style={ui.rowActions}>
-                <Button compact mode="contained" onPress={() => openApplyTemplate([m.memberId])}>Apply rule</Button>
-                <Button compact mode="outlined" onPress={() => openCreateRule([m.memberId])}>Custom</Button>
-                {m.ruleCount > 0 && (
-                  <Button compact onPress={() => openManageMember(m)}>Manage</Button>
-                )}
-              </View>
-            </InfoCard>
+              <Pressable hitSlop={12} onPress={() => openMemberMore(m)} style={styles.moreBtn}>
+                <Text style={styles.moreText}>···</Text>
+              </Pressable>
+            </View>
           ))}
         </ContentCard>
       )}
@@ -669,13 +737,24 @@ export default function ProfitSharingScreen() {
             <Text style={ui.muted}>No distributions yet</Text>
           ) : (
             distributions.map((r: any) => (
-              <InfoCard key={r.id} title={r.display_name} meta={`${r.ipo_name} · ${formatDateTime(r.distributed_at)}`}>
-                <Tag label={r.pnl_type === 'LOSS' ? 'Loss %' : 'Profit %'} color={r.pnl_type === 'LOSS' ? '#dc2626' : '#059669'} />
-                <InfoLine label="Gross P&L" value={formatCurrency(r.gross_profit_loss)} valueColor={pnlColor(r.gross_profit_loss)} />
-                <InfoLine label="Provider share" value={formatCurrency(r.provider_amount)} valueColor={pnlColor(r.provider_amount)} />
-                <InfoLine label="Manager share" value={formatCurrency(r.manager_amount)} valueColor={pnlColor(r.manager_amount)} />
-                <InfoLine label="Member share" value={formatCurrency(r.member_amount)} valueColor={pnlColor(r.member_amount)} />
-              </InfoCard>
+              <View key={r.id} style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={r.display_name}
+                    subtitle={`${formatCurrency(r.gross_profit_loss)} · ${r.ipo_name}`}
+                    onPress={() => openDistributionMore(r)}
+                    right={
+                      <Tag
+                        label={r.pnl_type === 'LOSS' ? 'Loss' : 'Profit'}
+                        color={r.pnl_type === 'LOSS' ? '#dc2626' : '#059669'}
+                      />
+                    }
+                  />
+                </View>
+                <Pressable hitSlop={12} onPress={() => openDistributionMore(r)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
+              </View>
             ))
           )}
         </ContentCard>
@@ -689,9 +768,11 @@ export default function ProfitSharingScreen() {
             <Text style={ui.muted}>All caught up</Text>
           ) : (
             pending.map((r: any) => (
-              <InfoCard key={r.id} title={r.display_name} meta={r.ipo_name}>
-                <InfoLine label="P&L" value={formatCurrency(r.profit_loss)} valueColor={pnlColor(r.profit_loss)} />
-              </InfoCard>
+              <ListRow
+                key={r.id}
+                title={r.display_name}
+                subtitle={`${formatCurrency(r.profit_loss)} · ${r.ipo_name}`}
+              />
             ))
           )}
         </ContentCard>
@@ -707,20 +788,27 @@ export default function ProfitSharingScreen() {
           <ScrollView contentContainerStyle={ui.modalBody}>
             <View style={ui.rowActions}>
               <Button mode="contained" onPress={() => openApplyTemplate([manageMember.memberId])}>Apply from list</Button>
-              <Button mode="outlined" onPress={() => openCreateRule([manageMember.memberId])}>Custom rule</Button>
-              {memberRules.length > 0 && (
-                <Button
-                  textColor="#dc2626"
-                  onPress={() =>
-                    Alert.alert('Clear all rules?', '', [
-                      { text: 'Cancel' },
-                      { text: 'Clear', style: 'destructive', onPress: onClearMemberRules },
-                    ])
-                  }
-                >
-                  Clear all
-                </Button>
-              )}
+              <Button
+                mode="outlined"
+                onPress={() =>
+                  openActionSheet(`Rules — ${manageMember.displayName}`, [
+                    { text: 'Custom rule', onPress: () => openCreateRule([manageMember.memberId]) },
+                    ...(memberRules.length > 0
+                      ? [{
+                          text: 'Clear all rules',
+                          style: 'destructive' as const,
+                          onPress: () =>
+                            Alert.alert('Clear all rules?', '', [
+                              { text: 'Cancel' },
+                              { text: 'Clear', style: 'destructive', onPress: onClearMemberRules },
+                            ]),
+                        }]
+                      : []),
+                  ])
+                }
+              >
+                More
+              </Button>
             </View>
 
             {rulesLoading ? (
@@ -729,27 +817,54 @@ export default function ProfitSharingScreen() {
               <Text style={ui.muted}>No rules yet</Text>
             ) : (
               memberRules.map((rule) => (
-                <InfoCard key={rule.id} title={rule.ruleName}>
-                  <Tag label={rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs'} color={rule.ipoId ? '#7c3aed' : '#64748b'} />
-                  <InfoLine label="Fund provider" value={rule.providerName || '—'} />
-                  <InfoLine label="On profit" value={`${rule.profitProviderPercent}% / ${rule.profitManagerPercent}%`} />
-                  <InfoLine label="On loss" value={`${rule.lossProviderPercent}% / ${rule.lossManagerPercent}%`} />
-                  <View style={ui.rowActions}>
-                    <Button compact onPress={() => openEditRule(rule)}>Edit</Button>
-                    <Button
-                      compact
-                      textColor="#dc2626"
+                <View key={rule.id} style={styles.compactRow}>
+                  <View style={styles.compactRowMain}>
+                    <ListRow
+                      title={rule.ruleName}
+                      subtitle={`${rule.profitProviderPercent}/${rule.profitManagerPercent}% profit · ${rule.providerName || '—'}`}
                       onPress={() =>
-                        Alert.alert('Delete rule?', '', [
-                          { text: 'Cancel' },
-                          { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
-                        ])
+                        openActionSheet(rule.ruleName, [
+                          { text: 'Edit', onPress: () => openEditRule(rule) },
+                          {
+                            text: 'Delete',
+                            style: 'destructive',
+                            onPress: () =>
+                              Alert.alert('Delete rule?', '', [
+                                { text: 'Cancel' },
+                                { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
+                              ]),
+                          },
+                        ], rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs')
                       }
-                    >
-                      Delete
-                    </Button>
+                      right={
+                        <Tag
+                          label={rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs'}
+                          color={rule.ipoId ? '#7c3aed' : '#64748b'}
+                        />
+                      }
+                    />
                   </View>
-                </InfoCard>
+                  <Pressable
+                    hitSlop={12}
+                    onPress={() =>
+                      openActionSheet(rule.ruleName, [
+                        { text: 'Edit', onPress: () => openEditRule(rule) },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () =>
+                            Alert.alert('Delete rule?', '', [
+                              { text: 'Cancel' },
+                              { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
+                            ]),
+                        },
+                      ])
+                    }
+                    style={styles.moreBtn}
+                  >
+                    <Text style={styles.moreText}>···</Text>
+                  </Pressable>
+                </View>
               ))
             )}
           </ScrollView>
@@ -902,4 +1017,10 @@ function RuleFormFields({
 const styles = StyleSheet.create({
   percentRow: { flexDirection: 'row', gap: 8 },
   percentInput: { flex: 1, marginBottom: 4 },
+  compactRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2 },
+  compactRowWarn: { backgroundColor: colors.warningLight, borderRadius: radii.md, paddingRight: 4 },
+  compactRowMain: { flex: 1 },
+  primaryBtn: { alignSelf: 'flex-start', marginLeft: spacing.sm, marginBottom: spacing.sm },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingTop: spacing.md },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
 });

@@ -22,6 +22,11 @@ export default ({ config }) => ({
       monochromeImage: './assets/android-icon-monochrome.png',
     },
   },
+  splash: {
+    image: './assets/splash-icon.png',
+    resizeMode: 'contain',
+    backgroundColor: '#0f172a',
+  },
   web: {
     favicon: './assets/favicon.png',
     bundler: 'metro',

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
@@ -19,6 +19,8 @@ import {
   summarizeIpoGroupRows,
 } from '../utils/memberPortal';
 import { copyToClipboard, getAllotmentPortals, openAllotmentPortal } from '../utils/allotmentCheck';
+import { openActionSheet } from '../utils/actionSheet';
+import { colors, spacing } from '../theme';
 import { ui } from '../styles/ui';
 
 export default function MemberAllotmentScreen() {
@@ -54,106 +56,143 @@ export default function MemberAllotmentScreen() {
     Alert.alert(ok ? 'Copied' : 'Error', ok ? `${name} PAN copied` : 'Could not copy PAN');
   };
 
+  const openPortalsMore = () => {
+    const portals = getAllotmentPortals();
+    openActionSheet('Allotment portals', [
+      ...(memberPan ? [{ text: 'Copy my PAN', onPress: () => copyPan(memberPan, 'Your') }] : []),
+      ...portals.map((p) => ({
+        text: `Open ${p.name}`,
+        onPress: () => openAllotmentPortal(p.url),
+      })),
+    ], 'No public PAN API — copy PAN, open a portal, select IPO, then search.');
+  };
+
+  const openPendingRowMore = (row: any, ipoName: string) => {
+    openActionSheet(row.memberName, [
+      { text: 'Copy PAN', onPress: () => copyPan(row.memberPan, row.memberName) },
+    ], [
+      ipoName,
+      `PAN ${formatPan(row.memberPan)}`,
+      formatCurrency(row.amount),
+    ].join('\n'));
+  };
+
+  const openStatusRowMore = (row: any, ipoName: string) => {
+    openActionSheet(isGroupLeader ? row.memberName : ipoName, [], [
+      isGroupLeader ? `PAN ${formatPan(row.memberPan)}` : null,
+      formatCurrency(row.amount),
+      formatAllotmentLabel(row.allotmentStatus),
+      row.allotmentStatus === 'ALLOTED' && row.grossProfitLoss != null
+        ? `Gross P&L ${formatCurrency(row.grossProfitLoss)}`
+        : null,
+      formatIpoShareLine(row),
+    ].filter(Boolean).join('\n'));
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Check allotment', [
+      { text: 'Refresh', onPress: refresh },
+      { text: 'Portals & PAN', onPress: openPortalsMore },
+    ]);
+  };
+
   if (loading && !dashboard) return <Loading />;
 
   return (
     <Screen bottomNavInset>
       <PageHeader
         title="Check allotment"
-        subtitle={
-          isGroupLeader
-            ? 'Verify allotment for your whole sub-group on official portals'
-            : 'Open official portals to verify IPO allotment status'
+        subtitle={pendingIpos.length ? `${pendingIpos.length} pending IPO${pendingIpos.length === 1 ? '' : 's'}` : 'Verify on official portals'}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
         }
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
       />
 
       {error ? <Banner variant="warn">{error}</Banner> : null}
 
-      <Banner variant="info">
-        India has no free public API for allotment by PAN. Copy each member PAN, open an official portal, select the IPO, then search.
-      </Banner>
-
-      <ContentCard title="Official portals">
-        {getAllotmentPortals().map((p) => (
-          <Button
-            key={p.id}
-            mode={p.id === 'bse' ? 'contained' : 'outlined'}
-            onPress={() => openAllotmentPortal(p.url)}
-            style={{ marginTop: 8 }}
-          >
-            Open {p.name}
-          </Button>
-        ))}
-      </ContentCard>
-
       {!isGroupLeader && memberPan ? (
-        <ContentCard title="Your PAN">
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>PAN</Text>
-            <Text style={ui.infoValue}>{memberPan}</Text>
-          </View>
-          <Button mode="outlined" onPress={() => copyPan(memberPan, 'Your')}>
-            Copy my PAN
+        <ContentCard
+          title="Your PAN"
+          extra={
+            <Button compact mode="text" onPress={openPortalsMore}>
+              More
+            </Button>
+          }
+        >
+          <ListRow title={memberPan} subtitle="Copy PAN or open official portal" />
+          <Button compact mode="contained" onPress={() => copyPan(memberPan, 'Your')} style={{ alignSelf: 'flex-start' }}>
+            Copy PAN
           </Button>
+        </ContentCard>
+      ) : isGroupLeader ? (
+        <ContentCard
+          title="Official portals"
+          extra={
+            <Button compact mode="text" onPress={openPortalsMore}>
+              More
+            </Button>
+          }
+        >
+          <ListRow title="BSE / NSE portals" subtitle="Copy member PANs and search after allotment day" />
         </ContentCard>
       ) : null}
 
       {pendingIpos.length > 0 ? (
-        <ContentCard title={`Pending allotment (${pendingIpos.length} IPO${pendingIpos.length === 1 ? '' : 's'})`}>
+        <ContentCard title={`Pending (${pendingIpos.length})`}>
           {pendingIpos.map(({ ipoName, rows }) => (
-            <View key={ipoName} style={{ marginBottom: 12 }}>
+            <View key={ipoName} style={{ marginBottom: spacing.sm }}>
               <Text style={ui.sectionLabel}>{ipoName}</Text>
-              <Text style={[ui.hint, { marginBottom: 8 }]}>{summarizeIpoGroupRows(rows)}</Text>
               {rows
                 .filter((r) => r.allotmentStatus === 'PENDING')
                 .map((row) => (
-                  <ListRow
-                    key={`${row.id}-${row.memberPan}`}
-                    title={row.memberName}
-                    subtitle={`PAN ${formatPan(row.memberPan)} · ${formatCurrency(row.amount)}`}
-                    right={
-                      <Button compact mode="outlined" onPress={() => copyPan(row.memberPan, row.memberName)}>
-                        Copy PAN
-                      </Button>
-                    }
-                  />
+                  <View key={`${row.id}-${row.memberPan}`} style={styles.compactRow}>
+                    <View style={styles.compactRowMain}>
+                      <ListRow
+                        title={row.memberName}
+                        subtitle={`${formatPan(row.memberPan)} · ${formatCurrency(row.amount)}`}
+                        onPress={() => openPendingRowMore(row, ipoName)}
+                      />
+                    </View>
+                    <Pressable hitSlop={12} onPress={() => openPendingRowMore(row, ipoName)} style={styles.moreBtn}>
+                      <Text style={styles.moreText}>···</Text>
+                    </Pressable>
+                  </View>
                 ))}
             </View>
           ))}
         </ContentCard>
       ) : (
-        <ContentCard title="Pending allotment">
-          <ListRow title="No pending allotments" subtitle="All current IPOs are marked allotted or not allotted" />
+        <ContentCard title="Pending">
+          <ListRow title="No pending allotments" />
         </ContentCard>
       )}
 
-      <ContentCard title={isGroupLeader ? 'Group allotment status' : 'Your allotment status'}>
+      <ContentCard title={isGroupLeader ? 'Group status' : 'Your status'}>
         {ipoGroups.length ? (
           ipoGroups.map(({ ipoName, rows }) => (
-            <View key={ipoName} style={{ marginBottom: 16 }}>
-              <Text style={ui.sectionLabel}>{ipoName}</Text>
-              <Text style={[ui.hint, { marginBottom: 8 }]}>{summarizeIpoGroupRows(rows)}</Text>
+            <View key={ipoName} style={{ marginBottom: spacing.sm }}>
+              <ListRow title={ipoName} subtitle={summarizeIpoGroupRows(rows)} />
               {rows.map((row) => (
-                <ListRow
-                  key={`${row.id}-${row.memberPan}-${row.allotmentStatus}`}
-                  title={isGroupLeader ? row.memberName : ipoName}
-                  subtitle={[
-                    isGroupLeader ? `PAN ${formatPan(row.memberPan)}` : null,
-                    formatCurrency(row.amount),
-                    formatAllotmentLabel(row.allotmentStatus),
-                    row.allotmentStatus === 'ALLOTED' && row.grossProfitLoss != null
-                      ? `Gross P&L ${formatCurrency(row.grossProfitLoss)}`
-                      : null,
-                    formatIpoShareLine(row),
-                  ].filter(Boolean).join(' · ')}
-                  right={
-                    <Tag
-                      label={formatAllotmentLabel(row.allotmentStatus)}
-                      color={ALLOTMENT_COLORS[row.allotmentStatus] || '#64748b'}
+                <View key={`${row.id}-${row.memberPan}-${row.allotmentStatus}`} style={styles.compactRow}>
+                  <View style={styles.compactRowMain}>
+                    <ListRow
+                      title={isGroupLeader ? row.memberName : formatAllotmentLabel(row.allotmentStatus)}
+                      subtitle={`${formatCurrency(row.amount)} · ${formatAllotmentLabel(row.allotmentStatus)}`}
+                      right={
+                        <Tag
+                          label={formatAllotmentLabel(row.allotmentStatus)}
+                          color={ALLOTMENT_COLORS[row.allotmentStatus] || '#64748b'}
+                        />
+                      }
+                      onPress={() => openStatusRowMore(row, ipoName)}
                     />
-                  }
-                />
+                  </View>
+                  <Pressable hitSlop={12} onPress={() => openStatusRowMore(row, ipoName)} style={styles.moreBtn}>
+                    <Text style={styles.moreText}>···</Text>
+                  </Pressable>
+                </View>
               ))}
             </View>
           ))
@@ -164,3 +203,10 @@ export default function MemberAllotmentScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

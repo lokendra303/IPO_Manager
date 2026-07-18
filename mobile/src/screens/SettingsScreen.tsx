@@ -154,17 +154,17 @@ export default function SettingsScreen() {
     });
   };
 
+  const accountEmail = account?.email || user?.email;
+
   return (
     <Screen>
-      <PageHeader title="Settings" subtitle={account?.email || user?.email} />
+      <PageHeader title="Settings" subtitle={accountEmail || 'Account'} />
 
       {(account || user) && (
         <ContentCard title="Account">
-          <Text style={{ marginBottom: 4 }}>Team: {account?.tenantName || user?.tenantName || '—'}</Text>
-          <Text style={{ marginBottom: 4 }}>Email: {account?.email || user?.email || '—'}</Text>
-          {account?.id != null && <Text style={{ marginBottom: 4 }}>Account #{account.id}</Text>}
-          {account?.tenantId != null && <Text style={{ marginBottom: 4 }}>Team #{account.tenantId}</Text>}
-          {account?.role && <Text>Role: {account.role}</Text>}
+          <Text style={{ marginBottom: 4 }}>{account?.tenantName || user?.tenantName || '—'}</Text>
+          {accountEmail ? <Text style={{ marginBottom: 4, opacity: 0.75 }}>{accountEmail}</Text> : null}
+          {account?.role ? <Text style={{ opacity: 0.75 }}>{account.role}</Text> : null}
         </ContentCard>
       )}
 

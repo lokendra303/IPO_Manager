@@ -10,6 +10,7 @@ import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import { formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
 
 export default function NotificationsScreen() {
   const [issues, setIssues] = useState<any[]>([]);
@@ -41,11 +42,40 @@ export default function NotificationsScreen() {
     }
   };
 
+  const openResolve = (row: any) => {
+    setResolveTarget(row);
+    setResolutionNote('');
+  };
+
+  const openIssueMore = (row: any) => {
+    if (row.status === 'OPEN') {
+      openActionSheet(row.member_name, [{ text: 'Resolve', onPress: () => openResolve(row) }]);
+      return;
+    }
+    openActionSheet(row.member_name, [
+      {
+        text: 'Reopen',
+        onPress: () => updateStatus(row.id, 'OPEN'),
+      },
+    ]);
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Notifications', [{ text: 'Refresh', onPress: load }]);
+  };
+
   if (loading && !issues.length) return <Loading />;
 
   return (
     <Screen>
-      <PageHeader title="Notifications" subtitle="Member issues — reply when resolving" extra={<Button onPress={load} loading={loading}>Refresh</Button>} />
+      <PageHeader
+        title="Notifications"
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
+      />
       <SegmentedButtons
         value={filter}
         onValueChange={setFilter}
@@ -57,21 +87,30 @@ export default function NotificationsScreen() {
         style={{ marginBottom: 16 }}
       />
       <ContentCard>
-        {issues.length === 0 ? <Text>No member issues yet</Text> : issues.map((row) => (
-          <View key={row.id} style={styles.issue}>
-            <ListRow
-              title={row.member_name}
-              subtitle={`${formatDateTime(row.created_at)} · PAN ${formatPan(row.member_pan)}\n${row.note}`}
-              right={<Tag label={row.status === 'OPEN' ? 'Open' : 'Resolved'} color={row.status === 'OPEN' ? '#d97706' : '#059669'} />}
-            />
-            {row.resolution_note ? <Text style={styles.reply}>Reply: {row.resolution_note}</Text> : null}
-            {row.status === 'OPEN' ? (
-              <Button mode="contained" onPress={() => { setResolveTarget(row); setResolutionNote(''); }}>Resolve</Button>
-            ) : (
-              <Button mode="outlined" loading={actionId === row.id} onPress={() => updateStatus(row.id, 'OPEN')}>Reopen</Button>
-            )}
-          </View>
-        ))}
+        {issues.length === 0 ? (
+          <Text>No member issues yet</Text>
+        ) : (
+          issues.map((row) => (
+            <View key={row.id} style={styles.issue}>
+              <ListRow
+                title={row.member_name}
+                subtitle={`${formatDateTime(row.created_at)} · PAN ${formatPan(row.member_pan)}`}
+                right={
+                  <Tag
+                    label={row.status === 'OPEN' ? 'Open' : 'Resolved'}
+                    color={row.status === 'OPEN' ? '#d97706' : '#059669'}
+                  />
+                }
+                onPress={() => openIssueMore(row)}
+              />
+              {row.status === 'OPEN' ? (
+                <Button mode="contained" compact onPress={() => openResolve(row)}>
+                  Resolve
+                </Button>
+              ) : null}
+            </View>
+          ))
+        )}
       </ContentCard>
 
       <Modal visible={!!resolveTarget} animationType="slide" transparent>
@@ -91,7 +130,6 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   issue: { marginBottom: 12 },
-  reply: { fontSize: 13, color: '#64748b', marginBottom: 8, paddingHorizontal: 4 },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   modal: { backgroundColor: '#fff', borderRadius: 12, padding: 20 },
   modalTitle: { fontSize: 18, fontWeight: '700' },

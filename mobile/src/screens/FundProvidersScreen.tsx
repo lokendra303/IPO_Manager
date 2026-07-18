@@ -11,7 +11,9 @@ import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Banner from '../components/Banner';
 import { amountToWordsInr, formatCurrency, formatDateTime } from '../utils/format';
+import { openActionSheet } from '../utils/actionSheet';
 import { getErrorMessage } from '../utils/errors';
+import { colors, radii, spacing } from '../theme';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
 
@@ -71,7 +73,7 @@ export default function FundProvidersScreen() {
     const [p, a] = await Promise.all([client.get('/fund-providers'), client.get('/bank-accounts')]);
     return { providers: p.data, bankAccounts: a.data.accounts || [] };
   }, []);
-  const { data, loading, refresh } = useQuery(fetcher);
+  const { data, loading, refresh } = useQuery(fetcher, [], { cacheKey: 'fund-providers' });
   const providers = data?.providers ?? [];
   const bankAccounts = data?.bankAccounts ?? [];
 
@@ -127,11 +129,30 @@ export default function FundProvidersScreen() {
   const displayAccrued = viewProvider
     ? Number(viewProvider.accruedProfit ?? viewProvider.totalProfit ?? 0)
     : totalAccrued;
-  const displayCombined = displayPrincipal + displayAccrued;
-
   const selectProvider = (provider: any) => {
     setViewProviderId(provider.id);
     openLedger(provider);
+  };
+
+  const openProviderMore = (provider: any) => {
+    openActionSheet(provider.name, [
+      { text: 'Edit', onPress: () => openEditProvider(provider) },
+      {
+        text: 'Send / repay',
+        style: 'destructive',
+        onPress: () => {
+          setSelected(provider);
+          setViewProviderId(provider.id);
+          openTxnModal('send');
+        },
+      },
+    ]);
+  };
+
+  const openReceive = (provider: any) => {
+    setSelected(provider);
+    setViewProviderId(provider.id);
+    openTxnModal('receive');
   };
 
   const openLedger = async (provider: any) => {
@@ -383,8 +404,12 @@ export default function FundProvidersScreen() {
     <Screen>
       <PageHeader
         title="Fund Providers"
-        subtitle="Receive or send funds separately — no need to type minus for repayments"
-        extra={<Button mode="contained" onPress={() => { setProviderName(''); setProviderModal(true); }}>Add provider</Button>}
+        subtitle={`${providers.length} provider${providers.length === 1 ? '' : 's'}`}
+        extra={
+          <Button compact mode="contained" onPress={() => { setProviderName(''); setProviderModal(true); }}>
+            Add
+          </Button>
+        }
       />
 
       <View style={ui.statRow}>
@@ -394,37 +419,32 @@ export default function FundProvidersScreen() {
           variant="primary"
         />
         <StatCard
-          title={viewProvider ? `Accrued profit — ${viewProvider.name}` : 'Accrued profit'}
+          title={viewProvider ? `Accrued — ${viewProvider.name}` : 'Accrued profit'}
           value={formatCurrency(displayAccrued)}
           variant="success"
         />
-        <StatCard
-          title={viewProvider ? `Combined — ${viewProvider.name}` : 'Combined total'}
-          value={formatCurrency(displayCombined)}
-          variant="info"
-        />
       </View>
 
-      <ContentCard title="Select provider">
+      <ContentCard title="Providers">
         {providers.length === 0 ? (
-          <Text style={ui.muted}>No fund providers yet</Text>
+          <Text style={ui.muted}>No providers yet</Text>
         ) : (
           providers.map((p) => (
-            <View key={p.id} style={ui.card}>
-              <ListRow
-                title={p.name}
-                subtitle={`Principal ${formatCurrency(p.principalBalance ?? p.ledgerBalance ?? 0)} · Accrued ${formatCurrency(p.accruedProfit ?? p.totalProfit ?? 0)} · Combined ${formatCurrency(Number(p.principalBalance ?? p.ledgerBalance ?? 0) + Number(p.accruedProfit ?? p.totalProfit ?? 0))}`}
-                onPress={() => selectProvider(p)}
-              />
-              <View style={ui.rowActions}>
-                <Button compact onPress={() => selectProvider(p)}>View ledger</Button>
-                <Button compact onPress={() => openEditProvider(p)}>Edit</Button>
-                <Button compact mode="contained" onPress={() => { selectProvider(p); openTxnModal('receive'); }}>
+            <View key={p.id} style={styles.providerRow}>
+              <View style={styles.providerMain}>
+                <ListRow
+                  title={p.name}
+                  subtitle={formatCurrency(p.principalBalance ?? p.ledgerBalance ?? 0)}
+                  onPress={() => selectProvider(p)}
+                />
+              </View>
+              <View style={styles.providerActions}>
+                <Button compact mode="contained" onPress={() => openReceive(p)}>
                   Receive
                 </Button>
-                <Button compact mode="outlined" textColor="#dc2626" onPress={() => { selectProvider(p); openTxnModal('send'); }}>
-                  Send
-                </Button>
+                <Pressable hitSlop={12} onPress={() => openProviderMore(p)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
               </View>
             </View>
           ))
@@ -467,20 +487,19 @@ export default function FundProvidersScreen() {
             <Button mode="text" onPress={closeLedger}>Close</Button>
           </View>
           <ScrollView contentContainerStyle={ui.modalBody}>
-            <StatCard title="Principal" value={formatCurrency(selected?.principalBalance ?? selected?.ledgerBalance ?? 0)} variant="primary" />
-            <Text style={styles.profitLine}>
-              Accrued profit: {formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}
-            </Text>
-            <Text style={styles.profitLine}>
-              Combined: {formatCurrency(
-                selected?.totalBalance
-                ?? Number(selected?.principalBalance ?? selected?.ledgerBalance ?? 0)
-                  + Number(selected?.accruedProfit ?? selected?.totalProfit ?? 0)
-              )}
-            </Text>
-            <Text style={ui.hint}>
-              Principal = funds in/out. Accrued profit is separate — use Add profit to principal to reinvest.
-            </Text>
+            <View style={ui.statRow}>
+              <StatCard
+                title="Principal"
+                value={formatCurrency(selected?.principalBalance ?? selected?.ledgerBalance ?? 0)}
+                variant="primary"
+              />
+              <StatCard
+                title="Accrued"
+                value={formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}
+                variant="success"
+              />
+            </View>
+            <Text style={ui.hint}>Tap Reinvest to move accrued profit into principal.</Text>
 
             <View style={styles.ledgerActions}>
               <Button mode="text" onPress={() => selected && openEditProvider(selected)}>Edit provider</Button>
@@ -564,9 +583,7 @@ export default function FundProvidersScreen() {
               <Banner variant="warn">Money sent / repaid to provider — debited from your wallet</Banner>
             )}
             {txnType === 'share' && (
-              <Text style={ui.hint}>
-                Adds to accrued profit only. Use Reinvest profit in the ledger when you want it added to principal.
-              </Text>
+              <Text style={ui.hint}>Accrues profit only — not added to principal until reinvested.</Text>
             )}
 
             <TextInput
@@ -653,7 +670,7 @@ export default function FundProvidersScreen() {
             )}
 
             {txnType === 'receive' && (
-              <Text style={ui.hint}>Records principal only. P&L profit is tracked separately via Accrue P&L.</Text>
+              <Text style={ui.hint}>Principal only — use Accrue P&L for profit share.</Text>
             )}
 
             <TextInput
@@ -753,10 +770,20 @@ export default function FundProvidersScreen() {
 }
 
 const styles = StyleSheet.create({
+  providerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
+  providerMain: { flex: 1 },
+  providerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  moreBtn: {
+    minWidth: 36,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+  },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
   ledgerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 16 },
   txnRow: { marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 8 },
   words: { fontSize: 12, color: '#64748b', paddingHorizontal: 4, marginBottom: 4 },
-  profitLine: { fontSize: 13, color: '#64748b', paddingHorizontal: 4, marginBottom: 4 },
   splitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   splitLabel: { flex: 1, fontSize: 14 },
   splitInput: { width: 120 },

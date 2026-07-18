@@ -366,6 +366,8 @@ export default function LoginScreen() {
               </>
             )}
           </View>
+
+          <Text style={styles.footer}>App developed by Lokendra</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -411,4 +413,11 @@ const styles = StyleSheet.create({
   btn: { marginTop: spacing.sm, borderRadius: radii.md },
   btnContent: { paddingVertical: 6 },
   link: { color: colors.primary, marginBottom: spacing.sm, fontWeight: '600' },
+  footer: {
+    textAlign: 'center',
+    color: '#64748b',
+    fontSize: 12,
+    paddingVertical: spacing.lg,
+    paddingBottom: spacing.xl,
+  },
 });

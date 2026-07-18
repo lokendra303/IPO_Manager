@@ -208,6 +208,9 @@ export default function LoginPage() {
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 20, textAlign: 'center', fontSize: 12 }}>
             <Link to="/admin/login">System administrator</Link>
           </Typography.Text>
+          <Typography.Text type="secondary" style={{ display: 'block', marginTop: 16, textAlign: 'center', fontSize: 12 }}>
+            App developed by Lokendra
+          </Typography.Text>
         </Card>
       </div>
     </div>

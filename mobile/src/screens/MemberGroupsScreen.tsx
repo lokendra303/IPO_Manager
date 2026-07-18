@@ -12,6 +12,7 @@ import Tag from '../components/Tag';
 import StatCard from '../components/StatCard';
 import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
 import { colors } from '../theme';
 import { useQuery } from '../hooks/useQuery';
 
@@ -223,6 +224,23 @@ export default function MemberGroupsScreen() {
     }
   };
 
+  const openGroupMore = (group: any) => {
+    openActionSheet(group.name, [
+      { text: 'View', onPress: () => openViewInfo(group) },
+      { text: 'Members', onPress: () => openAssignMembers(group) },
+      { text: 'Edit', onPress: () => openEdit(group) },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert('Remove group?', 'Members stay — only the group label is removed.', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Remove', style: 'destructive', onPress: () => deleteGroup(group.id) },
+          ]),
+      },
+    ]);
+  };
+
   const toggleMember = (member: MemberOption, inOtherGroup: boolean) => {
     if (inOtherGroup) {
       Alert.alert(
@@ -264,57 +282,33 @@ export default function MemberGroupsScreen() {
     <Screen>
       <PageHeader
         title="Sub-Groups"
-        subtitle="Teams with a group owner — bulk IPO payments go to the owner"
-        extra={<Button mode="contained" onPress={openCreate}>Add group</Button>}
+        subtitle={`${groups.length} groups · bulk pay to owner`}
+        extra={<Button compact mode="contained" onPress={openCreate}>Add</Button>}
       />
 
       <ContentCard title={`Groups (${groups.length})`}>
         {groups.length === 0 ? (
-          <Text style={styles.muted}>No sub-groups yet — create one for bulk IPO payments</Text>
+          <Text style={styles.muted}>No sub-groups yet.</Text>
         ) : (
-          groups.map((g) => {
-            const ownerLabel = getOwnerLabel(g);
-            return (
-              <View key={g.id} style={styles.row}>
+          groups.map((g) => (
+            <View key={g.id} style={styles.compactRow}>
+              <View style={styles.compactRowMain}>
                 <ListRow
                   title={g.name}
-                  subtitle={
-                    ownerLabel
-                      ? `Owner: ${ownerLabel} · ${g.memberCount ?? 0} members`
-                      : `Owner: not set · ${g.memberCount ?? 0} members`
-                  }
+                  subtitle={`${g.memberCount ?? 0} members`}
                   onPress={() => openViewInfo(g)}
                 />
-                <View style={styles.memberTags}>
-                  {(g.members || []).slice(0, 4).map((m: any) => (
-                    <Tag
-                      key={m.id}
-                      label={m.displayName}
-                      color={m.id === g.ownerMemberId ? '#d97706' : m.status === 'ACTIVE' ? '#0284c7' : '#64748b'}
-                    />
-                  ))}
-                  {(g.members?.length ?? 0) > 4 && <Tag label={`+${g.members.length - 4} more`} />}
-                </View>
-                <View style={styles.actions}>
-                  <Button compact onPress={() => openViewInfo(g)}>View</Button>
-                  <Button compact onPress={() => openAssignMembers(g)}>Members</Button>
-                  <Button compact onPress={() => openEdit(g)}>Edit</Button>
-                  <Button
-                    compact
-                    textColor="#dc2626"
-                    onPress={() =>
-                      Alert.alert('Remove group?', 'Members stay in your team — only the group label is removed.', [
-                        { text: 'Cancel' },
-                        { text: 'Remove', style: 'destructive', onPress: () => deleteGroup(g.id) },
-                      ])
-                    }
-                  >
-                    Remove
-                  </Button>
-                </View>
               </View>
-            );
-          })
+              <Pressable
+                hitSlop={12}
+                onPress={() => openGroupMore(g)}
+                style={styles.moreBtn}
+                accessibilityLabel={`More actions for ${g.name}`}
+              >
+                <Text style={styles.moreText}>···</Text>
+              </Pressable>
+            </View>
+          ))
         )}
       </ContentCard>
 
@@ -349,7 +343,7 @@ export default function MemberGroupsScreen() {
                     <Text style={styles.ownerName}>{viewOwnerLabel}</Text>
                   </View>
                 ) : (
-                  <Text style={styles.warning}>No owner set — bulk IPO pay requires an owner</Text>
+                  <Text style={styles.warning}>No owner — bulk pay needs an owner</Text>
                 )}
               </ContentCard>
 
@@ -378,7 +372,7 @@ export default function MemberGroupsScreen() {
 
               <ContentCard title={`Members (${viewGroup.members?.length ?? 0})`}>
                 {(viewGroup.members?.length ?? 0) === 0 ? (
-                  <Text style={styles.muted}>No members assigned — use Manage members to add people</Text>
+                  <Text style={styles.muted}>No members — use Manage members.</Text>
                 ) : (
                   viewGroup.members.map((m: any) => (
                     <ListRow
@@ -391,12 +385,11 @@ export default function MemberGroupsScreen() {
                 )}
               </ContentCard>
 
-              <ContentCard title="Group transaction history">
-                <Text style={styles.hint}>One transfer per IPO (Bulk to owner on Distribute). Each member's share appears on Summary → Total Given.</Text>
+              <ContentCard title="Bulk payments">
                 {bulkTxnsLoading ? (
                   <Loading fullScreen={false} />
                 ) : bulkTxns.length === 0 ? (
-                  <Text style={styles.muted}>No bulk payments yet — use Bulk to owner on an IPO</Text>
+                  <Text style={styles.muted}>No bulk payments yet.</Text>
                 ) : (
                   bulkTxns.map((t) => (
                     <ListRow
@@ -425,9 +418,7 @@ export default function MemberGroupsScreen() {
             <Button mode="text" onPress={closeAssign}>Cancel</Button>
           </View>
           <ScrollView contentContainerStyle={styles.modalBody}>
-            <Text style={styles.hint}>
-              A member can belong to one sub-group only. To move someone from another group, unassign them there first.
-            </Text>
+            <Text style={styles.hint}>One sub-group per member. Unassign elsewhere first to move.</Text>
 
             {memberOptions.map((m) => {
               const inOtherGroup = Boolean(m.currentGroupId && assignGroup && m.currentGroupId !== assignGroup.id);
@@ -457,7 +448,7 @@ export default function MemberGroupsScreen() {
             </View>
 
             <ContentCard title="Group owner" style={{ marginTop: 16 }}>
-              <Text style={styles.hint}>Receives bulk IPO payments for the whole group. Must be one of the selected members.</Text>
+              <Text style={styles.hint}>Receives bulk IPO pay. Must be a selected member.</Text>
               {selectedMemberIds.length === 0 ? (
                 <Text style={styles.muted}>Select members first</Text>
               ) : (
@@ -491,9 +482,10 @@ export default function MemberGroupsScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { marginBottom: 12 },
-  memberTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4, marginBottom: 4 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end', paddingBottom: 8 },
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { paddingHorizontal: 8, paddingVertical: 12 },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textSecondary, lineHeight: 22 },
   title: { fontSize: 20, fontWeight: '700', flex: 1 },
   input: { marginBottom: 12 },
   muted: { color: colors.textSecondary, fontSize: 14 },

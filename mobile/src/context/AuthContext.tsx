@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'expo-router';
-import client, { setClientUnauthorizedHandler } from '../api/client';
+import client, { setCachedAuthToken, clearCachedAuthToken, setClientUnauthorizedHandler } from '../api/client';
 import { storage } from '../api/storage';
+import { clearQueryCache } from '../hooks/useQuery';
 
 export type User = {
   id: number;
@@ -36,6 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setClientUnauthorizedHandler(() => {
+      clearCachedAuthToken();
+      clearQueryCache();
       setUser(null);
       router.replace('/(auth)/login');
     });
@@ -46,9 +49,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (async () => {
       const token = await storage.getItem('token');
       if (!token) {
+        setCachedAuthToken(null);
         setLoading(false);
         return;
       }
+      setCachedAuthToken(token);
       try {
         const stored = await storage.getItem('user');
         if (stored) setUser(JSON.parse(stored));
@@ -56,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(data);
         await storage.setItem('user', JSON.stringify(data));
       } catch {
+        clearCachedAuthToken();
         await storage.removeItem('token');
         await storage.removeItem('user');
         setUser(null);
@@ -67,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const { data } = await client.post('/auth/login', { email, password });
+    setCachedAuthToken(data.token);
+    clearQueryCache();
     await storage.setItem('token', data.token);
     await storage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
@@ -75,6 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const memberLogin = async (pan: string) => {
     const { data } = await client.post('/auth/member-login', { pan });
+    setCachedAuthToken(data.token);
+    clearQueryCache();
     await storage.setItem('token', data.token);
     await storage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
@@ -84,6 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (email: string, password: string, tenantName: string) => {
     const { data } = await client.post('/auth/register', { email, password, tenantName });
     if (!data.pending) {
+      setCachedAuthToken(data.token);
+      clearQueryCache();
       await storage.setItem('token', data.token);
       await storage.setItem('user', JSON.stringify(data.user));
       setUser(data.user);
@@ -92,6 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    clearCachedAuthToken();
+    clearQueryCache();
     await storage.removeItem('token');
     await storage.removeItem('user');
     setUser(null);

@@ -10,7 +10,6 @@ import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
 import StatGrid from '../components/StatGrid';
 import FilterChips from '../components/FilterChips';
-import ActionGrid, { ActionCell } from '../components/ActionGrid';
 import Loading from '../components/Loading';
 import Tag from '../components/Tag';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
@@ -20,11 +19,9 @@ import { ui } from '../styles/ui';
 import {
   categoryCompactOptionsForIpo,
   categoryOptionsForIpo,
-  categoryTagColor,
   getLotAmountForCategory,
   ipoAllowsHni,
   ipoHasHniLot,
-  parseAllowedCategories,
 } from '../utils/ipoCategories';
 import { formatCurrency, formatPan, pnlColor } from '../utils/format';
 import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoProfit';
@@ -161,10 +158,7 @@ export default function IpoDetailScreen() {
   };
   const ungroupedAvailable = availableMembers.filter((m) => !m.member_group_id);
   const riiLotAmount = getLotAmountForCategory(ipo, 'RII') ?? 0;
-  const hniLotAmount = getLotAmountForCategory(ipo, 'HNI');
   const requiredFundForActiveRii = availableMembers.length * riiLotAmount;
-  const requiredFundForActiveHni =
-    hniLotAmount != null && ipoHasHniLot(ipo) ? availableMembers.length * hniLotAmount : null;
 
   const getAllotmentStatus = (app: any) =>
     editedRows[app.id]?.allotmentStatus ?? app.allotment_status;
@@ -228,7 +222,6 @@ export default function IpoDetailScreen() {
   const distributeSelectionCount = selectedIds.length + bulkMemberCount;
 
   const ipoCategoryOptions = categoryOptionsForIpo(ipo);
-  const allowedCategoryTags = parseAllowedCategories(ipo);
   const lotForCategory = getLotAmountForCategory(ipo, distributeCategory);
   const hniLotMissing = distributeCategory === 'HNI' && lotForCategory == null;
   const totalNeeded = distributeSelectionCount * (lotForCategory ?? 0);
@@ -714,47 +707,38 @@ export default function IpoDetailScreen() {
       <PageHeader
         title={ipo.name}
         subtitle={
-          `${ipo.ipo_segment} · ${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'} · Wallet ${formatCurrency(wallet)} · ${applications.length} apps\n` +
-          `RII ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
-          (ipoAllowsHni(ipo)
-            ? ` · HNI ${ipoHasHniLot(ipo) ? formatCurrency(getLotAmountForCategory(ipo, 'HNI')) : 'not set'}`
+          `${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'} · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
+          (ipoAllowsHni(ipo) && ipoHasHniLot(ipo)
+            ? ` · HNI ${formatCurrency(getLotAmountForCategory(ipo, 'HNI'))}`
             : '')
         }
         extra={
           <View style={{ gap: 6, alignItems: 'flex-end' }}>
             <Button compact mode="outlined" onPress={openEditIpo}>Edit</Button>
-            <Button compact mode="outlined" onPress={() => router.back()}>Back</Button>
+            <Button compact mode="text" onPress={() => router.back()}>Back</Button>
           </View>
         }
       />
 
-      {allowedCategoryTags.length > 0 && (
-        <View style={styles.tagRow}>
-          {allowedCategoryTags.map((c) => (
-            <Tag key={c} label={c} color={categoryTagColor(c)} />
-          ))}
-        </View>
-      )}
-
       {unsavedRowCount > 0 && (
-        <Banner variant="warn">{`${unsavedRowCount} unsaved change(s) — tap Save changes`}</Banner>
+        <Banner variant="warn">{`${unsavedRowCount} unsaved — tap Save`}</Banner>
       )}
 
       {isInvalid && (
-        <Banner variant="warn">
-          Invalid IPO — hidden from main list. Restore to distribute funds or use normally.
-        </Banner>
+        <Banner variant="warn">Hidden from main list. Use More to restore or delete.</Banner>
       )}
 
       {displaySummary && (
-        <ContentCard title="IPO summary">
+        <ContentCard title="Summary">
           <StatGrid>
-            <StatCard title="Members" value={displaySummary.applicationCount} variant="info" />
-            <StatCard title="Distributed" value={formatCurrency(displaySummary.totalDistributed)} variant="primary" />
-            <StatCard title="Returned" value={formatCurrency(displaySummary.totalReturned)} variant="success" />
-            <StatCard title="Pending return" value={formatCurrency(displaySummary.pendingReturn)} variant="warning" />
+            <StatCard title="Apps" value={displaySummary.applicationCount} variant="info" />
             <StatCard
-              title="Gross P&L"
+              title="Pending"
+              value={formatCurrency(displaySummary.pendingReturn)}
+              variant={Number(displaySummary.pendingReturn) > 0 ? 'warning' : 'success'}
+            />
+            <StatCard
+              title="P&L"
               value={displaySummary.totalProfitLoss == null ? '—' : formatCurrency(displaySummary.totalProfitLoss)}
               variant={
                 displaySummary.totalProfitLoss == null
@@ -764,230 +748,155 @@ export default function IpoDetailScreen() {
                     : 'danger'
               }
             />
-            <StatCard title="Manager share" value={formatCurrency(displaySummary.shareManagerTotal)} variant="info" />
-            <StatCard title="Provider share" value={formatCurrency(displaySummary.shareProviderTotal)} variant="primary" />
+            <StatCard
+              title="Returned"
+              value={`${displaySummary.returnedCount}/${displaySummary.applicationCount}`}
+              variant="primary"
+            />
           </StatGrid>
+        </ContentCard>
+      )}
+
+      {!isFrozen && availableMembers.length > 0 && (
+        <ContentCard>
           <Text style={styles.summaryMeta}>
-            Alloted {displaySummary.allottedCount} · Not alloted {displaySummary.notAllottedCount} · Did not apply{' '}
-            {displaySummary.notAppliedCount} · Pending {displaySummary.pendingAllotmentCount} · Returns{' '}
-            {displaySummary.returnedCount}/{displaySummary.applicationCount}
+            Need <Text style={styles.bold}>{formatCurrency(requiredFundForActiveRii)}</Text>
+            {' '}for {availableMembers.length} more
+            {wallet < requiredFundForActiveRii ? ' · wallet short' : ''}
           </Text>
         </ContentCard>
       )}
 
-      {!isFrozen && (
-        <ContentCard title="Required fund (active members)">
-          {availableMembers.length === 0 ? (
-            <Text style={ui.hint}>All active members already have an application for this IPO.</Text>
-          ) : (
-            <>
-              <Text style={styles.summaryMeta}>
-                {availableMembers.length} available × {formatCurrency(riiLotAmount)} (RII) ={' '}
-                <Text style={styles.bold}>{formatCurrency(requiredFundForActiveRii)}</Text>
-              </Text>
-              {requiredFundForActiveHni != null && (
-                <Text style={styles.summaryMeta}>
-                  {availableMembers.length} available × {formatCurrency(hniLotAmount)} (HNI) ={' '}
-                  <Text style={styles.bold}>{formatCurrency(requiredFundForActiveHni)}</Text>
-                </Text>
-              )}
-              <Text style={ui.hint}>
-                Wallet {formatCurrency(wallet)}
-                {wallet < requiredFundForActiveRii ? ' — short for full RII distribution' : ''}
-              </Text>
-            </>
-          )}
-        </ContentCard>
-      )}
-
       <ContentCard title="Actions">
-        <ActionGrid>
+        <View style={styles.primaryActions}>
           {!isFrozen && (
-            <ActionCell>
-              <Button mode="contained" disabled={!availableMembers.length} onPress={openDistribute} style={styles.fullBtn}>
-                Distribute funds
-              </Button>
-            </ActionCell>
+            <Button mode="contained" disabled={!availableMembers.length} onPress={openDistribute} style={styles.primaryBtn}>
+              Distribute
+            </Button>
           )}
-          <ActionCell>
-            <Button mode="contained" onPress={onSaveBulk} disabled={!unsavedRowCount} style={styles.fullBtn}>
-              Save changes{unsavedRowCount ? ` (${unsavedRowCount})` : ''}
-            </Button>
-          </ActionCell>
-          <ActionCell>
-            <Button mode="outlined" onPress={onUndoChanges} disabled={!unsavedRowCount} style={styles.fullBtn}>
-              Undo changes
-            </Button>
-          </ActionCell>
-          {applications.length > 0 && (
-            <ActionCell>
-              <Button mode="outlined" onPress={() => setAllotmentCheckOpen(true)} style={styles.fullBtn}>
-                Check allotment
-              </Button>
-            </ActionCell>
-          )}
-          <ActionCell>
-            <Button
-              mode="outlined"
-              onPress={() => router.push({
-                pathname: '/(manager)/profit-sharing',
-                params: { presetIpoId: String(id), presetIpoName: ipo?.name || '' },
-              })}
-              style={styles.fullBtn}
-            >
-              Share rules for IPO
-            </Button>
-          </ActionCell>
-          <ActionCell>
-            <Button mode="outlined" loading={profitLoading} disabled={isFrozen} onPress={onPreviewProfitShare} style={styles.fullBtn}>
-              Distribute P&L
-            </Button>
-          </ActionCell>
-          {!isFrozen && (
-            <ActionCell>
-              <Button mode="outlined" onPress={openHniSetup} style={styles.fullBtn}>
-                {ipoAllowsHni(ipo) ? 'HNI settings' : 'Set up HNI'}
-              </Button>
-            </ActionCell>
-          )}
-          <ActionCell>
-            {isInvalid ? (
-              <>
-                <Button
-                  loading={statusLoading}
-                  onPress={() =>
-                    Alert.alert('Restore to main IPO list?', undefined, [
-                      { text: 'Cancel' },
-                      {
-                        text: 'Restore',
-                        onPress: async () => {
-                          setStatusLoading(true);
-                          try {
-                            const { data } = await client.post(`/ipos/${id}/restore`);
-                            setIpo(data);
-                          } catch (err) {
-                            Alert.alert('Error', getErrorMessage(err));
-                          } finally {
-                            setStatusLoading(false);
-                          }
-                        },
+          <Button mode="contained" onPress={onSaveBulk} disabled={!unsavedRowCount} style={styles.primaryBtn}>
+            Save{unsavedRowCount ? ` (${unsavedRowCount})` : ''}
+          </Button>
+        </View>
+        <Button
+          mode="outlined"
+          style={{ marginTop: 8 }}
+          loading={statusLoading || profitLoading}
+          onPress={() => {
+            const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
+            if (unsavedRowCount) buttons.push({ text: 'Undo changes', onPress: onUndoChanges });
+            if (applications.length > 0) {
+              buttons.push({ text: 'Check allotment', onPress: () => setAllotmentCheckOpen(true) });
+            }
+            if (!isFrozen) {
+              buttons.push({ text: 'Distribute P&L', onPress: onPreviewProfitShare });
+            }
+            buttons.push({
+              text: 'Share rules',
+              onPress: () =>
+                router.push({
+                  pathname: '/(manager)/profit-sharing',
+                  params: { presetIpoId: String(id), presetIpoName: ipo?.name || '' },
+                }),
+            });
+            if (!isFrozen) {
+              buttons.push({
+                text: ipoAllowsHni(ipo) ? 'HNI settings' : 'Set up HNI',
+                onPress: openHniSetup,
+              });
+            }
+            if (isInvalid) {
+              buttons.push({
+                text: 'Restore',
+                onPress: async () => {
+                  setStatusLoading(true);
+                  try {
+                    const { data } = await client.post(`/ipos/${id}/restore`);
+                    setIpo(data);
+                  } catch (err) {
+                    Alert.alert('Error', getErrorMessage(err));
+                  } finally {
+                    setStatusLoading(false);
+                  }
+                },
+              });
+              buttons.push({
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () =>
+                  Alert.alert('Delete IPO?', 'Only empty invalid IPOs. Cannot undo.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Delete',
+                      style: 'destructive',
+                      onPress: async () => {
+                        setStatusLoading(true);
+                        try {
+                          await client.delete(`/ipos/${id}`);
+                          router.replace('/(manager)/ipos');
+                        } catch (err) {
+                          Alert.alert('Error', getErrorMessage(err));
+                        } finally {
+                          setStatusLoading(false);
+                        }
                       },
-                    ])
-                  }
-                  style={styles.fullBtn}
-                >
-                  Restore IPO
-                </Button>
-                <Button
-                  mode="outlined"
-                  textColor="#dc2626"
-                  loading={statusLoading}
-                  onPress={() =>
-                    Alert.alert(
-                      'Permanently delete this IPO?',
-                      'Only empty invalid IPOs can be deleted. This cannot be undone.',
-                      [
-                        { text: 'Cancel' },
-                        {
-                          text: 'Delete',
-                          style: 'destructive',
-                          onPress: async () => {
-                            setStatusLoading(true);
-                            try {
-                              await client.delete(`/ipos/${id}`);
-                              router.replace('/(manager)/ipos');
-                            } catch (err) {
-                              Alert.alert('Error', getErrorMessage(err));
-                            } finally {
-                              setStatusLoading(false);
-                            }
-                          },
-                        },
-                      ]
-                    )
-                  }
-                  style={[styles.fullBtn, { marginTop: 8 }]}
-                >
-                  Delete IPO
-                </Button>
-              </>
-            ) : isClosed ? (
-              <Button loading={statusLoading} onPress={onReopenIpo} style={styles.fullBtn}>Reopen IPO</Button>
-            ) : (
-              <>
-                <Button
-                  mode="outlined"
-                  textColor="#dc2626"
-                  loading={statusLoading}
-                  onPress={() =>
-                    Alert.alert('Close IPO?', 'No wallet transactions until reopened.', [
-                      { text: 'Cancel' },
-                      { text: 'Close', style: 'destructive', onPress: onCloseIpo },
-                    ])
-                  }
-                  style={styles.fullBtn}
-                >
-                  Close IPO
-                </Button>
-                <Button
-                  mode="outlined"
-                  textColor="#64748b"
-                  loading={statusLoading}
-                  onPress={() =>
-                    Alert.alert('Mark as invalid IPO?', 'Hides from main list. Records kept.', [
-                      { text: 'Cancel' },
-                      {
-                        text: 'Mark invalid',
-                        style: 'destructive',
-                        onPress: async () => {
-                          setStatusLoading(true);
-                          try {
-                            const { data } = await client.post(`/ipos/${id}/invalidate`);
-                            setIpo(data);
-                          } catch (err) {
-                            Alert.alert('Error', getErrorMessage(err));
-                          } finally {
-                            setStatusLoading(false);
-                          }
-                        },
+                    },
+                  ]),
+              });
+            } else if (isClosed) {
+              buttons.push({ text: 'Reopen', onPress: onReopenIpo });
+            } else {
+              buttons.push({
+                text: 'Close',
+                style: 'destructive',
+                onPress: () =>
+                  Alert.alert('Close IPO?', 'Status only.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Close', style: 'destructive', onPress: onCloseIpo },
+                  ]),
+              });
+              buttons.push({
+                text: 'Mark invalid',
+                style: 'destructive',
+                onPress: () =>
+                  Alert.alert('Mark invalid?', 'Hides from main list.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Invalid',
+                      style: 'destructive',
+                      onPress: async () => {
+                        setStatusLoading(true);
+                        try {
+                          const { data } = await client.post(`/ipos/${id}/invalidate`);
+                          setIpo(data);
+                        } catch (err) {
+                          Alert.alert('Error', getErrorMessage(err));
+                        } finally {
+                          setStatusLoading(false);
+                        }
                       },
-                    ])
-                  }
-                  style={[styles.fullBtn, { marginTop: 8 }]}
-                >
-                  Mark invalid
-                </Button>
-              </>
-            )}
-          </ActionCell>
-        </ActionGrid>
+                    },
+                  ]),
+              });
+            }
+            buttons.push({ text: 'Cancel', style: 'cancel' });
+            Alert.alert('More', undefined, buttons);
+          }}
+        >
+          More…
+        </Button>
       </ContentCard>
 
-      {!isFrozen && !ipoAllowsHni(ipo) && (
-        <View style={[ui.banner, ui.bannerInfo]}>
-          <Text style={ui.bannerText}>HNI is optional. Enable HNI and set lot amount when needed.</Text>
-          <Button compact mode="contained" onPress={openHniSetup}>Set up HNI</Button>
-        </View>
-      )}
       {!isFrozen && ipoAllowsHni(ipo) && !ipoHasHniLot(ipo) && (
-        <View style={[ui.banner, ui.bannerWarn]}>
-          <Text style={ui.bannerText}>HNI enabled — lot amount not set yet.</Text>
-          <Button compact mode="contained" onPress={openHniSetup}>Set HNI lot</Button>
-        </View>
+        <Banner variant="warn">HNI on — set lot to distribute as HNI.</Banner>
       )}
-      {isClosed && (
-        <Banner variant="warn">
-          IPO is closed. You can still mark member returns. Reopen to distribute or run P&L splits.
-        </Banner>
-      )}
+      {isClosed && <Banner variant="warn">Closed — you can still mark returns.</Banner>}
       {notAppliedPendingReturn.length > 0 && (
-        <Banner variant="info">
-          {`${notAppliedPendingReturn.length} member(s) did not apply — set allotment to Did not apply, save, then Receive when money is back.`}
-        </Banner>
+        <Banner variant="info">{`${notAppliedPendingReturn.length} did not apply — still pending return.`}</Banner>
       )}
 
       {activeAccounts.length > 0 && (
-        <ContentCard title="Member returns credit to">
+        <ContentCard title="Credit returns to">
           {activeAccounts.map((a) => (
             <Pressable
               key={a.id}
@@ -998,40 +907,40 @@ export default function IpoDetailScreen() {
             </Pressable>
           ))}
           {missingReceiveAccount && (
-            <Text style={styles.warnText}>Select account before marking receive</Text>
+            <Text style={styles.warnText}>Select account before receive</Text>
           )}
         </ContentCard>
       )}
 
       <ContentCard
-        title={`Applications (${filteredApplications.length}${returnFilter !== 'all' ? ` of ${applications.length}` : ''})`}
+        title={`Apps (${filteredApplications.length}${returnFilter !== 'all' ? `/${applications.length}` : ''})`}
       >
         {applications.length > 0 && (
           <View style={{ marginBottom: 12 }}>
             <FilterChips
-            value={returnFilter}
-            onChange={setReturnFilter}
-            options={[
-              { value: 'all', label: `All (${applications.length})` },
-              { value: 'returned', label: `Returned (${returnedCount})` },
-              { value: 'pending', label: `Pending payment (${pendingReturnCount})` },
-              { value: 'not_applied', label: `No apply (${notAppliedCount})` },
-              { value: 'allotted', label: `Alloted (${allottedCount})` },
-              { value: 'not_allotted', label: `Not alloted (${notAllottedCount})` },
-            ]}
+              value={returnFilter}
+              onChange={setReturnFilter}
+              options={[
+                { value: 'all', label: `All (${applications.length})` },
+                { value: 'pending', label: `Pending (${pendingReturnCount})` },
+                { value: 'returned', label: `Returned (${returnedCount})` },
+                { value: 'allotted', label: `Alloted (${allottedCount})` },
+                { value: 'not_allotted', label: `Not (${notAllottedCount})` },
+                { value: 'not_applied', label: `No apply (${notAppliedCount})` },
+              ]}
             />
           </View>
         )}
         {receivableSelectedIds.length > 0 && (
           <Button mode="contained" loading={receivingBulk} onPress={onReceiveBulk} style={{ marginBottom: 12 }}>
-            Receive selected ({receivableSelectedIds.length})
+            Receive ({receivableSelectedIds.length})
           </Button>
         )}
 
         {refreshing ? (
           <Loading fullScreen={false} />
         ) : filteredApplications.length === 0 ? (
-          <Text style={ui.muted}>No applications in this filter</Text>
+          <Text style={ui.muted}>No apps in this filter</Text>
         ) : (
           filteredApplications.map((app) => (
             <ApplicationCard
@@ -1459,7 +1368,7 @@ function ApplicationCard({
         {isFundReturned(app) ? (
           <Tag label="Returned" color="#059669" />
         ) : (
-          <Tag label="Pending return" color="#64748b" />
+          <Tag label="Pending" color="#64748b" />
         )}
       </View>
 
@@ -1467,28 +1376,25 @@ function ApplicationCard({
         {app.member_group_name ? <Tag label={app.member_group_name} color="#3b82f6" /> : null}
         {app.paid_to_member_id && app.paid_to_member_id !== app.member_id ? (
           <Tag label={`To ${app.paid_to_display_name}`} color="#d97706" />
-        ) : (
-          <Text style={ui.muted}>Direct payment</Text>
-        )}
-        {app.trns_given ? <Tag label={app.trns_given} color="#3b82f6" /> : null}
+        ) : null}
       </View>
 
-      <Text style={styles.sectionTitle}>Category</Text>
       {categoryOptions.length > 1 ? (
-        <View style={ui.chipRow}>
-          {categoryOptions.map((opt) => (
-            <Pressable
-              key={opt.value}
-              style={[ui.chip, category === opt.value && ui.chipActive, isClosed && ui.chipDisabled]}
-              onPress={() => !isClosed && updateRow(app.id, 'investorCategory', opt.value)}
-            >
-              <Text style={[ui.chipText, category === opt.value && ui.chipTextActive]}>{opt.label}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : (
-        <Tag label={category} color={categoryTagColor(category)} />
-      )}
+        <>
+          <Text style={styles.sectionTitle}>Category</Text>
+          <View style={ui.chipRow}>
+            {categoryOptions.map((opt) => (
+              <Pressable
+                key={opt.value}
+                style={[ui.chip, category === opt.value && ui.chipActive, isClosed && ui.chipDisabled]}
+                onPress={() => !isClosed && updateRow(app.id, 'investorCategory', opt.value)}
+              >
+                <Text style={[ui.chipText, category === opt.value && ui.chipTextActive]}>{opt.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
 
       <TextInput
         dense
@@ -1587,8 +1493,10 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
   warnText: { color: '#dc2626', fontSize: 13, marginTop: 4 },
   errorText: { color: '#dc2626', marginBottom: 12 },
-  summaryMeta: { fontSize: 12, color: colors.textSecondary, marginTop: 12, lineHeight: 18 },
+  summaryMeta: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
   fullBtn: { width: '100%' },
+  primaryActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  primaryBtn: { flexGrow: 1, minWidth: 120 },
   accountDisabled: { opacity: 0.5 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
   sectionTitle: { fontWeight: '600', fontSize: 13, marginTop: 4, color: colors.text },

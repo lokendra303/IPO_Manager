@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, SegmentedButtons, TextInput } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,7 @@ import StatCard, { PnlStatCard } from '../components/StatCard';
 import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import { copyToClipboard } from '../utils/allotmentCheck';
+import { openActionSheet } from '../utils/actionSheet';
 import { colors } from '../theme';
 import { useQuery } from '../hooks/useQuery';
 
@@ -71,7 +72,7 @@ export default function MembersScreen() {
       memberGroups: g.status === 'fulfilled' ? g.value.data || [] : [],
     };
   }, []);
-  const { data, loading, refresh } = useQuery(fetcher);
+  const { data, loading, refresh } = useQuery(fetcher, [], { cacheKey: 'members' });
   const members = data?.members ?? [];
   const memberGroups = data?.memberGroups ?? [];
 
@@ -168,6 +169,17 @@ export default function MembersScreen() {
     setDetailTab('info');
   };
 
+  const openMemberMore = (record: any) => {
+    const isActive = record.status === 'ACTIVE';
+    openActionSheet(record.display_name, [
+      { text: 'Edit', onPress: () => openEdit(record) },
+      {
+        text: isActive ? 'Deactivate' : 'Activate',
+        onPress: () => setMemberStatus(record, !isActive),
+      },
+    ]);
+  };
+
   const m = detail?.member;
   const s = detail?.stats;
 
@@ -182,21 +194,32 @@ export default function MembersScreen() {
 
   return (
     <Screen>
-      <PageHeader title="Members" subtitle="Manage team members and PAN logins" extra={<Button mode="contained" onPress={openCreate}>Add member</Button>} />
-      <TextInput placeholder="Search members..." value={search} onChangeText={setSearch} mode="outlined" style={{ marginBottom: 12 }} />
+      <PageHeader
+        title="Members"
+        subtitle={`${filtered.length} team members`}
+        extra={<Button compact mode="contained" onPress={openCreate}>Add</Button>}
+      />
+      <TextInput placeholder="Search..." value={search} onChangeText={setSearch} mode="outlined" style={{ marginBottom: 12 }} />
       <ContentCard title={`Members (${filtered.length})`}>
-        {filtered.map((m) => (
-          <View key={m.id} style={styles.row}>
-            <ListRow
-              title={m.display_name}
-              subtitle={`PAN ${formatPan(m.pan)}${m.member_group_name ? ` · ${m.member_group_name}` : ''}`}
-              onPress={() => openDetail(m.id)}
-              right={<Tag label={m.status} color={m.status === 'ACTIVE' ? '#059669' : '#dc2626'} />}
-            />
-            <View style={styles.actions}>
-              <Switch value={m.status === 'ACTIVE'} disabled={togglingId === m.id} onValueChange={(v) => setMemberStatus(m, v)} />
-              <Button compact onPress={() => openEdit(m)}>Edit</Button>
+        {filtered.map((member) => (
+          <View key={member.id} style={styles.compactRow}>
+            <View style={styles.compactRowMain}>
+              <ListRow
+                title={member.display_name}
+                subtitle={member.member_group_name || formatPan(member.pan)}
+                onPress={() => openDetail(member.id)}
+                right={<Tag label={member.status} color={member.status === 'ACTIVE' ? '#059669' : '#dc2626'} />}
+              />
             </View>
+            <Pressable
+              hitSlop={12}
+              onPress={() => openMemberMore(member)}
+              disabled={togglingId === member.id}
+              style={styles.moreBtn}
+              accessibilityLabel={`More actions for ${member.display_name}`}
+            >
+              <Text style={styles.moreText}>···</Text>
+            </Pressable>
           </View>
         ))}
       </ContentCard>
@@ -215,13 +238,9 @@ export default function MembersScreen() {
           <TextInput label="Relationship note" value={form.relationshipNote || ''} onChangeText={(v) => setForm({ ...form, relationshipNote: v })} mode="outlined" style={styles.input} />
 
           <Text style={styles.fieldLabel}>Sub-Group</Text>
-          {editing?.member_group_id ? (
-            <Text style={styles.groupHint}>
-              Member can belong to one sub-group only. To move to another group, select None and save, then assign under Sub-Groups.
-            </Text>
-          ) : (
-            <Text style={styles.groupHint}>A member can only be in one sub-group at a time.</Text>
-          )}
+          <Text style={styles.groupHint}>
+            {editing?.member_group_id ? 'One sub-group only — clear to move.' : 'Optional — one sub-group per member.'}
+          </Text>
           <Pressable
             style={[styles.groupOption, form.memberGroupId == null && styles.groupOptionActive]}
             onPress={() => setForm({ ...form, memberGroupId: null })}
@@ -256,7 +275,7 @@ export default function MembersScreen() {
             <ScrollView contentContainerStyle={styles.detailScroll} keyboardShouldPersistTaps="handled">
               {m.status === 'INACTIVE' && (
                 <View style={styles.inactiveBanner}>
-                  <Text style={styles.inactiveText}>This member is inactive — excluded from IPO distribute and PAN login.</Text>
+                  <Text style={styles.inactiveText}>Inactive — excluded from distribute and PAN login.</Text>
                 </View>
               )}
 
@@ -298,24 +317,12 @@ export default function MembersScreen() {
                   {s && (
                     <ContentCard title="Summary">
                       <View style={styles.statRow}>
-                        <StatCard title="Total given" value={formatCurrency(s.totalGiven)} variant="warning" />
-                        <StatCard title="Total received" value={formatCurrency(s.totalReceived)} variant="success" />
-                      </View>
-                      <View style={styles.statRow}>
                         <StatCard title="Pending" value={formatCurrency(s.willReceiveFromTeam)} variant={s.willReceiveFromTeam !== 0 ? 'danger' : 'primary'} />
-                        <StatCard title="IPOs applied" value={s.iposApplied ?? 0} variant="info" />
+                        <StatCard title="Given" value={formatCurrency(s.totalGiven)} variant="warning" />
                       </View>
                       <View style={styles.statRow}>
-                        <StatCard title="Alloted" value={s.iposAlloted ?? 0} variant="success" />
-                        <StatCard title="Not alloted" value={s.iposNotAlloted ?? 0} variant="danger" />
-                      </View>
-                      <View style={styles.statRow}>
-                        <PnlStatCard title="Gross IPO P&L" value={s.totalIpoProfit ?? 0} formatted={formatCurrency(s.totalIpoProfit ?? 0)} />
-                        <PnlStatCard title="Member share" value={s.totalMemberShare ?? 0} formatted={formatCurrency(s.totalMemberShare ?? 0)} />
-                      </View>
-                      <View style={styles.statRow}>
-                        <PnlStatCard title="Manager share" value={s.totalManagerShare ?? 0} formatted={formatCurrency(s.totalManagerShare ?? 0)} />
-                        <StatCard title="Provider share" value={formatCurrency(s.totalProviderShare ?? 0)} variant="info" />
+                        <PnlStatCard title="P&L" value={s.totalIpoProfit ?? 0} formatted={formatCurrency(s.totalIpoProfit ?? 0)} />
+                        <StatCard title="Applied" value={s.iposApplied ?? 0} variant="info" />
                       </View>
                     </ContentCard>
                   )}
@@ -372,8 +379,10 @@ export default function MembersScreen() {
 }
 
 const styles = StyleSheet.create({
-  row: { marginBottom: 4 },
-  actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingBottom: 8 },
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { paddingHorizontal: 8, paddingVertical: 12 },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textSecondary, lineHeight: 22 },
   modalTitle: { fontSize: 20, fontWeight: '700', flex: 1 },
   input: { marginBottom: 10 },
   fieldLabel: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, marginTop: 4 },

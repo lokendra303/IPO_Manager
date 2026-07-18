@@ -6,13 +6,12 @@ import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
-import StatGrid from '../components/StatGrid';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
-import Banner from '../components/Banner';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
 import SlideModal from '../components/SlideModal';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
@@ -34,6 +33,7 @@ type ManagerProfit = {
   availableManagerProfit?: number;
   walletBalance?: number;
   maxWithdraw?: number;
+  providerAccruedProfit?: number;
 };
 
 type WalletData = {
@@ -44,15 +44,14 @@ type WalletData = {
 };
 
 async function fetchWallet(): Promise<WalletData> {
-  const [w, accts, t] = await Promise.all([
+  const [w, t] = await Promise.all([
     client.get('/wallet'),
-    client.get('/bank-accounts'),
-    client.get('/wallet/transactions'),
+    client.get('/wallet/transactions', { params: { limit: 40 } }),
   ]);
   return {
     balance: w.data.balance,
     managerProfit: w.data.managerProfit || null,
-    accounts: accts.data.accounts || [],
+    accounts: w.data.accounts || [],
     txns: t.data,
   };
 }
@@ -68,7 +67,7 @@ export default function WalletScreen() {
   const [withdrawing, setWithdrawing] = useState(false);
 
   const fetcher = useCallback(() => fetchWallet(), []);
-  const { data, loading, refresh } = useQuery(fetcher);
+  const { data, loading, refresh } = useQuery(fetcher, [], { cacheKey: 'wallet' });
 
   const onSaveAccount = async () => {
     try {
@@ -156,54 +155,84 @@ export default function WalletScreen() {
   const activeAccounts = accounts.filter((a) => a.is_active);
   const maxWithdraw = Number(managerProfit?.maxWithdraw ?? 0);
 
+  const withdrawalInfo =
+    'Personal withdrawals use manager IPO profit only. Provider profit is reserved and must be handled under Fund Providers.';
+
+  const openAddAccount = () => {
+    setEditingAccount(null);
+    setForm({});
+    setAccountModal(true);
+  };
+
+  const openTransfer = () => {
+    setTransfer({});
+    setTransferModal(true);
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet(
+      'Wallet',
+      [
+        { text: 'Refresh', onPress: refresh },
+        { text: 'Add bank account', onPress: openAddAccount },
+        { text: 'Transfer between accounts', onPress: openTransfer },
+      ],
+      withdrawalInfo
+    );
+  };
+
+  const openAccountMore = (account: any) => {
+    openActionSheet(account.label, [
+      {
+        text: 'Edit account',
+        onPress: () => {
+          setEditingAccount(account);
+          setForm({
+            label: account.label,
+            bankName: account.bank_name,
+            accountNumber: account.account_number,
+            isActive: account.is_active,
+          });
+          setAccountModal(true);
+        },
+      },
+    ]);
+  };
+
   return (
     <Screen>
       <PageHeader
         title="Wallet"
-        subtitle="Personal withdrawals use manager profit only"
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
-      <StatGrid>
-        <StatCard title="Wallet balance" value={formatCurrency(balance)} variant="primary" />
-        <StatCard
-          title="Available manager profit"
-          value={formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
-          variant="success"
-        />
-        <StatCard
-          title="Personal withdrawn"
-          value={formatCurrency(managerProfit?.personalWithdrawn ?? 0)}
-          variant="warning"
-        />
-        <StatCard title="Max personal withdraw" value={formatCurrency(maxWithdraw)} variant="info" />
-      </StatGrid>
-      <Banner variant="info">
-        Personal withdrawal uses manager IPO profit only. Provider profit is reserved
-        {managerProfit?.providerAccruedProfit
-          ? ` (${formatCurrency(managerProfit.providerAccruedProfit)})`
-          : ''}
-        {' '}and must be handled under Fund Providers.
-      </Banner>
-      <ContentCard title="Bank accounts" extra={
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+      <View style={ui.statRow}>
+        <StatCard title="Balance" value={formatCurrency(balance)} variant="primary" />
+        <StatCard title="Max withdraw" value={formatCurrency(maxWithdraw)} variant="info" />
+      </View>
+      <ContentCard
+        title="Bank accounts"
+        extra={
           <Button
             compact
             mode="contained"
             disabled={maxWithdraw <= 0 || activeAccounts.length === 0}
             onPress={openPersonalWithdraw}
           >
-            Personal withdraw
+            Withdraw
           </Button>
-          <Button compact onPress={() => { setEditingAccount(null); setForm({}); setAccountModal(true); }}>Add</Button>
-          <Button compact onPress={() => { setTransfer({}); setTransferModal(true); }}>Transfer</Button>
-        </View>
-      }>
+        }
+      >
         {accounts.map((a) => (
           <ListRow
             key={a.id}
             title={a.label}
-            subtitle={[a.bank_name, a.account_number].filter(Boolean).join(' · ') || formatCurrency(a.balance)}
+            subtitle={formatCurrency(a.balance)}
             right={<Tag label={a.is_active ? (a.is_default ? 'Default' : 'Active') : 'Inactive'} />}
+            onPress={() => openAccountMore(a)}
           />
         ))}
       </ContentCard>
@@ -212,8 +241,12 @@ export default function WalletScreen() {
           <ListRow
             key={t.id}
             title={t.type?.replace(/_/g, ' ')}
-            subtitle={`${formatDateTime(t.txn_date)} · ${t.bank_account_label || '—'}${t.notes ? ` · ${t.notes}` : ''}`}
-            right={<Text style={{ color: typeColors[t.type] || '#64748b', fontWeight: '600' }}>{formatCurrency(t.amount)}</Text>}
+            subtitle={`${formatDateTime(t.txn_date)} · ${t.bank_account_label || '—'}`}
+            right={
+              <Text style={{ color: typeColors[t.type] || '#64748b', fontWeight: '600' }}>
+                {formatCurrency(t.amount)}
+              </Text>
+            }
           />
         ))}
       </ContentCard>

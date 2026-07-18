@@ -1,4 +1,4 @@
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import { router } from 'expo-router';
 import Screen from '../components/Screen';
@@ -11,9 +11,10 @@ import Banner from '../components/Banner';
 import { formatCurrency, formatPan } from '../utils/format';
 import { copyToClipboard } from '../utils/allotmentCheck';
 import { buildCollectionWhatsAppMessage, shareWhatsAppMessage } from '../utils/share';
+import { openActionSheet } from '../utils/actionSheet';
 import { useMemberDashboard } from '../hooks/useMemberDashboard';
 import { useAuth } from '../context/AuthContext';
-import { ui } from '../styles/ui';
+import { colors } from '../theme';
 
 export default function MemberCollectionsScreen() {
   const { user } = useAuth();
@@ -34,12 +35,31 @@ export default function MemberCollectionsScreen() {
     if (!ok) Alert.alert('WhatsApp', 'Could not open WhatsApp. Copy the message manually.');
   };
 
+  const openMemberMore = (m: any) => {
+    const pending = Number(m.pendingReturn ?? 0);
+    const actions = [
+      { text: 'WhatsApp reminder', onPress: () => remind(m.displayName, pending) },
+      ...(m.upi
+        ? [{ text: 'Copy UPI', onPress: () => copyUpi(m.upi!, m.displayName) }]
+        : []),
+    ];
+    openActionSheet(
+      m.displayName,
+      actions,
+      [
+        formatPan(m.pan),
+        `Pending ${formatCurrency(pending)}`,
+        m.upi ? `UPI ${m.upi}` : 'No UPI on file — ask them to update profile',
+      ].join('\n')
+    );
+  };
+
   if (loading && !dashboard) return <Loading />;
 
   if (!isLeader) {
     return (
       <Screen bottomNavInset>
-        <PageHeader title="Collect from members" />
+        <PageHeader title="Collections" subtitle="Leaders only" />
         <Banner variant="info">Only sub-group leaders can see member collection status.</Banner>
       </Screen>
     );
@@ -50,41 +70,38 @@ export default function MemberCollectionsScreen() {
   return (
     <Screen bottomNavInset>
       <PageHeader
-        title="Collect from members"
-        subtitle={members.length ? `${formatCurrency(total)} pending across ${members.length} member(s)` : 'All caught up'}
+        title="Collections"
+        subtitle={members.length ? `${formatCurrency(total)} · ${members.length} owed` : 'All caught up'}
       />
-      <ContentCard title="Who still owes fund return">
-        <Text style={ui.hint}>Members with pending return to your manager. Remind them via WhatsApp or copy their UPI.</Text>
+      <ContentCard title="Pending returns">
         {!members.length ? (
-          <ListRow title="No pending collections" subtitle="Every member has returned their fund share" />
+          <ListRow title="No pending collections" />
         ) : (
           members.map((m) => (
-            <ListRow
-              key={m.id}
-              title={m.displayName}
-              subtitle={[
-                formatPan(m.pan),
-                `Pending ${formatCurrency(m.pendingReturn)}`,
-                m.upi ? `UPI ${m.upi}` : 'No UPI on file',
-              ].join(' · ')}
-              right={<Tag label="Owed" color="#d97706" />}
-            />
+            <View key={m.id} style={styles.compactRow}>
+              <View style={styles.compactRowMain}>
+                <ListRow
+                  title={m.displayName}
+                  subtitle={`${formatCurrency(m.pendingReturn)} · ${formatPan(m.pan)}`}
+                  right={<Tag label="Owed" color="#d97706" />}
+                  onPress={() => openMemberMore(m)}
+                />
+              </View>
+              <Pressable hitSlop={12} onPress={() => openMemberMore(m)} style={styles.moreBtn}>
+                <Text style={styles.moreText}>···</Text>
+              </Pressable>
+            </View>
           ))
         )}
       </ContentCard>
-      {members.map((m) => (
-        <ContentCard key={`actions-${m.id}`} title={m.displayName}>
-          <Button mode="outlined" onPress={() => remind(m.displayName, Number(m.pendingReturn))} style={{ marginBottom: 8 }}>
-            WhatsApp reminder
-          </Button>
-          {m.upi ? (
-            <Button mode="outlined" onPress={() => copyUpi(m.upi!, m.displayName)}>Copy UPI</Button>
-          ) : (
-            <Banner variant="warn">{`Ask ${m.displayName} to add UPI in profile.`}</Banner>
-          )}
-        </ContentCard>
-      ))}
-      <Button mode="text" onPress={() => router.push('/(member)/profile' as any)}>Update your own UPI</Button>
+      <Button mode="text" onPress={() => router.push('/(member)/profile' as any)}>Update your UPI</Button>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Alert, Modal, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Button, TextInput } from 'react-native-paper';
 import adminClient from '../api/adminClient';
@@ -10,10 +10,11 @@ import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import FilterChips from '../components/FilterChips';
-import ActionGrid, { ActionCell } from '../components/ActionGrid';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
 import { useQuery } from '../hooks/useQuery';
+import { colors } from '../theme';
 import { ui } from '../styles/ui';
 
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISABLED' | 'ALL';
@@ -108,21 +109,61 @@ export default function AdminRegistrationsScreen() {
   const enableTeam = (id: number) =>
     runAction(id, () => adminClient.post(`/admin/tenants/${id}/enable`));
 
+  const openTeamMore = (r: any) => {
+    const teamName = r.name || 'Unnamed team';
+    const actions: { text: string; style?: 'destructive'; onPress: () => void }[] = [
+      { text: 'View details', onPress: () => router.push(`/(admin)/tenants/${r.id}`) },
+    ];
+
+    if (r.status === 'PENDING') {
+      actions.push(
+        { text: 'Approve', onPress: () => approve(r.id) },
+        { text: 'Reject', style: 'destructive', onPress: () => { setReason(''); setRejectTarget({ id: r.id, name: teamName }); } }
+      );
+    } else if (r.status === 'REJECTED') {
+      actions.push({ text: 'Reopen', onPress: () => reopen(r.id) });
+    } else if (r.status === 'APPROVED') {
+      actions.push({ text: 'Disable', style: 'destructive', onPress: () => { setReason(''); setDisableTarget({ id: r.id, name: teamName }); } });
+    } else if (r.status === 'DISABLED') {
+      actions.push({ text: 'Enable', onPress: () => enableTeam(r.id) });
+    }
+
+    openActionSheet(
+      teamName,
+      actions,
+      [
+        r.owner_email,
+        `${r.member_count ?? 0} members · ${formatCurrency(r.wallet_balance ?? 0)}`,
+        `Registered ${formatDateTime(r.created_at)}`,
+        r.status === 'APPROVED' && r.approved_at ? `Approved ${formatDateTime(r.approved_at)}` : null,
+        r.rejection_reason ? `Reason: ${r.rejection_reason}` : null,
+      ].filter(Boolean).join('\n')
+    );
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Manager accounts', [{ text: 'Refresh', onPress: refresh }]);
+  };
+
   if (loading && !rows.length) return <Loading />;
 
   return (
     <Screen>
       <PageHeader
-        title="Manager Accounts"
-        subtitle="Approve, reject, and manage team access"
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
+        title="Manager accounts"
+        subtitle={`${rows.length} team${rows.length === 1 ? '' : 's'}`}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
 
       <FilterChips value={status} options={STATUS_FILTERS} onChange={setStatus} />
 
       {!rows.length ? (
         <ContentCard>
-          <Text style={ui.muted}>No teams found for this filter.</Text>
+          <Text style={ui.muted}>No teams for this filter.</Text>
         </ContentCard>
       ) : (
         rows.map((r) => {
@@ -130,81 +171,23 @@ export default function AdminRegistrationsScreen() {
           const subtitle = [
             r.owner_email,
             `${r.member_count ?? 0} members`,
-            formatCurrency(r.wallet_balance ?? 0),
           ].join(' · ');
 
           return (
             <ContentCard key={r.id}>
-              <ListRow
-                title={teamName}
-                subtitle={subtitle}
-                onPress={() => router.push(`/(admin)/tenants/${r.id}`)}
-                right={<Tag label={r.status} color={STATUS_COLORS[r.status] || '#64748b'} />}
-              />
-              <Text style={[ui.muted, { marginTop: 4 }]}>
-                Registered {formatDateTime(r.created_at)}
-                {r.status === 'APPROVED' && r.approved_at ? ` · Approved ${formatDateTime(r.approved_at)}` : ''}
-              </Text>
-              {r.rejection_reason ? (
-                <Text style={[ui.muted, { marginTop: 4 }]}>Reason: {r.rejection_reason}</Text>
-              ) : null}
-
-              <ActionGrid>
-                <ActionCell>
-                  <Button mode="outlined" onPress={() => router.push(`/(admin)/tenants/${r.id}`)}>
-                    Details
-                  </Button>
-                </ActionCell>
-                {r.status === 'PENDING' && (
-                  <>
-                    <ActionCell>
-                      <Button mode="contained" loading={actionId === r.id} onPress={() => approve(r.id)}>
-                        Approve
-                      </Button>
-                    </ActionCell>
-                    <ActionCell>
-                      <Button
-                        mode="outlined"
-                        loading={actionId === r.id}
-                        onPress={() => {
-                          setReason('');
-                          setRejectTarget({ id: r.id, name: teamName });
-                        }}
-                      >
-                        Reject
-                      </Button>
-                    </ActionCell>
-                  </>
-                )}
-                {r.status === 'REJECTED' && (
-                  <ActionCell>
-                    <Button mode="contained" loading={actionId === r.id} onPress={() => reopen(r.id)}>
-                      Reopen
-                    </Button>
-                  </ActionCell>
-                )}
-                {r.status === 'APPROVED' && (
-                  <ActionCell>
-                    <Button
-                      mode="outlined"
-                      loading={actionId === r.id}
-                      onPress={() => {
-                        setReason('');
-                        setDisableTarget({ id: r.id, name: teamName });
-                      }}
-                    >
-                      Disable
-                    </Button>
-                  </ActionCell>
-                )}
-                {r.status === 'DISABLED' && (
-                  <ActionCell>
-                    <Button mode="contained" loading={actionId === r.id} onPress={() => enableTeam(r.id)}>
-                      Enable
-                    </Button>
-                  </ActionCell>
-                )}
-              </ActionGrid>
+              <View style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={teamName}
+                    subtitle={subtitle}
+                    onPress={() => router.push(`/(admin)/tenants/${r.id}`)}
+                    right={<Tag label={r.status} color={STATUS_COLORS[r.status] || '#64748b'} />}
+                  />
+                </View>
+                <Pressable hitSlop={12} onPress={() => openTeamMore(r)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
+              </View>
             </ContentCard>
           );
         })
@@ -258,3 +241,10 @@ export default function AdminRegistrationsScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

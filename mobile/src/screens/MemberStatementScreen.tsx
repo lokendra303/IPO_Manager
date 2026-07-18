@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Alert, Share, Text, View } from 'react-native';
+import { Alert, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -10,13 +10,14 @@ import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import Banner from '../components/Banner';
 import StatCard, { PnlStatCard } from '../components/StatCard';
-import StatGrid from '../components/StatGrid';
 import { formatCurrency } from '../utils/format';
 import { useQuery } from '../hooks/useQuery';
 import { useAuth } from '../context/AuthContext';
 import { statementToText } from '../utils/share';
 import { shareMemberFullLedgerPdf, type GroupPdfPayload } from '../utils/memberLedgerPdf';
 import { getErrorMessage } from '../utils/errors';
+import { openActionSheet } from '../utils/actionSheet';
+import { colors } from '../theme';
 import { ui } from '../styles/ui';
 import type { MemberDashboard } from '../hooks/useMemberDashboard';
 
@@ -88,86 +89,96 @@ export default function MemberStatementScreen() {
   const apps = statement?.ipoApplications ?? [];
   const ledger = statement?.ledger ?? [];
 
+  const openIpoMore = (app: any) => {
+    openActionSheet(app.ipoName, [], [
+      formatCurrency(app.amount),
+      app.allotmentStatus?.replace(/_/g, ' '),
+      app.fundReturned ? 'Fund returned' : 'Fund pending',
+      app.grossProfitLoss != null ? `Gross ${formatCurrency(app.grossProfitLoss)}` : null,
+      app.memberShare != null ? `You ${formatCurrency(app.memberShare)}` : null,
+      app.managerShare != null ? `Manager ${formatCurrency(app.managerShare)}` : null,
+      app.providerShare != null ? `Provider ${formatCurrency(app.providerShare)}` : null,
+    ].filter(Boolean).join('\n'));
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Full ledger', [
+      { text: 'Refresh', onPress: refresh },
+      { text: 'Share as text', onPress: shareText },
+    ]);
+  };
+
   return (
     <Screen bottomNavInset>
       <PageHeader
         title="Full ledger"
-        subtitle="All IPOs, allotment, and profit split"
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
+        subtitle={`${apps.length} IPOs · ${formatCurrency(summary.totalMemberShare ?? 0)} profit`}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
       {statement ? (
         <>
           <ContentCard title="Summary">
-            <StatGrid>
+            <View style={ui.statRow}>
               <StatCard title="Applied" value={summary.iposApplied ?? apps.length} variant="primary" />
-              <StatCard title="Allotted" value={summary.iposAlloted ?? 0} variant="success" />
-              <PnlStatCard title="Gross IPO P&L" value={summary.grossIpoPnL ?? 0} formatted={formatCurrency(summary.grossIpoPnL ?? 0)} />
+              <PnlStatCard title="Gross P&L" value={summary.grossIpoPnL ?? 0} formatted={formatCurrency(summary.grossIpoPnL ?? 0)} />
               <PnlStatCard title="Your profit" value={summary.totalMemberShare ?? 0} formatted={formatCurrency(summary.totalMemberShare ?? 0)} />
-              <PnlStatCard title="Manager profit" value={summary.totalManagerShare ?? 0} formatted={formatCurrency(summary.totalManagerShare ?? 0)} />
-              <StatCard title="Provider profit" value={formatCurrency(summary.totalProviderShare ?? 0)} variant="info" />
-            </StatGrid>
+            </View>
             <ListRow title="Fund received" subtitle={formatCurrency(summary.totalGiven)} />
             <ListRow title="Fund returned" subtitle={formatCurrency(summary.totalReceived)} />
             <ListRow title="Pending return" subtitle={formatCurrency(summary.pendingReturn)} />
-            <Text style={[ui.hint, { marginTop: 8, marginBottom: 4 }]}>
-              PDF includes allotment counts, profit by IPO, and your total member profit
-              {isGroupLeader ? ', plus the full sub-group ledger for all members.' : '.'}
-              {' '}App: IPO Team Manager · Developer: Lokendra.
-            </Text>
-            <View style={{ gap: 8, marginTop: 8 }}>
-              <Button mode="contained" loading={pdfLoading} disabled={pdfLoading} onPress={downloadPdf}>
-                {isGroupLeader ? 'Download PDF (you + group)' : 'Download PDF report'}
-              </Button>
-              <Button mode="outlined" onPress={shareText}>Share as text</Button>
-            </View>
+            <Button mode="contained" loading={pdfLoading} disabled={pdfLoading} onPress={downloadPdf} style={{ marginTop: 8 }}>
+              {isGroupLeader ? 'Download PDF (you + group)' : 'Download PDF report'}
+            </Button>
           </ContentCard>
 
           <ContentCard title={`All IPOs (${apps.length})`}>
-            <Text style={ui.hint}>Allotted IPOs show gross P&L and your / manager / provider shares.</Text>
             {apps.map((app: any, idx: number) => (
-              <ListRow
-                key={app.id ?? `${app.ipoName}-${idx}`}
-                title={app.ipoName}
-                subtitle={[
-                  formatCurrency(app.amount),
-                  app.allotmentStatus?.replace(/_/g, ' '),
-                  app.fundReturned ? 'Fund returned' : 'Fund pending',
-                  app.grossProfitLoss != null ? `Gross ${formatCurrency(app.grossProfitLoss)}` : null,
-                  app.memberShare != null ? `You ${formatCurrency(app.memberShare)}` : null,
-                  app.managerShare != null ? `Manager ${formatCurrency(app.managerShare)}` : null,
-                  app.providerShare != null ? `Provider ${formatCurrency(app.providerShare)}` : null,
-                ].filter(Boolean).join(' · ')}
-                right={<Tag label={app.allotmentStatus?.replace(/_/g, ' ') || '—'} color="#64748b" />}
-              />
+              <View key={app.id ?? `${app.ipoName}-${idx}`} style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={app.ipoName}
+                    subtitle={[
+                      formatCurrency(app.amount),
+                      app.grossProfitLoss != null ? formatCurrency(app.grossProfitLoss) : app.allotmentStatus?.replace(/_/g, ' '),
+                    ].filter(Boolean).join(' · ')}
+                    onPress={() => openIpoMore(app)}
+                    right={<Tag label={app.allotmentStatus?.replace(/_/g, ' ') || '—'} color="#64748b" />}
+                  />
+                </View>
+                <Pressable hitSlop={12} onPress={() => openIpoMore(app)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
+              </View>
             ))}
           </ContentCard>
 
           {ledger.length > 0 ? (
-            <ContentCard title={`Fund transactions (${ledger.length})`}>
+            <ContentCard title={`Transactions (${ledger.length})`}>
               {ledger.map((row: any, idx: number) => (
                 <ListRow
                   key={`${row.type}-${idx}`}
                   title={row.type === 'GIVEN' ? 'Fund from manager' : row.type === 'RECEIVED' ? 'Returned to manager' : row.type}
-                  subtitle={[formatCurrency(row.amount), row.ipoName, row.notes].filter(Boolean).join(' · ')}
+                  subtitle={[formatCurrency(row.amount), row.ipoName].filter(Boolean).join(' · ')}
                 />
               ))}
             </ContentCard>
           ) : null}
 
           {isGroupLeader && (dashboard?.subGroup?.groupApplications?.length ?? 0) > 0 ? (
-            <ContentCard title={`Sub-group ledger (${dashboard?.subGroup?.name || 'group'})`}>
-              <Text style={ui.hint}>
-                Leader only — full group IPO ledger. Use Download PDF above to include this in the report.
-              </Text>
-              <StatGrid>
+            <ContentCard title={`Sub-group (${dashboard?.subGroup?.name || 'group'})`}>
+              <View style={ui.statRow}>
                 <StatCard title="Group apps" value={dashboard?.subGroup?.groupStats?.iposApplied ?? 0} variant="primary" />
-                <StatCard title="Allotted" value={dashboard?.subGroup?.groupStats?.iposAlloted ?? 0} variant="success" />
                 <PnlStatCard
-                  title="Group member profit"
+                  title="Group profit"
                   value={dashboard?.subGroup?.groupStats?.totalMemberShare ?? 0}
                   formatted={formatCurrency(dashboard?.subGroup?.groupStats?.totalMemberShare ?? 0)}
                 />
-              </StatGrid>
+              </View>
+              <Text style={ui.hint}>Included in the PDF download above.</Text>
             </ContentCard>
           ) : null}
         </>
@@ -177,3 +188,10 @@ export default function MemberStatementScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

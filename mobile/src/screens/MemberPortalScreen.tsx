@@ -1,12 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import { router } from 'expo-router';
 import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard, { PnlStatCard } from '../components/StatCard';
-import StatGrid from '../components/StatGrid';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
@@ -28,7 +27,8 @@ import {
 } from '../utils/memberPortal';
 import type { GroupApplication } from '../hooks/useMemberDashboard';
 import { copyToClipboard, getAllotmentPortals, openAllotmentPortal } from '../utils/allotmentCheck';
-import { config } from '../config';
+import { openActionSheet } from '../utils/actionSheet';
+import { colors, spacing } from '../theme';
 import { ui } from '../styles/ui';
 
 function ledgerTypeLabel(type: string): string {
@@ -113,13 +113,12 @@ export default function MemberPortalScreen() {
       <Screen bottomNavInset>
         <PageHeader
           title="Member portal"
-          subtitle="Could not load your dashboard"
+          subtitle="Load failed"
           extra={<Button compact mode="outlined" onPress={refresh}>Retry</Button>}
         />
         <Banner variant="warn">
-          {error || 'No data loaded. Check your internet connection and tap Retry.'}
+          {error || 'No data loaded. Check connection and tap Retry.'}
         </Banner>
-        <Text style={ui.hint}>API: {config.apiBaseUrl}</Text>
       </Screen>
     );
   }
@@ -149,23 +148,111 @@ export default function MemberPortalScreen() {
     Alert.alert(ok ? 'Copied' : 'Error', ok ? `${label} copied` : 'Could not copy');
   };
 
+  const openProfileMore = () => {
+    if (!member) return;
+    openActionSheet(
+      member.displayName || 'Profile',
+      [{ text: 'Copy PAN', onPress: () => copyPan(memberPan) }],
+      [
+        memberPan ? `PAN ${memberPan}` : null,
+        subGroup?.name ? `Sub-group: ${subGroup.name}` : 'No sub-group',
+        isGroupLeader ? 'Sub-group leader' : subGroup ? 'Member' : null,
+        member.email ? `Email: ${member.email}` : null,
+        member.upi ? `UPI: ${member.upi}` : null,
+        subGroup?.leaderDisplayName && !isGroupLeader ? `Leader: ${subGroup.leaderDisplayName}` : null,
+      ].filter(Boolean).join('\n')
+    );
+  };
+
+  const openAllotmentMore = () => {
+    const portals = getAllotmentPortals();
+    openActionSheet('Allotment portals', [
+      { text: 'Copy my PAN', onPress: () => copyPan(memberPan) },
+      ...portals.map((p) => ({
+        text: `Open ${p.name}`,
+        onPress: () => openAllotmentPortal(p.url),
+      })),
+    ], 'Open an official portal and enter your PAN after allotment day.');
+  };
+
+  const openHeaderMore = () => {
+    openActionSheet('Member portal', [
+      { text: 'Refresh', onPress: refresh },
+      { text: 'Full ledger / PDF', onPress: () => router.push('/(member)/statement' as any) },
+      ...(member ? [{ text: 'Profile details', onPress: openProfileMore }] : []),
+    ]);
+  };
+
+  const openGroupMemberMore = (m: any) => {
+    openActionSheet(m.displayName, [], [
+      formatPan(m.pan),
+      `Share ${formatCurrency(m.totalMemberShare ?? 0)}`,
+      `Return ${formatCurrency(m.pendingReturn)}`,
+      `${m.iposAlloted ?? 0} allotted · ${m.iposPending ?? 0} pending`,
+      `${m.iposApplied ?? 0} applied · ${m.iposNotAlloted ?? 0} not allotted`,
+      `Gross P&L ${formatCurrency(m.grossIpoPnL ?? 0)}`,
+    ].join('\n'));
+  };
+
+  const openGroupAppMore = (app: GroupApplication) => {
+    openActionSheet(app.memberName, [], [
+      formatPan(app.memberPan),
+      formatCurrency(app.amount),
+      app.investorCategory,
+      formatAllotmentLabel(app.allotmentStatus),
+      app.fundReturned ? 'Fund returned' : 'Fund pending',
+      app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
+        ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
+        : null,
+      formatIpoShareLine(app),
+    ].filter(Boolean).join('\n'));
+  };
+
+  const openPersonalAppMore = (app: GroupApplication) => {
+    openActionSheet(app.ipoName, [], [
+      formatCurrency(app.amount),
+      app.fundReturned ? 'Fund returned' : `Fund pending ${formatCurrency(app.amount)}`,
+      formatAllotmentLabel(app.allotmentStatus),
+      app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
+        ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
+        : null,
+      app.allotmentStatus === 'ALLOTED' && app.memberShare != null
+        ? `Your share ${formatCurrency(app.memberShare)}`
+        : null,
+    ].filter(Boolean).join('\n'));
+  };
+
   return (
     <Screen bottomNavInset>
       <PageHeader
         title={`Hello, ${member?.displayName || user?.displayName || 'Member'}`}
-        subtitle="Your fund flow, IPO applications, and profit summary"
-        extra={<Button compact mode="outlined" onPress={refresh}>Refresh</Button>}
+        subtitle={memberPan || 'Your dashboard'}
+        extra={
+          <Button compact mode="text" onPress={openHeaderMore}>
+            More
+          </Button>
+        }
       />
 
       {staleGroupApi ? (
-        <Banner variant="warn">
-          Group member data is outdated. Tap Refresh below, or log out and sign in again. If it persists, close Expo Go fully and run: npx expo start -c
-        </Banner>
+        <Banner variant="warn">Group data outdated — tap Refresh.</Banner>
       ) : null}
 
-      {error ? (
-        <Banner variant="warn">{error}</Banner>
+      {error ? <Banner variant="warn">{error}</Banner> : null}
+
+      {pendingReturn > 0 ? (
+        <Banner variant="warn">{`${formatCurrency(pendingReturn)} pending return to manager`}</Banner>
       ) : null}
+
+      <View style={ui.statRow}>
+        <PnlStatCard title="Your profit" value={memberProfit} formatted={formatCurrency(memberProfit)} />
+        <StatCard
+          title="Pending return"
+          value={formatCurrency(pendingReturn)}
+          variant={pendingReturn > 0 ? 'danger' : 'info'}
+        />
+        <StatCard title="Applied IPOs" value={stats.iposApplied ?? 0} variant="primary" />
+      </View>
 
       {attentionItems.length > 0 ? (
         <ContentCard title="Needs your attention">
@@ -180,17 +267,15 @@ export default function MemberPortalScreen() {
       ) : null}
 
       {upcomingIposList.length > 0 ? (
-        <ContentCard title="Upcoming & open IPOs">
-          {upcomingIposList.slice(0, 6).map((ipo) => (
+        <ContentCard title="Upcoming IPOs">
+          {upcomingIposList.slice(0, 4).map((ipo) => (
             <ListRow
               key={ipo.id}
               title={ipo.name}
               subtitle={[
-                ipo.status,
-                ipo.openDate ? formatDateTime(ipo.openDate) : null,
-                ipo.applied ? `Applied · ${ipo.allotmentStatus || '—'}` : 'Not applied yet',
+                ipo.applied ? 'Applied' : ipo.status,
                 formatCurrency(ipo.appliedAmount ?? ipo.lotAmountRii),
-              ].filter(Boolean).join(' · ')}
+              ].join(' · ')}
               right={<Tag label={ipo.applied ? 'Applied' : ipo.status} color={ipo.status === 'OPEN' ? '#059669' : '#64748b'} />}
               onPress={() => router.push(`/(member)/ipo/${ipo.id}` as any)}
             />
@@ -203,7 +288,7 @@ export default function MemberPortalScreen() {
           title="Recent activity"
           extra={<Button compact onPress={() => router.push('/(member)/activity' as any)}>See all</Button>}
         >
-          {activityPreview.map((item) => (
+          {activityPreview.slice(0, 3).map((item) => (
             <ListRow
               key={item.id}
               title={item.title}
@@ -214,249 +299,118 @@ export default function MemberPortalScreen() {
         </ContentCard>
       ) : null}
 
-      {isGroupLeader ? (
-        <Text style={[ui.hint, { marginBottom: 8 }]}>
-          API: {config.apiBaseUrl}
-          {groupStats.iposApplied != null ? ` · Group applied: ${groupStats.iposApplied}` : ''}
-        </Text>
-      ) : null}
-
-      {pendingReturn > 0 ? (
-        <Banner variant="warn">
-          {`${formatCurrency(pendingReturn)} pending to return to your manager. This is fund received minus what you have returned so far.`}
-        </Banner>
-      ) : null}
-
       {showAllotmentAlert && memberPan ? (
-        <ContentCard title="Check allotment">
-          <Text style={ui.hint}>
-            After allotment day, open an official portal, select the IPO, and enter each member PAN. Results are not fetched automatically.
-          </Text>
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>Your PAN</Text>
-            <Text style={ui.infoValue}>{memberPan}</Text>
-          </View>
-          <Button compact mode="outlined" onPress={() => copyPan(memberPan)} style={{ marginBottom: 8 }}>
+        <ContentCard
+          title="Check allotment"
+          extra={
+            <Button compact mode="text" onPress={openAllotmentMore}>
+              More
+            </Button>
+          }
+        >
+          <ListRow
+            title={`PAN ${memberPan}`}
+            subtitle="Copy PAN or open an official portal after allotment day"
+          />
+          <Button compact mode="contained" onPress={() => copyPan(memberPan)} style={{ alignSelf: 'flex-start' }}>
             Copy my PAN
           </Button>
-          {getAllotmentPortals().map((p) => (
-            <Button
-              key={p.id}
-              mode="outlined"
-              onPress={() => openAllotmentPortal(p.url)}
-              style={{ marginTop: 6 }}
-            >
-              Open {p.name}
-            </Button>
-          ))}
         </ContentCard>
       ) : null}
 
       {member ? (
-        <ContentCard title="Your profile">
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>Name</Text>
-            <Text style={ui.infoValue}>{member.displayName || '—'}</Text>
-          </View>
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>PAN</Text>
-            <Text style={ui.infoValue}>{memberPan || '—'}</Text>
-          </View>
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>Sub-group</Text>
-            <Text style={ui.infoValue}>{subGroup?.name || 'Not assigned'}</Text>
-          </View>
-          <View style={ui.infoLine}>
-            <Text style={ui.infoLabel}>Role</Text>
-            <Text style={ui.infoValue}>
-              {isGroupLeader ? 'Sub-group leader' : subGroup ? 'Member' : '—'}
-            </Text>
-          </View>
-          {subGroup && !isGroupLeader && subGroup.leaderDisplayName ? (
-            <View style={ui.infoLine}>
-              <Text style={ui.infoLabel}>Group leader</Text>
-              <Text style={ui.infoValue}>
-                {subGroup.leaderDisplayName}
-                {subGroup.leaderPan ? ` · ${formatPan(subGroup.leaderPan)}` : ''}
-              </Text>
+        <ContentCard title="Profile">
+          <View style={styles.compactRow}>
+            <View style={styles.compactRowMain}>
+              <ListRow
+                title={member.displayName || '—'}
+                subtitle={[
+                  memberPan,
+                  isGroupLeader ? 'Leader' : subGroup?.name || 'No sub-group',
+                ].filter(Boolean).join(' · ')}
+                onPress={openProfileMore}
+              />
             </View>
-          ) : null}
-          {member.email ? (
-            <View style={ui.infoLine}>
-              <Text style={ui.infoLabel}>Email</Text>
-              <Text style={ui.infoValue}>{member.email}</Text>
-            </View>
-          ) : null}
-          {member.upi ? (
-            <View style={ui.infoLine}>
-              <Text style={ui.infoLabel}>UPI</Text>
-              <Text style={ui.infoValue}>{member.upi}</Text>
-            </View>
-          ) : null}
+            <Pressable hitSlop={12} onPress={openProfileMore} style={styles.moreBtn}>
+              <Text style={styles.moreText}>···</Text>
+            </Pressable>
+          </View>
         </ContentCard>
       ) : null}
 
-      <ContentCard title="Fund summary">
-        <StatGrid>
-          <StatCard title="Fund received" value={formatCurrency(stats.totalGiven)} variant="warning" />
-          <StatCard title="Fund returned" value={formatCurrency(stats.totalReceived)} variant="success" />
-          <StatCard title="Pending return" value={formatCurrency(pendingReturn)} variant={pendingReturn > 0 ? 'danger' : 'info'} />
-          <PnlStatCard title="Your profit share" value={memberProfit} formatted={formatCurrency(memberProfit)} />
-          <PnlStatCard
-            title="Manager profit share"
-            value={Number(stats.totalManagerShare ?? 0)}
-            formatted={formatCurrency(stats.totalManagerShare ?? 0)}
-          />
-          {(stats.bonus ?? 0) > 0 ? (
-            <StatCard title="Bonus" value={formatCurrency(stats.bonus)} variant="success" />
-          ) : null}
-        </StatGrid>
-        {grossIpoPnL !== 0 && Math.abs(grossIpoPnL - memberProfit) > 0.01 ? (
+      <ContentCard title="Fund flow">
+        <View style={ui.statRow}>
+          <StatCard title="Received" value={formatCurrency(stats.totalGiven)} variant="warning" />
+          <StatCard title="Returned" value={formatCurrency(stats.totalReceived)} variant="success" />
+          <StatCard title="Allotted" value={stats.iposAlloted ?? 0} variant="primary" />
+        </View>
+        {grossIpoPnL !== 0 ? (
           <Text style={ui.hint}>
-            Gross IPO P&L {formatCurrency(grossIpoPnL)} · Your share {formatCurrency(memberProfit)} · Manager {formatCurrency(stats.totalManagerShare ?? 0)} · Provider {formatCurrency(stats.totalProviderShare ?? 0)}.
+            Gross P&L {formatCurrency(grossIpoPnL)}
+            {(stats.bonus ?? 0) > 0 ? ` · Bonus ${formatCurrency(stats.bonus)}` : ''}
           </Text>
         ) : null}
-        <Button
-          mode="outlined"
-          compact
-          style={{ marginTop: 8 }}
-          onPress={() => router.push('/(member)/statement')}
-        >
-          {isGroupLeader ? 'Full ledger / PDF (you + group)' : 'Full ledger / PDF report'}
-        </Button>
-      </ContentCard>
-
-      <ContentCard title={isGroupLeader ? 'Your IPO activity' : 'IPO activity'}>
-        <StatGrid>
-          <StatCard title="Applied" value={stats.iposApplied ?? 0} variant="primary" />
-          <StatCard title="Pending" value={stats.iposPending ?? 0} variant="warning" />
-          <StatCard title="Allotted" value={stats.iposAlloted ?? 0} variant="success" />
-          <StatCard title="Not allotted" value={stats.iposNotAlloted ?? 0} variant="danger" />
-        </StatGrid>
       </ContentCard>
 
       {isGroupLeader ? (
         <>
-          <ContentCard title={`Group IPO activity — ${subGroup?.name || ''}`}>
-            <StatGrid>
-              <StatCard title="Applied" value={groupStats.iposApplied ?? 0} variant="primary" />
-              <StatCard title="Pending" value={groupStats.iposPending ?? 0} variant="warning" />
-              <StatCard title="Allotted" value={groupStats.iposAlloted ?? 0} variant="success" />
-              <StatCard title="Not allotted" value={groupStats.iposNotAlloted ?? 0} variant="danger" />
-            </StatGrid>
-          </ContentCard>
-
-          <ContentCard title={`Group profit & loss — ${subGroup?.name || ''}`}>
-            <StatGrid>
-              <PnlStatCard
-                title="Gross IPO P&L"
-                value={groupGrossPnL}
-                formatted={formatCurrency(groupGrossPnL)}
-              />
-              <PnlStatCard
-                title="Total member share"
-                value={groupMemberShare}
-                formatted={formatCurrency(groupMemberShare)}
-              />
-            </StatGrid>
-            <Text style={ui.hint}>
-              Gross P&L is before profit-sharing rules. Member share is each person's split after rules set by your manager.
-            </Text>
-          </ContentCard>
-
-          <ContentCard title="Member profit & loss">
-            {groupMembers.length ? (
-              groupMembers.map((m) => (
-                <ListRow
-                  key={`pnl-${m.id}`}
-                  title={`${m.displayName}${m.isLeader ? ' (You)' : ''}`}
-                  subtitle={[
-                    formatPan(m.pan),
-                    `Gross P&L ${formatCurrency(m.grossIpoPnL ?? 0)}`,
-                    `Member share ${formatCurrency(m.totalMemberShare ?? 0)}`,
-                    `${m.iposAlloted ?? 0} allotted · ${m.iposPending ?? 0} pending`,
-                  ].join(' · ')}
-                  right={
-                    <Tag
-                      label={m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-                      color={m.status === 'ACTIVE' ? '#059669' : '#64748b'}
-                    />
-                  }
-                />
-              ))
-            ) : (
-              <ListRow title="No members in this sub-group" />
-            )}
-          </ContentCard>
-
-          <ContentCard title={`Your sub-group — ${subGroup?.name || ''}`}>
-            <Banner variant="info">
-              You are the sub-group leader. Bulk IPO funds are paid to you on behalf of your group. Collect from members and return to your manager.
-            </Banner>
-
+          <ContentCard title={`Group — ${subGroup?.name || ''}`}>
             {totalGroupPendingReturn > 0 ? (
-              <Banner variant="warn" style={{ marginTop: 8 }}>
-                {`${formatCurrency(totalGroupPendingReturn)} total pending to refund to manager across all members.`}
-              </Banner>
-            ) : null}
+              <Banner variant="warn">{`${formatCurrency(totalGroupPendingReturn)} group pending return`}</Banner>
+            ) : (
+              <Banner variant="info">You lead this sub-group — bulk funds come to you.</Banner>
+            )}
+            <View style={ui.statRow}>
+              <StatCard title="Group applied" value={groupStats.iposApplied ?? 0} variant="primary" />
+              <PnlStatCard title="Group P&L" value={groupGrossPnL} formatted={formatCurrency(groupGrossPnL)} />
+              <PnlStatCard title="Member share" value={groupMemberShare} formatted={formatCurrency(groupMemberShare)} />
+            </View>
+          </ContentCard>
 
-            <Text style={[ui.sectionLabel, { marginTop: 12 }]}>
-              Members ({subGroup?.memberCount ?? groupMembers.length})
-            </Text>
+          <ContentCard title={`Members (${subGroup?.memberCount ?? groupMembers.length})`}>
             {groupMembers.length ? (
               groupMembers.map((m) => (
-                <ListRow
-                  key={m.id}
-                  title={`${m.displayName}${m.isLeader ? ' (You)' : ''}`}
-                  subtitle={[
-                    formatPan(m.pan),
-                    `Applied ${m.iposApplied}`,
-                    `Pending ${m.iposPending ?? 0}`,
-                    `Allotted ${m.iposAlloted ?? 0}`,
-                    `Not allotted ${m.iposNotAlloted ?? 0}`,
-                    `Gross P&L ${formatCurrency(m.grossIpoPnL ?? 0)}`,
-                    `Share ${formatCurrency(m.totalMemberShare ?? 0)}`,
-                    `Return ${formatCurrency(m.pendingReturn)}`,
-                  ].join(' · ')}
-                  right={
-                    <Tag
-                      label={m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-                      color={m.status === 'ACTIVE' ? '#059669' : '#64748b'}
+                <View key={m.id} style={styles.compactRow}>
+                  <View style={styles.compactRowMain}>
+                    <ListRow
+                      title={`${m.displayName}${m.isLeader ? ' (You)' : ''}`}
+                      subtitle={`Share ${formatCurrency(m.totalMemberShare ?? 0)} · Return ${formatCurrency(m.pendingReturn)}`}
+                      onPress={() => openGroupMemberMore(m)}
+                      right={
+                        <Tag
+                          label={m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                          color={m.status === 'ACTIVE' ? '#059669' : '#64748b'}
+                        />
+                      }
                     />
-                  }
-                />
+                  </View>
+                  <Pressable hitSlop={12} onPress={() => openGroupMemberMore(m)} style={styles.moreBtn}>
+                    <Text style={styles.moreText}>···</Text>
+                  </Pressable>
+                </View>
               ))
             ) : (
               <ListRow title="No members in this sub-group" />
             )}
 
-            <Text style={[ui.sectionLabel, { marginTop: 16 }]}>Bulk payments received</Text>
-            <Text style={ui.hint}>One transfer per IPO when your manager uses bulk pay on Distribute.</Text>
-            {bulkPayments.length ? (
-              bulkPayments.map((bp) => (
-                <ListRow
-                  key={bp.id}
-                  title={bp.ipoName}
-                  subtitle={[
-                    formatDateTime(bp.paidAt),
-                    formatCurrency(bp.totalAmount),
-                    `${bp.memberCount} members`,
-                    bp.investorCategory,
-                  ].filter(Boolean).join(' · ')}
-                />
-              ))
-            ) : (
-              <ListRow title="No bulk payments yet" />
-            )}
+            {bulkPayments.length > 0 ? (
+              <>
+                <Text style={[ui.sectionLabel, { marginTop: spacing.sm }]}>Bulk payments</Text>
+                {bulkPayments.slice(0, 5).map((bp) => (
+                  <ListRow
+                    key={bp.id}
+                    title={bp.ipoName}
+                    subtitle={`${formatCurrency(bp.totalAmount)} · ${bp.memberCount} members`}
+                  />
+                ))}
+              </>
+            ) : null}
           </ContentCard>
 
-          <ContentCard title={`Group IPO & allotment (${groupApps.length})`}>
-            <Text style={ui.hint}>
-              Grouped by IPO name. Allotment and P&L for every member in your sub-group. Use the Allotment tab to copy PANs and open official portals.
-            </Text>
+          <ContentCard title={`Group IPOs (${groupApps.length})`}>
             {groupIpoGroups.length ? (
               groupIpoGroups.map(({ ipoName, rows }) => (
-                <View key={ipoName} style={{ marginBottom: 16 }}>
+                <View key={ipoName} style={{ marginBottom: spacing.sm }}>
                   <ListRow
                     title={ipoName}
                     subtitle={summarizeIpoGroupRows(rows)}
@@ -466,27 +420,24 @@ export default function MemberPortalScreen() {
                     }}
                   />
                   {rows.map((app) => (
-                    <ListRow
-                      key={app.id}
-                      title={app.memberName}
-                      subtitle={[
-                        formatPan(app.memberPan),
-                        formatCurrency(app.amount),
-                        app.investorCategory,
-                        formatAllotmentLabel(app.allotmentStatus),
-                        app.fundReturned ? 'Fund returned' : 'Fund pending',
-                        app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                          ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
-                          : null,
-                        formatIpoShareLine(app),
-                      ].filter(Boolean).join(' · ')}
-                      right={
-                        <Tag
-                          label={formatAllotmentLabel(app.allotmentStatus)}
-                          color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                    <View key={app.id} style={styles.compactRow}>
+                      <View style={styles.compactRowMain}>
+                        <ListRow
+                          title={app.memberName}
+                          subtitle={`${formatCurrency(app.amount)} · ${formatAllotmentLabel(app.allotmentStatus)}`}
+                          onPress={() => openGroupAppMore(app)}
+                          right={
+                            <Tag
+                              label={formatAllotmentLabel(app.allotmentStatus)}
+                              color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                            />
+                          }
                         />
-                      }
-                    />
+                      </View>
+                      <Pressable hitSlop={12} onPress={() => openGroupAppMore(app)} style={styles.moreBtn}>
+                        <Text style={styles.moreText}>···</Text>
+                      </Pressable>
+                    </View>
                   ))}
                 </View>
               ))
@@ -497,10 +448,10 @@ export default function MemberPortalScreen() {
         </>
       ) : null}
 
-      <ContentCard title={`Your IPO applications (${applicationsList.length})`}>
+      <ContentCard title={`Your IPOs (${applicationsList.length})`}>
         {personalIpoGroups.length ? (
           personalIpoGroups.map(({ ipoName, rows }) => (
-            <View key={ipoName} style={{ marginBottom: 16 }}>
+            <View key={ipoName} style={{ marginBottom: spacing.sm }}>
               <ListRow
                 title={ipoName}
                 subtitle={summarizeIpoGroupRows(rows)}
@@ -510,29 +461,29 @@ export default function MemberPortalScreen() {
                 }}
               />
               {rows.map((app) => (
-                <ListRow
-                  key={app.id}
-                  title={app.memberName}
-                  subtitle={[
-                    formatCurrency(app.amount),
-                    app.fundReturned ? 'Fund returned' : `Fund pending ${formatCurrency(app.amount)}`,
-                    formatAllotmentLabel(app.allotmentStatus),
-                    app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                      ? `Gross P&L ${formatCurrency(app.grossProfitLoss)}`
-                      : null,
-                    app.allotmentStatus === 'ALLOTED' && app.memberShare != null
-                      ? `Your share ${formatCurrency(app.memberShare)}`
-                      : app.allotmentStatus === 'ALLOTED' && app.grossProfitLoss != null
-                        ? 'Share pending split'
-                        : null,
-                  ].filter(Boolean).join(' · ')}
-                  right={
-                    <Tag
-                      label={formatAllotmentLabel(app.allotmentStatus)}
-                      color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                <View key={app.id} style={styles.compactRow}>
+                  <View style={styles.compactRowMain}>
+                    <ListRow
+                      title={formatAllotmentLabel(app.allotmentStatus)}
+                      subtitle={[
+                        formatCurrency(app.amount),
+                        app.allotmentStatus === 'ALLOTED' && app.memberShare != null
+                          ? `Share ${formatCurrency(app.memberShare)}`
+                          : null,
+                      ].filter(Boolean).join(' · ')}
+                      onPress={() => openPersonalAppMore(app)}
+                      right={
+                        <Tag
+                          label={formatAllotmentLabel(app.allotmentStatus)}
+                          color={ALLOTMENT_COLORS[app.allotmentStatus] || '#64748b'}
+                        />
+                      }
                     />
-                  }
-                />
+                  </View>
+                  <Pressable hitSlop={12} onPress={() => openPersonalAppMore(app)} style={styles.moreBtn}>
+                    <Text style={styles.moreText}>···</Text>
+                  </Pressable>
+                </View>
               ))}
             </View>
           ))
@@ -542,22 +493,12 @@ export default function MemberPortalScreen() {
       </ContentCard>
 
       {ledgerEntries.length > 0 ? (
-        <ContentCard title="Your transactions">
-          <Text style={ui.hint}>
-            {isGroupLeader
-              ? 'Your personal fund ledger — not collections from sub-group members. Combined bulk UPI for the group is listed above.'
-              : 'Fund the manager sent you for IPOs and what you have returned.'}
-          </Text>
-          {ledgerEntries.map((entry) => (
+        <ContentCard title="Transactions">
+          {ledgerEntries.slice(0, 8).map((entry) => (
             <ListRow
               key={entry.id}
               title={ledgerTypeLabel(entry.type)}
-              subtitle={[
-                formatDateTime(entry.txnDate),
-                formatCurrency(entry.amount),
-                entry.ipoName,
-                entry.notes,
-              ].filter(Boolean).join(' · ')}
+              subtitle={`${formatCurrency(entry.amount)} · ${formatDateTime(entry.txnDate)}`}
               right={
                 <Tag
                   label={entry.type}
@@ -571,3 +512,10 @@ export default function MemberPortalScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});

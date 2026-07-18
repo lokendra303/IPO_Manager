@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -7,12 +7,13 @@ import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
-import Banner from '../components/Banner';
 import Loading from '../components/Loading';
 import { formatCurrency, formatDateTime } from '../utils/format';
+import { openActionSheet } from '../utils/actionSheet';
 import { useQuery } from '../hooks/useQuery';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/errors';
+import { colors } from '../theme';
 import { ui } from '../styles/ui';
 
 export default function MemberFundReturnScreen() {
@@ -56,32 +57,55 @@ export default function MemberFundReturnScreen() {
     }
   };
 
+  const openClaimMore = (c: any) => {
+    openActionSheet(formatCurrency(c.amount), [], [
+      c.status,
+      formatDateTime(c.createdAt),
+      c.paymentRef ? `Ref: ${c.paymentRef}` : null,
+      c.notes,
+      c.managerNote ? `Manager: ${c.managerNote}` : null,
+    ].filter(Boolean).join('\n'));
+  };
+
   if (loading && !claims.length) return <Loading />;
 
   return (
     <Screen bottomNavInset>
-      <PageHeader title="Report fund return" subtitle="Tell your manager you paid them back" />
-      <ContentCard title="New payment report">
-        <Banner variant="info">This does not auto-update your ledger. Your manager confirms and records the return.</Banner>
+      <PageHeader title="Fund return" subtitle="Report payment to manager" />
+      <ContentCard title="New report">
         <TextInput label="Amount returned (₹)" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" mode="outlined" style={ui.input} />
-        <TextInput label="UPI / transaction reference (optional)" value={paymentRef} onChangeText={setPaymentRef} mode="outlined" style={ui.input} />
+        <TextInput label="UPI / reference (optional)" value={paymentRef} onChangeText={setPaymentRef} mode="outlined" style={ui.input} />
         <TextInput label="Notes (optional)" value={notes} onChangeText={setNotes} multiline mode="outlined" style={ui.input} />
-        <Button mode="contained" loading={submitting} onPress={submit}>Submit to manager</Button>
+        <Button mode="contained" loading={submitting} onPress={submit}>Submit</Button>
       </ContentCard>
-      <ContentCard title={`Your claims (${claims.length})`}>
+      <ContentCard title={`Claims (${claims.length})`}>
         {!claims.length ? (
           <ListRow title="No claims yet" />
         ) : (
           claims.map((c) => (
-            <ListRow
-              key={c.id}
-              title={formatCurrency(c.amount)}
-              subtitle={[formatDateTime(c.createdAt), c.paymentRef, c.notes, c.managerNote].filter(Boolean).join(' · ')}
-              right={<Tag label={c.status} color={c.status === 'ACKNOWLEDGED' ? '#059669' : c.status === 'REJECTED' ? '#b91c1c' : '#d97706'} />}
-            />
+            <View key={c.id} style={styles.compactRow}>
+              <View style={styles.compactRowMain}>
+                <ListRow
+                  title={formatCurrency(c.amount)}
+                  subtitle={formatDateTime(c.createdAt)}
+                  right={<Tag label={c.status} color={c.status === 'ACKNOWLEDGED' ? '#059669' : c.status === 'REJECTED' ? '#b91c1c' : '#d97706'} />}
+                  onPress={() => openClaimMore(c)}
+                />
+              </View>
+              <Pressable hitSlop={12} onPress={() => openClaimMore(c)} style={styles.moreBtn}>
+                <Text style={styles.moreText}>···</Text>
+              </Pressable>
+            </View>
           ))
         )}
       </ContentCard>
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
+  compactRowMain: { flex: 1 },
+  moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center' },
+  moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
+});
