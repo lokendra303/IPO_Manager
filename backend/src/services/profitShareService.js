@@ -293,18 +293,37 @@ function mapMemberRuleRow(row) {
     profitManagerPercent: Number(row.manager_percent),
     lossProviderPercent: Number(row.loss_provider_percent ?? 0),
     lossManagerPercent: Number(row.loss_manager_percent ?? 0),
+    isActive: row.is_active == null ? true : Boolean(row.is_active),
   };
 }
 
-/** Rules for a specific IPO: IPO-specific set if any, otherwise global (all IPOs) rules. */
+/** One active rule per member + IPO scope (ipo_id NULL = all IPOs). */
+export async function setActiveMemberShareRule(conn, tenantId, memberId, ruleId) {
+  const [rows] = await conn.query(
+    `SELECT id, ipo_id FROM member_profit_shares
+     WHERE id = ? AND member_id = ? AND tenant_id = ?`,
+    [ruleId, memberId, tenantId]
+  );
+  if (!rows.length) throw new AppError('Share rule not found', 404);
+  const ipoId = rows[0].ipo_id ?? null;
+  await conn.query(
+    `UPDATE member_profit_shares
+     SET is_active = IF(id = ?, 1, 0)
+     WHERE tenant_id = ? AND member_id = ? AND ipo_id <=> ?`,
+    [ruleId, tenantId, memberId, ipoId]
+  );
+}
+
+/** Rules for a specific IPO: IPO-specific active set if any, otherwise global (all IPOs) active rules. */
 export function resolveRulesForIpo(allRules, ipoId) {
+  const active = allRules.filter((r) => r.isActive !== false);
   const id = ipoId != null && ipoId !== '' ? Number(ipoId) : null;
   if (!id || Number.isNaN(id)) {
-    return allRules.filter((r) => !r.ipoId);
+    return active.filter((r) => !r.ipoId);
   }
-  const ipoSpecific = allRules.filter((r) => r.ipoId === id);
+  const ipoSpecific = active.filter((r) => r.ipoId === id);
   if (ipoSpecific.length) return ipoSpecific;
-  return allRules.filter((r) => !r.ipoId);
+  return active.filter((r) => !r.ipoId);
 }
 
 export async function resolveOptionalIpoId(conn, tenantId, ipoId) {
@@ -347,18 +366,20 @@ export async function getMemberShareRules(conn, tenantId, memberId) {
 }
 
 function summarizeMemberShareRules(rules) {
-  const globalRules = rules.filter((r) => !r.ipoId);
-  const summaryRules = globalRules.length ? globalRules : rules;
+  const activeRules = rules.filter((r) => r.isActive !== false);
+  const globalRules = activeRules.filter((r) => !r.ipoId);
+  const summaryRules = globalRules.length ? globalRules : activeRules;
   const profitP = summaryRules.reduce((s, r) => s + r.profitProviderPercent, 0);
   const profitM = summaryRules.reduce((s, r) => s + r.profitManagerPercent, 0);
   const lossP = summaryRules.reduce((s, r) => s + r.lossProviderPercent, 0);
   const lossM = summaryRules.reduce((s, r) => s + r.lossManagerPercent, 0);
   const providerNames = [...new Set(summaryRules.map((r) => r.providerName).filter(Boolean))];
-  const hasRules = rules.length > 0;
+  const hasRules = activeRules.length > 0;
   return {
     ruleCount: rules.length,
+    activeRuleCount: activeRules.length,
     hasShareRule: hasRules,
-    hasIpoSpecificRules: rules.some((r) => r.ipoId),
+    hasIpoSpecificRules: activeRules.some((r) => r.ipoId),
     rules,
     effectiveProviderName: providerNames.join(', ') || null,
     effectiveProfitProviderPercent: profitP,
@@ -460,8 +481,8 @@ export async function addMemberShareRule(conn, tenantId, memberId, {
   const [result] = await conn.query(
     `INSERT INTO member_profit_shares
      (tenant_id, member_id, ipo_id, rule_name, sort_order, fund_provider_id,
-      provider_percent, manager_percent, loss_provider_percent, loss_manager_percent)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      provider_percent, manager_percent, loss_provider_percent, loss_manager_percent, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       tenantId,
       memberId,
@@ -475,6 +496,8 @@ export async function addMemberShareRule(conn, tenantId, memberId, {
       percents.lossManagerPercent,
     ]
   );
+
+  await setActiveMemberShareRule(conn, tenantId, memberId, result.insertId);
 
   const { rules } = await getMemberShareRules(conn, tenantId, memberId);
   validateMemberRulesSet(rules);
@@ -521,12 +544,13 @@ function scopeLabelForRules(scopeRules) {
 }
 
 export function validateMemberRulesSet(rules) {
-  if (!rules.length) {
-    throw new AppError('Add at least one share rule for this member');
+  const activeRules = rules.filter((r) => r.isActive !== false);
+  if (!activeRules.length) {
+    throw new AppError('Add at least one active share rule for this member (or set a saved rule as active)');
   }
 
   const byScope = new Map();
-  for (const r of rules) {
+  for (const r of activeRules) {
     const key = r.ipoId ?? 'global';
     if (!byScope.has(key)) byScope.set(key, []);
     byScope.get(key).push(r);
@@ -534,32 +558,34 @@ export function validateMemberRulesSet(rules) {
 
   for (const scopeRules of byScope.values()) {
     const scopeName = scopeLabelForRules(scopeRules);
-    const profitProvider = scopeRules.reduce((s, r) => s + Number(r.profitProviderPercent), 0);
-    const profitManager = scopeRules.reduce((s, r) => s + Number(r.profitManagerPercent), 0);
-    const lossProvider = scopeRules.reduce((s, r) => s + Number(r.lossProviderPercent), 0);
-    const lossManager = scopeRules.reduce((s, r) => s + Number(r.lossManagerPercent), 0);
+    if (scopeRules.length > 1) {
+      throw new AppError(`Only one active rule allowed per IPO scope (${scopeName})`);
+    }
+    const r = scopeRules[0];
+    const profitProvider = Number(r.profitProviderPercent);
+    const profitManager = Number(r.profitManagerPercent);
+    const lossProvider = Number(r.lossProviderPercent);
+    const lossManager = Number(r.lossManagerPercent);
 
     if (profitProvider + profitManager > 100) {
       throw new AppError(
-        `Combined profit shares for ${scopeName} (${profitProvider}% + ${profitManager}% manager) cannot exceed 100%`
+        `Profit shares for ${scopeName} (${profitProvider}% + ${profitManager}% manager) cannot exceed 100%`
       );
     }
     if (lossProvider + lossManager > 100) {
       throw new AppError(
-        `Combined loss shares for ${scopeName} (${lossProvider}% + ${lossManager}% manager) cannot exceed 100%`
+        `Loss shares for ${scopeName} (${lossProvider}% + ${lossManager}% manager) cannot exceed 100%`
       );
     }
-    for (const r of scopeRules) {
-      if (!r.fundProviderId) {
-        throw new AppError(`Rule "${r.ruleName}": fund provider is required`);
-      }
-      validateProfitLossPercents({
-        profitProviderPercent: r.profitProviderPercent,
-        profitManagerPercent: r.profitManagerPercent,
-        lossProviderPercent: r.lossProviderPercent,
-        lossManagerPercent: r.lossManagerPercent,
-      });
+    if (!r.fundProviderId) {
+      throw new AppError(`Rule "${r.ruleName}": fund provider is required`);
     }
+    validateProfitLossPercents({
+      profitProviderPercent: r.profitProviderPercent,
+      profitManagerPercent: r.profitManagerPercent,
+      lossProviderPercent: r.lossProviderPercent,
+      lossManagerPercent: r.lossManagerPercent,
+    });
   }
 }
 

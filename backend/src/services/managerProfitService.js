@@ -1,5 +1,6 @@
 import { AppError } from '../middleware/errorHandler.js';
-import { parseAmount } from '../utils/validate.js';
+import { parseAmount, parseDate } from '../utils/validate.js';
+import { syncOwnerWalletTotal } from './bankAccountService.js';
 import { debitWallet, ensureWallet } from './walletService.js';
 
 function round2(n) {
@@ -11,8 +12,10 @@ function round2(n) {
  * Provider accrued profit is reserved in the wallet and cannot be withdrawn here —
  * handle provider money from Fund Providers only.
  */
-export async function getManagerProfitSummary(conn, tenantId) {
-  await ensureWallet(conn, tenantId);
+export async function getManagerProfitSummary(conn, tenantId, { skipEnsureWallet = false } = {}) {
+  if (!skipEnsureWallet) {
+    await ensureWallet(conn, tenantId);
+  }
 
   const [[mgr]] = await conn.query(
     `SELECT COALESCE(SUM(manager_amount), 0) AS total
@@ -37,8 +40,10 @@ export async function getManagerProfitSummary(conn, tenantId) {
     [tenantId]
   );
 
-  const [[wallet]] = await conn.query(
-    'SELECT COALESCE(balance, 0) AS balance FROM owner_wallets WHERE tenant_id = ?',
+  const [[bankSum]] = await conn.query(
+    `SELECT COALESCE(SUM(balance), 0) AS balance
+     FROM manager_bank_accounts
+     WHERE tenant_id = ? AND is_active = 1`,
     [tenantId]
   );
 
@@ -46,7 +51,7 @@ export async function getManagerProfitSummary(conn, tenantId) {
   const personalWithdrawn = round2(wd?.total);
   const providerAccruedProfit = round2(Math.max(0, Number(prov?.total || 0)));
   const availableManagerProfit = round2(Math.max(0, totalManagerShare - personalWithdrawn));
-  const walletBalance = round2(wallet?.balance);
+  const walletBalance = round2(bankSum?.balance);
 
   // Cash free of provider profit claim (never allow personal withdraw from provider profit)
   const walletExcludingProviderProfit = round2(Math.max(0, walletBalance - providerAccruedProfit));
@@ -73,16 +78,27 @@ export async function personalWithdraw(conn, {
   userId,
   txnDate,
 }) {
-  const summary = await getManagerProfitSummary(conn, tenantId);
+  await ensureWallet(conn, tenantId);
+  await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
+
+  const summary = await getManagerProfitSummary(conn, tenantId, { skipEnsureWallet: true });
   const withdrawAmount = parseAmount(amount, {
     allowNegative: false,
     allowZero: false,
     fieldName: 'personal withdrawal amount',
   });
 
+  if (summary.availableManagerProfit <= 0) {
+    throw new AppError(
+      'No manager IPO profit left to withdraw. Run Profit Sharing on allotted IPOs first, then receive member returns to wallet.'
+    );
+  }
+
   if (summary.maxWithdraw <= 0) {
     throw new AppError(
-      'No manager profit available to withdraw. Provider profit is reserved and must be handled from Fund Providers.'
+      summary.providerAccruedProfit > 0
+        ? `Cannot withdraw right now: wallet has ${summary.walletBalance.toLocaleString('en-IN')} but provider profit reserved is ${summary.providerAccruedProfit.toLocaleString('en-IN')}. Repay or move provider funds from Fund Providers first.`
+        : 'No withdrawable manager profit in the wallet right now.'
     );
   }
 
@@ -103,12 +119,12 @@ export async function personalWithdraw(conn, {
     type: 'PERSONAL_OUT',
     refType: 'personal_withdraw',
     refId: null,
-    txnDate: txnDate || new Date(),
+    txnDate: parseDate(txnDate, 'transaction date'),
     notes: `${baseNote} (manager profit only)`,
     userId,
   });
 
-  const updated = await getManagerProfitSummary(conn, tenantId);
+  const updated = await getManagerProfitSummary(conn, tenantId, { skipEnsureWallet: true });
   return {
     withdrawn: withdrawAmount,
     newBalance,

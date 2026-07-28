@@ -23,7 +23,7 @@ async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
  * Wallet: withdrawal minus member profit (principal + manager + provider shares).
  * If manager share was already credited via old profit-share wallet entries, subtract that too.
  */
-async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
+function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWallet) {
   const distributedAmount = parseAmount(app.amount, { fieldName: 'distributed amount' });
   const withdrawalAmount =
     app.withdrawal_money != null
@@ -41,14 +41,7 @@ async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
     };
   }
 
-  const { managerAmount, providerAmount, memberAmount } = await resolveApplicationProfitSplit(
-    conn,
-    tenantId,
-    app
-  );
-
-  const managerAlreadyInWallet = await getManagerShareAlreadyInWallet(conn, tenantId, app.id);
-
+  const { managerAmount, providerAmount, memberAmount } = split;
   // Wallet = cash returned to team = withdrawal − member profit (− legacy manager wallet credits)
   const walletAmount = Math.round(
     (withdrawalAmount - memberAmount - managerAlreadyInWallet) * 100
@@ -61,6 +54,16 @@ async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
     providerShare: providerAmount,
     memberShareExcluded: memberAmount,
   };
+}
+
+async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
+  if (explicitAmount !== undefined) {
+    return finalizeReceiveAmounts(app, explicitAmount, null, 0);
+  }
+
+  const split = await resolveApplicationProfitSplit(conn, tenantId, app);
+  const managerAlreadyInWallet = await getManagerShareAlreadyInWallet(conn, tenantId, app.id);
+  return finalizeReceiveAmounts(app, undefined, split, managerAlreadyInWallet);
 }
 
 export async function receiveIpoApplication(conn, {
@@ -125,6 +128,8 @@ export async function receiveIpoApplication(conn, {
       throw new AppError('Funds were already returned to wallet for this application');
     }
 
+    await ensureWallet(conn, tenantId);
+    const resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
     await creditWallet(conn, {
       tenantId,
       amount: amounts.walletAmount,
@@ -135,7 +140,11 @@ export async function receiveIpoApplication(conn, {
       txnDate: now,
       notes: notes || `Return from ${app.ipo_name}`,
       userId,
+      skipEnsureWallet: true,
+      skipSync: true,
+      resolvedBankAccountId,
     });
+    await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [resolvedBankAccountId] });
   }
 
   return {
@@ -159,10 +168,11 @@ async function receiveOneFromCache(conn, {
   resolvedBankAccountId,
   notes,
   userId,
+  amounts,
 }) {
   if (!app) throw new AppError('Application not found', 404);
 
-  const amounts = await resolveReceiveAmounts(conn, tenantId, app);
+  const resolvedAmounts = amounts ?? await resolveReceiveAmounts(conn, tenantId, app);
   const now = new Date();
   const ledgerNotes = notes || `Return: ${app.ipo_name}`;
 
@@ -179,7 +189,7 @@ async function receiveOneFromCache(conn, {
     await conn.query(
       `INSERT INTO member_ledger_entries (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
        VALUES (?, ?, 'RECEIVED', ?, ?, ?, ?)`,
-      [app.member_id, tenantId, amounts.ledgerAmount, now, appId, ledgerNotes]
+      [app.member_id, tenantId, resolvedAmounts.ledgerAmount, now, appId, ledgerNotes]
     );
   } else if (app.trns_received !== 'Received') {
     await conn.query(
@@ -195,7 +205,7 @@ async function receiveOneFromCache(conn, {
 
     await creditWallet(conn, {
       tenantId,
-      amount: amounts.walletAmount,
+      amount: resolvedAmounts.walletAmount,
       bankAccountId: resolvedBankAccountId,
       type: 'RETURN_IN',
       refType: 'ipo_application',
@@ -212,12 +222,61 @@ async function receiveOneFromCache(conn, {
   return {
     appId,
     memberId: app.member_id,
-    amount: amounts.ledgerAmount,
-    walletAmount: amounts.walletAmount,
-    managerShare: amounts.managerShare,
-    providerShare: amounts.providerShare,
-    memberShareExcluded: amounts.memberShareExcluded,
+    amount: resolvedAmounts.ledgerAmount,
+    walletAmount: resolvedAmounts.walletAmount,
+    managerShare: resolvedAmounts.managerShare,
+    providerShare: resolvedAmounts.providerShare,
+    memberShareExcluded: resolvedAmounts.memberShareExcluded,
   };
+}
+
+async function prefetchBulkReceiveAmounts(conn, tenantId, apps) {
+  if (!apps.length) return new Map();
+
+  const ids = apps.map((a) => a.id);
+  const placeholders = ids.map(() => '?').join(',');
+
+  const [distributions] = await conn.query(
+    `SELECT ipo_application_id, manager_amount, provider_amount, member_amount
+     FROM profit_share_distributions
+     WHERE tenant_id = ? AND ipo_application_id IN (${placeholders})`,
+    [tenantId, ...ids]
+  );
+  const distByAppId = new Map(
+    distributions.map((row) => [
+      row.ipo_application_id,
+      {
+        managerAmount: Number(row.manager_amount ?? 0),
+        providerAmount: Number(row.provider_amount ?? 0),
+        memberAmount: Number(row.member_amount ?? 0),
+      },
+    ])
+  );
+
+  const [managerCredits] = await conn.query(
+    `SELECT ref_id, COALESCE(SUM(amount), 0) AS total
+     FROM wallet_transactions
+     WHERE tenant_id = ? AND ref_type = 'profit_share' AND ref_id IN (${placeholders})
+     GROUP BY ref_id`,
+    [tenantId, ...ids]
+  );
+  const managerCreditByAppId = new Map(
+    managerCredits.map((row) => [row.ref_id, Number(row.total ?? 0)])
+  );
+
+  const amountsByAppId = new Map();
+  for (const app of apps) {
+    let split = distByAppId.get(app.id);
+    if (!split) {
+      split = await resolveApplicationProfitSplit(conn, tenantId, app);
+    }
+    const managerAlreadyInWallet = managerCreditByAppId.get(app.id) || 0;
+    amountsByAppId.set(
+      app.id,
+      finalizeReceiveAmounts(app, undefined, split, managerAlreadyInWallet)
+    );
+  }
+  return amountsByAppId;
 }
 
 export async function receiveIpoApplicationsBulk(conn, {
@@ -264,6 +323,8 @@ export async function receiveIpoApplicationsBulk(conn, {
     resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
   }
 
+  const amountsByAppId = await prefetchBulkReceiveAmounts(conn, tenantId, apps);
+
   const results = [];
   const failed = [];
 
@@ -280,6 +341,7 @@ export async function receiveIpoApplicationsBulk(conn, {
         resolvedBankAccountId,
         notes,
         userId,
+        amounts: amountsByAppId.get(appId),
       });
       ledgerSet.add(appId);
       if (returnToWallet) walletReturnSet.add(appId);
@@ -289,15 +351,19 @@ export async function receiveIpoApplicationsBulk(conn, {
     }
   }
 
+  let walletBalance = null;
   if (returnToWallet && results.length) {
-    await syncOwnerWalletTotal(conn, tenantId);
+    walletBalance = await syncOwnerWalletTotal(conn, tenantId, {
+      bankAccountIds: resolvedBankAccountId ? [resolvedBankAccountId] : null,
+      fullVerify: !resolvedBankAccountId,
+    });
   }
 
   if (!results.length && failed.length) {
     throw new AppError(failed[0].error || 'No applications could be received');
   }
 
-  return { received: results, failed, receivedCount: results.length };
+  return { received: results, failed, receivedCount: results.length, walletBalance };
 }
 
 /**
@@ -346,7 +412,7 @@ export async function undoReceiveIpoApplication(conn, {
     walletRows.reduce((sum, wt) => sum + Math.max(0, Number(wt.amount || 0)), 0)
   );
   if (totalToReverse > 0) {
-    const walletBalance = round2(await syncOwnerWalletTotal(conn, tenantId));
+    const walletBalance = round2(await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true }));
     if (walletBalance + 0.001 < totalToReverse) {
       const shortfall = round2(totalToReverse - walletBalance);
       throw new AppError(
@@ -473,7 +539,7 @@ export async function undoReceiveIpoApplication(conn, {
     profitRevoked = Boolean(result.revoked);
   }
 
-  await syncOwnerWalletTotal(conn, tenantId);
+  await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
 
   return {
     appId,

@@ -524,7 +524,7 @@ export default function ProfitSharingPage() {
 
   const rulesByScope = (rules) => {
     const groups = new Map();
-    for (const r of rules) {
+    for (const r of rules.filter((x) => x.isActive !== false)) {
       const key = r.ipoId ?? 'global';
       if (!groups.has(key)) {
         groups.set(key, { label: r.ipoId ? (r.ipoName || `IPO #${r.ipoId}`) : 'All IPOs', rules: [] });
@@ -538,6 +538,18 @@ export default function ProfitSharingPage() {
       const lossM = g.rules.reduce((s, r) => s + Number(r.lossManagerPercent), 0);
       return { ...g, profitP, profitM, lossP, lossM };
     });
+  };
+
+  const onActivateRule = async (ruleId) => {
+    if (!manageMember) return;
+    try {
+      await client.post(`/profit-shares/members/${manageMember.memberId}/rules/${ruleId}/activate`);
+      message.success('Rule set as active for this IPO scope');
+      await loadMemberRules(manageMember.memberId);
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
   };
 
   const defaultRuleFormValues = (nextIndex = 1) => ({
@@ -1319,6 +1331,13 @@ export default function ProfitSharingPage() {
             </Button>
           </Space>
         </div>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="One active rule per IPO scope"
+          description="You can save multiple rules, but only one is active for “All IPOs” or for each specific IPO. Applying or adding a rule makes it active and deactivates others in the same scope."
+        />
         <Table
           rowKey="id"
           loading={rulesLoading}
@@ -1326,8 +1345,19 @@ export default function ProfitSharingPage() {
           {...tableDefaults}
           size="small"
           pagination={false}
+          rowClassName={(r) => (r.isActive === false ? 'profit-rule-inactive' : '')}
           columns={[
             { title: 'Name', dataIndex: 'ruleName' },
+            {
+              title: 'Status',
+              width: 88,
+              render: (_, r) =>
+                r.isActive === false ? (
+                  <Tag>Inactive</Tag>
+                ) : (
+                  <Tag color="success">Active</Tag>
+                ),
+            },
             {
               title: 'Applies to',
               render: (_, r) => <IpoScopeTag rule={r} />,
@@ -1343,9 +1373,14 @@ export default function ProfitSharingPage() {
             },
             {
               title: '',
-              width: 120,
+              width: 180,
               render: (_, r) => (
                 <Space>
+                  {r.isActive === false && (
+                    <Button size="small" type="link" onClick={() => onActivateRule(r.id)}>
+                      Set active
+                    </Button>
+                  )}
                   <Button size="small" icon={<EditOutlined />} onClick={() => openEditRuleForm(r)} />
                   <Popconfirm title="Delete this rule?" onConfirm={() => onDeleteRule(r.id)}>
                     <Button size="small" danger icon={<DeleteOutlined />} />
@@ -1440,7 +1475,7 @@ export default function ProfitSharingPage() {
       >
         {ruleFormContext?.mode === 'create' && ruleFormContext.memberIds.length > 1 && (
           <p style={{ marginBottom: 16, color: '#64748b' }}>
-            This rule will be added to each selected member (existing rules are kept).
+            This rule will be added to each selected member and become the active rule for the chosen IPO scope.
           </p>
         )}
         <Form form={ruleForm} layout="vertical" onFinish={onSaveRule}>

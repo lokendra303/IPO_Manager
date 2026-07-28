@@ -1341,6 +1341,31 @@ async function applyPersonalWithdrawV47(conn) {
  * lot_amount into lot_amount_hni. Strip unused HNI so RII-only IPOs don't show
  * a duplicate HNI lot. Keep HNI when there are HNI applications or a distinct lot.
  */
+async function applyMemberShareRuleActiveV49(conn) {
+  if (!(await tableExists(conn, 'member_profit_shares'))) return;
+  if (!(await columnExists(conn, 'member_profit_shares', 'is_active'))) {
+    await conn.query(
+      `ALTER TABLE member_profit_shares
+       ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER loss_manager_percent`
+    );
+    console.log('Added member_profit_shares.is_active');
+  }
+
+  await conn.query(
+    `UPDATE member_profit_shares mps
+     INNER JOIN (
+       SELECT member_id, tenant_id, ipo_id, MAX(id) AS keep_id
+       FROM member_profit_shares
+       GROUP BY member_id, tenant_id, ipo_id
+     ) latest
+       ON latest.member_id = mps.member_id
+      AND latest.tenant_id = mps.tenant_id
+      AND latest.ipo_id <=> mps.ipo_id
+     SET mps.is_active = IF(mps.id = latest.keep_id, 1, 0)`
+  );
+  console.log('Ensured one active member share rule per IPO scope');
+}
+
 async function applyStripUnusedDefaultHniV48(conn) {
   if (!(await tableExists(conn, 'ipos'))) return;
 
@@ -1438,6 +1463,7 @@ async function migrate() {
   await applyIpoInvalidFlagV46(conn);
   await applyPersonalWithdrawV47(conn);
   await applyStripUnusedDefaultHniV48(conn);
+  await applyMemberShareRuleActiveV49(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

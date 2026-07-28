@@ -21,6 +21,7 @@ import {
   calculateMultiRuleSplit,
   validateMemberRulesSet,
   addMemberShareRule,
+  setActiveMemberShareRule,
   applyBulkMemberShareRules,
   resolveRulesForIpo,
   resolveOptionalIpoId,
@@ -324,7 +325,7 @@ router.post('/members/bulk-rules', async (req, res, next) => {
 router.post('/members/:memberId/rules', async (req, res, next) => {
   try {
     const memberId = parsePositiveInt(req.params.memberId, 'member id');
-    const { fundProviderId, ruleName, sortOrder } = req.body;
+    const { fundProviderId, ruleName, sortOrder, ipoId } = req.body;
     const percents = parseSharePercents(req.body);
     if (!fundProviderId) throw new AppError('Fund provider is required');
 
@@ -334,6 +335,7 @@ router.post('/members/:memberId/rules', async (req, res, next) => {
         ruleName,
         sortOrder,
         fundProviderId,
+        ipoId,
         ...percents,
       });
       res.status(201).json(rule);
@@ -428,6 +430,26 @@ router.put('/members/:memberId/rules/:ruleId', async (req, res, next) => {
 
     const conn = await pool.getConnection();
     try {
+      await setActiveMemberShareRule(conn, req.tenantId, memberId, ruleId);
+      const { rules } = await getMemberShareRules(conn, req.tenantId, memberId);
+      validateMemberRulesSet(rules);
+      const updated = rules.find((r) => r.id === ruleId);
+      res.json(updated);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/members/:memberId/rules/:ruleId/activate', async (req, res, next) => {
+  try {
+    const memberId = parsePositiveInt(req.params.memberId, 'member id');
+    const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
+    const conn = await pool.getConnection();
+    try {
+      await setActiveMemberShareRule(conn, req.tenantId, memberId, ruleId);
       const { rules } = await getMemberShareRules(conn, req.tenantId, memberId);
       validateMemberRulesSet(rules);
       const updated = rules.find((r) => r.id === ruleId);

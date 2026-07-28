@@ -40,6 +40,29 @@ function pctSummary(prov: number, mgr: number) {
   return `${p}% / ${m}% (keeps ${Math.max(0, 100 - p - m)}%)`;
 }
 
+function isRuleActive(rule: any) {
+  return rule?.isActive !== false && rule?.is_active !== 0;
+}
+
+function normalizeMemberRule(rule: any) {
+  return { ...rule, isActive: isRuleActive(rule) };
+}
+
+function rulesByScope(rules: any[]) {
+  const groups = new Map<string, { label: string; rules: any[] }>();
+  for (const r of rules.filter(isRuleActive)) {
+    const key = r.ipoId != null ? String(r.ipoId) : 'global';
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label: r.ipoId ? (r.ipoName || `IPO #${r.ipoId}`) : 'All IPOs',
+        rules: [],
+      });
+    }
+    groups.get(key)!.rules.push(r);
+  }
+  return [...groups.values()];
+}
+
 type CoreCache = {
   members: any[];
   providers: any[];
@@ -66,6 +89,7 @@ export default function ProfitSharingScreen() {
   const [membersFilter, setMembersFilter] = useState<MembersFilter>('all');
   const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
   const [bulkTemplateId, setBulkTemplateId] = useState<number | null>(null);
+  const [bulkIpoId, setBulkIpoId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [manageMember, setManageMember] = useState<any>(null);
@@ -181,6 +205,12 @@ export default function ProfitSharingScreen() {
   }, [userId]);
 
   useEffect(() => {
+    if (tab === 'members' && !ipos.length) {
+      loadIpos();
+    }
+  }, [tab, ipos.length]);
+
+  useEffect(() => {
     if (tab === 'totals' && !totalsLoaded && !loadingTotals) {
       loadTotals();
     }
@@ -197,12 +227,16 @@ export default function ProfitSharingScreen() {
 
   useEffect(() => {
     if (!presetIpoId) return;
+    const id = Number(presetIpoId);
+    if (Number.isInteger(id) && id > 0) {
+      setBulkIpoId(id);
+    }
     setTab('members');
     Alert.alert(
       'IPO share rules',
-      `Set share rules scoped to ${presetIpoName || 'this IPO'} when adding or editing member rules.`
+      `Set share rules scoped to ${presetIpoName || 'this IPO'} when adding or applying member rules.`
     );
-  }, [presetIpoId]);
+  }, [presetIpoId, presetIpoName]);
 
   const overall = totals?.overall ?? {};
   const distributions = report?.distributions ?? [];
@@ -219,13 +253,18 @@ export default function ProfitSharingScreen() {
     setRulesLoading(true);
     try {
       const { data } = await client.get(`/profit-shares/members/${memberId}/rules`);
-      setMemberRules(data.rules || []);
+      const rules = (data.rules || []).map(normalizeMemberRule);
+      setMemberRules(rules);
+      return rules;
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err));
+      return [];
     } finally {
       setRulesLoading(false);
     }
   };
+
+  const activeScopeSummaries = useMemo(() => rulesByScope(memberRules), [memberRules]);
 
   const openManageMember = async (member: any) => {
     setManageMember(member);
@@ -312,6 +351,37 @@ export default function ProfitSharingScreen() {
     }
   };
 
+  const onActivateRule = async (ruleId: number) => {
+    if (!manageMember) return;
+    try {
+      await client.post(`/profit-shares/members/${manageMember.memberId}/rules/${ruleId}/activate`);
+      await loadMemberRules(manageMember.memberId);
+      await reloadAfterChange();
+      Alert.alert('Success', 'Rule is now active for this IPO scope');
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    }
+  };
+
+  const ruleActionItems = (rule: any) => {
+    const items: { text: string; onPress: () => void; style?: 'destructive' }[] = [
+      { text: 'Edit', onPress: () => openEditRule(rule) },
+    ];
+    if (!isRuleActive(rule)) {
+      items.push({ text: 'Set active', onPress: () => onActivateRule(rule.id) });
+    }
+    items.push({
+      text: 'Delete',
+      style: 'destructive',
+      onPress: () =>
+        Alert.alert('Delete rule?', '', [
+          { text: 'Cancel' },
+          { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
+        ]),
+    });
+    return items;
+  };
+
   const onClearMemberRules = async () => {
     if (!manageMember) return;
     try {
@@ -332,7 +402,10 @@ export default function ProfitSharingScreen() {
     }
     setApplyMemberIds(memberIds);
     setApplyTemplateId(bulkTemplateId);
-    setApplyIpoId(null);
+    const presetId = presetIpoId ? Number(presetIpoId) : null;
+    setApplyIpoId(
+      bulkIpoId ?? (Number.isInteger(presetId) && presetId! > 0 ? presetId : null)
+    );
     setApplyModalOpen(true);
   };
 
@@ -432,17 +505,15 @@ export default function ProfitSharingScreen() {
 
   const openMemberMore = (m: any) => {
     const items: { text: string; onPress: () => void }[] = [
+      { text: 'Manage rules', onPress: () => openManageMember(m) },
       { text: 'Custom rule', onPress: () => openCreateRule([m.memberId]) },
     ];
-    if (m.ruleCount > 0) {
-      items.push({ text: 'Manage rules', onPress: () => openManageMember(m) });
-    }
     openActionSheet(
       m.displayName,
       items,
       m.hasShareRule
         ? `Profit ${pctSummary(m.effectiveProfitProviderPercent, m.effectiveProfitManagerPercent)}`
-        : 'No share rule yet'
+        : 'No active share rule yet'
     );
   };
 
@@ -674,6 +745,28 @@ export default function ProfitSharingScreen() {
                   ))}
                 </View>
               </ScrollView>
+              <Text style={ui.sectionLabel}>IPO scope for apply (optional)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={ui.chipRow}>
+                  <Pressable
+                    style={[ui.chip, bulkIpoId == null && ui.chipActive]}
+                    onPress={() => setBulkIpoId(null)}
+                  >
+                    <Text style={[ui.chipText, bulkIpoId == null && ui.chipTextActive]}>All IPOs</Text>
+                  </Pressable>
+                  {ipos.map((ipo) => (
+                    <Pressable
+                      key={ipo.id}
+                      style={[ui.chip, bulkIpoId === ipo.id && ui.chipActive]}
+                      onPress={() => setBulkIpoId(ipo.id)}
+                    >
+                      <Text style={[ui.chipText, bulkIpoId === ipo.id && ui.chipTextActive]} numberOfLines={1}>
+                        {ipo.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </ScrollView>
               {selectedMemberIds.length > 0 && bulkTemplateId && (
                 <Button mode="contained" loading={saving} onPress={() => openApplyTemplate(selectedMemberIds)}>
                   Apply to {selectedMemberIds.length} selected
@@ -711,15 +804,27 @@ export default function ProfitSharingScreen() {
                   ].filter(Boolean).join(' · ')}
                   right={
                     m.hasShareRule ? (
-                      <Tag label={`${m.ruleCount} rules`} color="#059669" />
+                      <Tag
+                        label={
+                          m.activeRuleCount != null
+                            ? `${m.activeRuleCount} active`
+                            : `${m.ruleCount} rules`
+                        }
+                        color="#059669"
+                      />
                     ) : (
                       <Tag label="Need rule" color="#d97706" />
                     )
                   }
                 />
+                <View style={styles.memberRowActions}>
+                <Button compact mode="outlined" onPress={() => openManageMember(m)} style={styles.primaryBtn}>
+                  Rules
+                </Button>
                 <Button compact mode="contained" onPress={() => openApplyTemplate([m.memberId])} style={styles.primaryBtn}>
                   Apply rule
                 </Button>
+                </View>
               </View>
               <Pressable hitSlop={12} onPress={() => openMemberMore(m)} style={styles.moreBtn}>
                 <Text style={styles.moreText}>···</Text>
@@ -811,55 +916,56 @@ export default function ProfitSharingScreen() {
               </Button>
             </View>
 
+            <Banner variant="info">
+              One active rule per IPO scope. Applying or adding a rule makes it active and deactivates others for the same scope (All IPOs or a specific IPO).
+            </Banner>
+
+            {activeScopeSummaries.length > 0 && (
+              <View style={styles.scopeTagRow}>
+                {activeScopeSummaries.map((scope) => (
+                  <Tag key={scope.label} label={scope.label} color={scope.label === 'All IPOs' ? '#64748b' : '#7c3aed'} />
+                ))}
+              </View>
+            )}
+
             {rulesLoading ? (
               <Loading fullScreen={false} />
             ) : memberRules.length === 0 ? (
               <Text style={ui.muted}>No rules yet</Text>
             ) : (
               memberRules.map((rule) => (
-                <View key={rule.id} style={styles.compactRow}>
+                <View
+                  key={rule.id}
+                  style={[styles.compactRow, !isRuleActive(rule) && styles.compactRowInactive]}
+                >
                   <View style={styles.compactRowMain}>
                     <ListRow
                       title={rule.ruleName}
                       subtitle={`${rule.profitProviderPercent}/${rule.profitManagerPercent}% profit · ${rule.providerName || '—'}`}
                       onPress={() =>
-                        openActionSheet(rule.ruleName, [
-                          { text: 'Edit', onPress: () => openEditRule(rule) },
-                          {
-                            text: 'Delete',
-                            style: 'destructive',
-                            onPress: () =>
-                              Alert.alert('Delete rule?', '', [
-                                { text: 'Cancel' },
-                                { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
-                              ]),
-                          },
-                        ], rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs')
+                        openActionSheet(
+                          rule.ruleName,
+                          ruleActionItems(rule),
+                          rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs'
+                        )
                       }
                       right={
-                        <Tag
-                          label={rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs'}
-                          color={rule.ipoId ? '#7c3aed' : '#64748b'}
-                        />
+                        <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                          <Tag
+                            label={isRuleActive(rule) ? 'Active' : 'Inactive'}
+                            color={isRuleActive(rule) ? '#059669' : '#94a3b8'}
+                          />
+                          <Tag
+                            label={rule.ipoId ? (rule.ipoName || `IPO #${rule.ipoId}`) : 'All IPOs'}
+                            color={rule.ipoId ? '#7c3aed' : '#64748b'}
+                          />
+                        </View>
                       }
                     />
                   </View>
                   <Pressable
                     hitSlop={12}
-                    onPress={() =>
-                      openActionSheet(rule.ruleName, [
-                        { text: 'Edit', onPress: () => openEditRule(rule) },
-                        {
-                          text: 'Delete',
-                          style: 'destructive',
-                          onPress: () =>
-                            Alert.alert('Delete rule?', '', [
-                              { text: 'Cancel' },
-                              { text: 'Delete', style: 'destructive', onPress: () => onDeleteRule(rule.id) },
-                            ]),
-                        },
-                      ])
-                    }
+                    onPress={() => openActionSheet(rule.ruleName, ruleActionItems(rule))}
                     style={styles.moreBtn}
                   >
                     <Text style={styles.moreText}>···</Text>
@@ -979,6 +1085,9 @@ function RuleFormFields({
       {showIpo && (
         <>
           <Text style={ui.sectionLabel}>Applies to IPO</Text>
+          <Text style={[ui.muted, { marginBottom: 8 }]}>
+            Leave as All IPOs for default rules, or pick one IPO. Only one active rule per scope.
+          </Text>
           <Pressable
             style={[ui.accountOption, !form.ipoId && ui.accountOptionActive]}
             onPress={() => setForm({ ...form, ipoId: '' })}
@@ -1018,8 +1127,11 @@ const styles = StyleSheet.create({
   percentRow: { flexDirection: 'row', gap: 8 },
   percentInput: { flex: 1, marginBottom: 4 },
   compactRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 2 },
+  compactRowInactive: { opacity: 0.55 },
   compactRowWarn: { backgroundColor: colors.warningLight, borderRadius: radii.md, paddingRight: 4 },
   compactRowMain: { flex: 1 },
+  memberRowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginLeft: spacing.sm, marginBottom: spacing.sm },
+  scopeTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   primaryBtn: { alignSelf: 'flex-start', marginLeft: spacing.sm, marginBottom: spacing.sm },
   moreBtn: { minWidth: 36, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingTop: spacing.md },
   moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },

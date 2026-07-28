@@ -594,9 +594,9 @@ router.post('/applications/:appId/receive', async (req, res, next) => {
 
 
 
-    await withTransaction(async (conn) => {
+    const receiveResult = await withTransaction(async (conn) =>
 
-      await receiveIpoApplication(conn, {
+      receiveIpoApplication(conn, {
 
         tenantId: req.tenantId,
 
@@ -612,9 +612,9 @@ router.post('/applications/:appId/receive', async (req, res, next) => {
 
         userId: req.user.userId,
 
-      });
+      })
 
-    });
+    );
 
 
 
@@ -628,7 +628,16 @@ router.post('/applications/:appId/receive', async (req, res, next) => {
 
     );
 
-    res.json(rows[0]);
+    const [walletRows] = await pool.query(
+      'SELECT COALESCE(balance, 0) AS balance FROM owner_wallets WHERE tenant_id = ?',
+      [req.tenantId]
+    );
+
+    res.json({
+      ...rows[0],
+      walletAmount: receiveResult.walletAmount,
+      walletBalance: Number(walletRows[0]?.balance ?? 0),
+    });
 
   } catch (err) {
 

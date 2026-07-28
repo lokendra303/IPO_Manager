@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool, withTransaction } from '../db/pool.js';
 import { ensureWallet } from '../services/walletService.js';
-import { listBankAccounts } from '../services/bankAccountService.js';
+import { listBankAccounts, syncOwnerWalletTotal } from '../services/bankAccountService.js';
 import {
   getManagerProfitSummary,
   personalWithdraw,
@@ -13,11 +13,14 @@ router.get('/', async (req, res, next) => {
   try {
     const conn = await pool.getConnection();
     try {
-      const wallet = await ensureWallet(conn, req.tenantId);
+      await ensureWallet(conn, req.tenantId);
+      const balance = await syncOwnerWalletTotal(conn, req.tenantId, { fullVerify: true });
       const accounts = await listBankAccounts(conn, req.tenantId);
-      const managerProfit = await getManagerProfitSummary(conn, req.tenantId);
+      const managerProfit = await getManagerProfitSummary(conn, req.tenantId, {
+        skipEnsureWallet: true,
+      });
       res.json({
-        balance: Number(wallet.balance),
+        balance,
         accounts,
         managerProfit,
       });
@@ -57,7 +60,7 @@ router.post('/personal-withdraw', async (req, res, next) => {
         amount: req.body.amount,
         bankAccountId: req.body.bankAccountId,
         notes: req.body.notes,
-        userId: req.user?.id,
+        userId: req.user.userId,
         txnDate: req.body.txnDate,
       })
     );

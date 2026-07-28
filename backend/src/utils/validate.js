@@ -33,6 +33,13 @@ export function parseDate(value, fieldName = 'date') {
   return d;
 }
 
+/** MySQL DATETIME string (avoids ISO-8601 with Z, which MySQL rejects). */
+export function toSqlDateTime(value, fieldName = 'date') {
+  const d = value instanceof Date ? value : parseDate(value, fieldName);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 export function normalizeEmail(email) {
   if (!email || typeof email !== 'string') throw new AppError('Email is required');
   const e = email.trim().toLowerCase();

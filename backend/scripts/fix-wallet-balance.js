@@ -1,5 +1,5 @@
 import { pool, withTransaction } from '../src/db/pool.js';
-import { syncOwnerWalletTotal } from '../src/services/bankAccountService.js';
+import { reconcileOwnerWallet } from '../src/services/bankAccountService.js';
 
 await withTransaction(async (conn) => {
   const [del] = await conn.query(
@@ -7,7 +7,7 @@ await withTransaction(async (conn) => {
   );
   console.log('Deleted rollback adjustments:', del.affectedRows);
 
-  const newBalance = await syncOwnerWalletTotal(conn, 2);
+  const newBalance = await reconcileOwnerWallet(conn, 2);
   console.log('New wallet balance:', newBalance);
 });
 

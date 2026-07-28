@@ -537,13 +537,39 @@ export default function IpoDetailPage() {
     }
     setReceivingAppId(appId);
     try {
-      await client.post(`/ipos/applications/${appId}/receive`, {
+      const { data } = await client.post(`/ipos/applications/${appId}/receive`, {
         returnToWallet: true,
         bankAccountId: receiveAccountId,
       });
-      message.success('Marked as received — funds returned to wallet');
+      const nowIso = new Date().toISOString();
+      setApplications((prev) =>
+        prev.map((a) =>
+          a.id === appId
+            ? {
+                ...a,
+                ...data,
+                trns_received: 'Received',
+                date_received: data.date_received || a.date_received || nowIso,
+              }
+            : a
+        )
+      );
+      if (data.walletBalance != null) {
+        setWallet(Number(data.walletBalance));
+      }
+      if (receiveAccountId != null && data.walletAmount != null) {
+        const credited = Number(data.walletAmount);
+        setBankAccounts((prev) =>
+          prev.map((a) =>
+            a.id === receiveAccountId
+              ? { ...a, balance: Math.round((Number(a.balance) + credited) * 100) / 100 }
+              : a
+          )
+        );
+      }
       setSelectedReceiveIds((prev) => prev.filter((id) => id !== appId));
-      await refreshReceiveData();
+      message.success('Marked as received — funds returned to wallet');
+      void refreshReceiveData();
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed'));
     } finally {
@@ -632,6 +658,30 @@ export default function IpoDetailPage() {
       });
       const ok = data.receivedCount || 0;
       const fail = data.failed?.length || 0;
+      const receivedIds = new Set((data.received || []).map((r) => r.appId));
+      const nowIso = new Date().toISOString();
+      if (receivedIds.size) {
+        setApplications((prev) =>
+          prev.map((a) =>
+            receivedIds.has(a.id)
+              ? { ...a, trns_received: 'Received', date_received: a.date_received || nowIso }
+              : a
+          )
+        );
+      }
+      if (data.walletBalance != null) {
+        setWallet(Number(data.walletBalance));
+      }
+      if (receiveAccountId != null && data.received?.length) {
+        const credited = data.received.reduce((sum, r) => sum + Number(r.walletAmount || 0), 0);
+        setBankAccounts((prev) =>
+          prev.map((a) =>
+            a.id === receiveAccountId
+              ? { ...a, balance: Math.round((Number(a.balance) + credited) * 100) / 100 }
+              : a
+          )
+        );
+      }
       if (ok) {
         message.success(`Received funds for ${ok} member${ok !== 1 ? 's' : ''} — credited to wallet`);
       }
@@ -639,7 +689,7 @@ export default function IpoDetailPage() {
         message.warning(`${fail} could not be received — check those rows individually`);
       }
       setSelectedReceiveIds([]);
-      await refreshReceiveData();
+      void refreshReceiveData();
     } catch (err) {
       message.error(getErrorMessage(err, 'Bulk receive failed'));
     } finally {

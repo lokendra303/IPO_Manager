@@ -55,7 +55,7 @@ async function syncProviderLinkedWalletTransactions(conn, tenantId) {
   }
 }
 
-async function hasBalanceDrift(conn, tenantId) {
+async function hasProviderLinkDrift(conn, tenantId) {
   const [providerDrift] = await conn.query(
     `SELECT pt.id
      FROM provider_transactions pt
@@ -69,7 +69,18 @@ async function hasBalanceDrift(conn, tenantId) {
      LIMIT 1`,
     [tenantId]
   );
-  if (providerDrift.length) return true;
+  return providerDrift.length > 0;
+}
+
+/** Compare stored bank balance vs sum(wallet_transactions) — optional account scope. */
+async function hasAccountBalanceDrift(conn, tenantId, bankAccountIds = null) {
+  const params = [tenantId, tenantId];
+  let accountFilter = '';
+  if (bankAccountIds?.length) {
+    const placeholders = bankAccountIds.map(() => '?').join(',');
+    accountFilter = ` AND mba.id IN (${placeholders})`;
+    params.push(...bankAccountIds);
+  }
 
   const [accountDrift] = await conn.query(
     `SELECT mba.id
@@ -80,22 +91,33 @@ async function hasBalanceDrift(conn, tenantId) {
        WHERE tenant_id = ?
        GROUP BY bank_account_id
      ) wt ON wt.bank_account_id = mba.id
-     WHERE mba.tenant_id = ?
+     WHERE mba.tenant_id = ?${accountFilter}
        AND ABS(mba.balance - COALESCE(wt.ledger_total, 0)) > 0.001
      LIMIT 1`,
-    [tenantId, tenantId]
+    params
   );
   return accountDrift.length > 0;
 }
 
 /** Replay wallet_transactions to fix bank balances and balance_after chain. */
-export async function reconcileBalancesFromLedger(conn, tenantId) {
+export async function reconcileBalancesFromLedger(conn, tenantId, bankAccountIds = null) {
   await syncProviderLinkedWalletTransactions(conn, tenantId);
 
-  const [accountRows] = await conn.query(
-    'SELECT id FROM manager_bank_accounts WHERE tenant_id = ?',
-    [tenantId]
-  );
+  let accountRows;
+  if (bankAccountIds?.length) {
+    const placeholders = bankAccountIds.map(() => '?').join(',');
+    const [rows] = await conn.query(
+      `SELECT id FROM manager_bank_accounts WHERE tenant_id = ? AND id IN (${placeholders})`,
+      [tenantId, ...bankAccountIds]
+    );
+    accountRows = rows;
+  } else {
+    const [rows] = await conn.query(
+      'SELECT id FROM manager_bank_accounts WHERE tenant_id = ?',
+      [tenantId]
+    );
+    accountRows = rows;
+  }
 
   for (const { id: bankAccountId } of accountRows) {
     const [txns] = await conn.query(
@@ -155,9 +177,20 @@ export async function getBankAccount(conn, tenantId, accountId) {
   };
 }
 
-export async function syncOwnerWalletTotal(conn, tenantId) {
-  if (await hasBalanceDrift(conn, tenantId)) {
-    await reconcileBalancesFromLedger(conn, tenantId);
+/**
+ * Sum bank balances into owner_wallets after ledger verification.
+ * - fullVerify: scan all accounts + provider links (Wallet page, admin repair).
+ * - bankAccountIds: scan only those accounts (+ provider links); use after RETURN_IN / credits.
+ */
+export async function syncOwnerWalletTotal(conn, tenantId, { bankAccountIds = null, fullVerify = false } = {}) {
+  const scope = fullVerify ? null : bankAccountIds;
+
+  if (await hasProviderLinkDrift(conn, tenantId)) {
+    await syncProviderLinkedWalletTransactions(conn, tenantId);
+  }
+
+  if (await hasAccountBalanceDrift(conn, tenantId, scope)) {
+    await reconcileBalancesFromLedger(conn, tenantId, scope);
   }
 
   const [sumRows] = await conn.query(
@@ -171,6 +204,11 @@ export async function syncOwnerWalletTotal(conn, tenantId) {
     [total, tenantId]
   );
   return total;
+}
+
+/** Full ledger replay for all accounts (manual DB fixes, scripts). */
+export async function reconcileOwnerWallet(conn, tenantId) {
+  return syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
 }
 
 /** Resolve bank account: explicit id, sole active account, default account, or first by sort order. */

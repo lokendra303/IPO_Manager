@@ -519,13 +519,39 @@ export default function IpoDetailScreen() {
     }
     setReceivingAppId(appId);
     try {
-      await client.post(`/ipos/applications/${appId}/receive`, {
+      const { data } = await client.post(`/ipos/applications/${appId}/receive`, {
         returnToWallet: true,
         bankAccountId: receiveAccountId,
       });
+      const nowIso = new Date().toISOString();
+      setApplications((prev) =>
+        prev.map((a) =>
+          a.id === appId
+            ? {
+                ...a,
+                ...data,
+                trns_received: 'Received',
+                date_received: data.date_received || a.date_received || nowIso,
+              }
+            : a
+        )
+      );
+      if (data.walletBalance != null) {
+        setWallet(Number(data.walletBalance));
+      }
+      if (receiveAccountId != null && data.walletAmount != null) {
+        const credited = Number(data.walletAmount);
+        setBankAccounts((prev) =>
+          prev.map((a) =>
+            a.id === receiveAccountId
+              ? { ...a, balance: Math.round((Number(a.balance) + credited) * 100) / 100 }
+              : a
+          )
+        );
+      }
       setSelectedReceiveIds((prev) => prev.filter((aid) => aid !== appId));
-      await refreshReceiveData();
       Alert.alert('Success', 'Marked as received — funds returned to wallet');
+      void refreshReceiveData();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed'));
     } finally {
@@ -620,10 +646,37 @@ export default function IpoDetailScreen() {
       });
       const ok = data.receivedCount || 0;
       const fail = data.failed?.length || 0;
+      const receivedIds = new Set((data.received || []).map((r: { appId: number }) => r.appId));
+      const nowIso = new Date().toISOString();
+      if (receivedIds.size) {
+        setApplications((prev) =>
+          prev.map((a) =>
+            receivedIds.has(a.id)
+              ? { ...a, trns_received: 'Received', date_received: a.date_received || nowIso }
+              : a
+          )
+        );
+      }
+      if (data.walletBalance != null) {
+        setWallet(Number(data.walletBalance));
+      }
+      if (receiveAccountId != null && data.received?.length) {
+        const credited = data.received.reduce(
+          (sum: number, r: { walletAmount?: number }) => sum + Number(r.walletAmount || 0),
+          0
+        );
+        setBankAccounts((prev) =>
+          prev.map((a) =>
+            a.id === receiveAccountId
+              ? { ...a, balance: Math.round((Number(a.balance) + credited) * 100) / 100 }
+              : a
+          )
+        );
+      }
       if (ok) Alert.alert('Success', `Received funds for ${ok} member(s)`);
       if (fail) Alert.alert('Warning', `${fail} could not be received`);
       setSelectedReceiveIds([]);
-      await refreshReceiveData();
+      void refreshReceiveData();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Bulk receive failed'));
     } finally {

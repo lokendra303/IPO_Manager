@@ -14,7 +14,9 @@ export default ({ config }) => ({
   },
   android: {
     package: 'com.ipoteam.manager',
+    versionCode: 1,
     usesCleartextTraffic: true,
+    softwareKeyboardLayoutMode: 'resize',
     adaptiveIcon: {
       backgroundColor: '#0f172a',
       foregroundImage: './assets/android-icon-foreground.png',

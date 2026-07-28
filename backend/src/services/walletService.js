@@ -1,5 +1,5 @@
 import { AppError } from '../middleware/errorHandler.js';
-import { parseAmount, parsePositiveInt, parseDate } from '../utils/validate.js';
+import { parseAmount, parsePositiveInt, parseDate, toSqlDateTime } from '../utils/validate.js';
 import {
   requireBankAccountId,
   syncOwnerWalletTotal,
@@ -8,7 +8,7 @@ import {
 } from './bankAccountService.js';
 
 export async function getWallet(conn, tenantId) {
-  const total = await syncOwnerWalletTotal(conn, tenantId);
+  const total = await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
   return { balance: total };
 }
 
@@ -22,9 +22,10 @@ export async function ensureWallet(conn, tenantId) {
       'INSERT INTO owner_wallets (tenant_id, balance) VALUES (?, 0)',
       [tenantId]
     );
+    const total = await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
+    return { id: null, balance: total };
   }
-  const total = await syncOwnerWalletTotal(conn, tenantId);
-  return { id: null, balance: total };
+  return { id: rows[0].id, balance: Number(rows[0].balance) };
 }
 
 async function lockAccount(conn, tenantId, bankAccountId) {
@@ -57,7 +58,7 @@ async function applyAccountDelta(conn, {
       'SELECT balance FROM manager_bank_accounts WHERE id = ?',
       [bankAccountId]
     );
-    return { accountBalance: Number(acc[0]?.balance ?? 0), totalBalance: await syncOwnerWalletTotal(conn, tenantId) };
+    return { accountBalance: Number(acc[0]?.balance ?? 0), totalBalance: await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [bankAccountId] }) };
   }
 
   const account = await lockAccount(conn, tenantId, bankAccountId);
@@ -73,13 +74,17 @@ async function applyAccountDelta(conn, {
     [newAccountBalance, bankAccountId]
   );
 
-  const totalBalance = skipSync ? null : await syncOwnerWalletTotal(conn, tenantId);
+  const totalBalance = skipSync
+    ? null
+    : await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [bankAccountId] });
+
+  const txnDateSql = toSqlDateTime(txnDate ?? new Date(), 'transaction date');
 
   await conn.query(
     `INSERT INTO wallet_transactions
      (tenant_id, bank_account_id, type, amount, balance_after, ref_type, ref_id, txn_date, notes, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [tenantId, bankAccountId, type, change, newAccountBalance, refType, refId, txnDate, notes, userId]
+    [tenantId, bankAccountId, type, change, newAccountBalance, refType, refId, txnDateSql, notes, userId]
   );
 
   return { accountBalance: newAccountBalance, totalBalance, accountLabel: account.label };
@@ -181,7 +186,8 @@ export async function debitWalletFromAccounts(conn, {
     });
   }
 
-  return syncOwnerWalletTotal(conn, tenantId);
+  const touchedIds = [...new Set(normalized.map((n) => n.bankAccountId))];
+  return syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: touchedIds });
 }
 
 /** Credit to one or more bank accounts (amounts must sum to total). */
@@ -217,7 +223,8 @@ export async function creditWalletFromAccounts(conn, {
     });
   }
 
-  return syncOwnerWalletTotal(conn, tenantId);
+  const touchedIds = [...new Set(normalized.map((n) => n.bankAccountId))];
+  return syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: touchedIds });
 }
 
 /** Signed balance change (positive = credit, negative = debit). Used for P&L loss shares. */
@@ -321,7 +328,7 @@ export async function transferBetweenBankAccounts(conn, {
     userId,
   });
 
-  const totalBalance = await syncOwnerWalletTotal(conn, tenantId);
+  const totalBalance = await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [fromId, toId] });
   return {
     transferId,
     amount: transferAmount,
