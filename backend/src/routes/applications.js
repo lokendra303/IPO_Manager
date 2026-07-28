@@ -6,6 +6,7 @@ import {
   tryAutoDistributeApplication,
   revokeProfitShareDistribution,
   isIpoFinancialsFrozen,
+  assertIpoApplicationsEditable,
 } from '../services/profitShareService.js';
 import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 
@@ -47,6 +48,7 @@ router.patch('/bulk', async (req, res, next) => {
         }
 
         const row = existing[0];
+        await assertIpoApplicationsEditable(conn, req.tenantId, row.ipo_id);
         const ipoClosed = await isIpoFinancialsFrozen(conn, req.tenantId, row.ipo_id);
         validateAllotmentStatus(u.allotmentStatus);
 

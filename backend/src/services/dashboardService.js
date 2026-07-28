@@ -1,4 +1,5 @@
 import { ensureWallet } from './walletService.js';
+import { PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
 
 /**
  * Lightweight dashboard payload — one round-trip instead of heavy /summary + 4 other calls.
@@ -26,25 +27,38 @@ export async function getManagerDashboard(pool, tenantId) {
 
     const [pending] = await conn.query(
       `SELECT m.id AS memberId, m.display_name AS displayName, m.pan,
-              COALESCE(g.total, 0) - COALESCE(r.total, 0) AS willReceiveFromTeam
+              COALESCE(p.pending_return, 0) AS willReceiveFromTeam
        FROM members m
-       LEFT JOIN (
-         SELECT member_id, SUM(amount) AS total
-         FROM member_ledger_entries
-         WHERE tenant_id = ? AND type = 'GIVEN'
-         GROUP BY member_id
-       ) g ON g.member_id = m.id
-       LEFT JOIN (
-         SELECT member_id, SUM(amount) AS total
-         FROM member_ledger_entries
-         WHERE tenant_id = ? AND type = 'RECEIVED'
-         GROUP BY member_id
-       ) r ON r.member_id = m.id
+       INNER JOIN (
+         SELECT a.member_id,
+                SUM(${PENDING_RETURN_PRINCIPAL_SQL}) AS pending_return
+         FROM ipo_applications a
+         WHERE a.tenant_id = ?
+         GROUP BY a.member_id
+         HAVING pending_return > 0.005
+       ) p ON p.member_id = m.id
        WHERE m.tenant_id = ?
-         AND COALESCE(g.total, 0) - COALESCE(r.total, 0) > 0.005
        ORDER BY willReceiveFromTeam DESC
        LIMIT 8`,
-      [tenantId, tenantId, tenantId]
+      [tenantId, tenantId]
+    );
+
+    const [openIpos] = await conn.query(
+      `SELECT
+         i.id AS ipo_id,
+         i.name,
+         COUNT(a.id) AS application_count,
+         COALESCE(SUM(a.amount), 0) AS total_distributed,
+         COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
+         COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return
+       FROM ipos i
+       LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id
+       WHERE i.tenant_id = ?
+         AND i.status = 'OPEN'
+         AND COALESCE(i.is_invalid, 0) = 0
+       GROUP BY i.id, i.name
+       ORDER BY i.created_at DESC, i.id DESC`,
+      [tenantId]
     );
 
     const [txns] = await conn.query(
@@ -56,11 +70,39 @@ export async function getManagerDashboard(pool, tenantId) {
       [tenantId]
     );
 
+    const openIpoRows = openIpos.map((row) => ({
+      ipoId: row.ipo_id,
+      name: row.name,
+      applicationCount: Number(row.application_count),
+      totalDistributed: Number(row.total_distributed),
+      totalReturned: Number(row.total_returned),
+      pendingReturn: Number(row.pending_return),
+    }));
+
+    const openIpoTotals = openIpoRows.reduce(
+      (acc, r) => ({
+        totalDistributed: acc.totalDistributed + r.totalDistributed,
+        totalReturned: acc.totalReturned + r.totalReturned,
+        pendingReturn: acc.pendingReturn + r.pendingReturn,
+        applicationCount: acc.applicationCount + r.applicationCount,
+        ipoCount: acc.ipoCount + 1,
+      }),
+      {
+        totalDistributed: 0,
+        totalReturned: 0,
+        pendingReturn: 0,
+        applicationCount: 0,
+        ipoCount: 0,
+      }
+    );
+
     return {
       walletBalance: Number(wallet.balance),
       activeMembers: Number(memberCount.cnt),
       managerShare: Number(share.managerShare),
       openIssueCount: Number(issueCount.openCount),
+      openIpos: openIpoRows,
+      openIpoTotals,
       pendingReturns: pending.map((row) => ({
         memberId: row.memberId,
         displayName: row.displayName,

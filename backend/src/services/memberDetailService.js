@@ -1,6 +1,7 @@
 import { parsePositiveInt } from '../utils/validate.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
+import { pendingReturnPrincipal } from './pendingReturnUtils.js';
 
 export async function getMemberDetail(pool, tenantId, memberId) {
   const id = parsePositiveInt(memberId, 'member id');
@@ -158,6 +159,11 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     };
   });
 
+  const willReceiveFromTeam = applications.reduce(
+    (sum, app) => sum + pendingReturnPrincipal(app),
+    0
+  );
+
   return {
     member,
     profitShare,
@@ -174,7 +180,7 @@ export async function getMemberDetail(pool, tenantId, memberId) {
       totalProviderShare,
       totalManagerShare,
       pendingShareGross,
-      willReceiveFromTeam: ledgerTotals.given - ledgerTotals.received,
+      willReceiveFromTeam,
     },
     ipoApplications,
     ledgerEntries: ledger,

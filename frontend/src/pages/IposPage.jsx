@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Space, Popconfirm, Typography, Select, Checkbox } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Popconfirm, Typography, Select, Checkbox, Row, Col } from 'antd';
 import {
   IPO_SEGMENT_OPTIONS,
   ipoAllowsHni,
@@ -9,12 +9,19 @@ import {
 import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
+import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
+import ModalDatePicker from '../components/ModalDatePicker';
 import { tableDefaults } from '../utils/table';
+
+function toDateParam(v) {
+  if (!v) return null;
+  return dayjs.isDayjs(v) ? v.format('YYYY-MM-DD') : dayjs(v).format('YYYY-MM-DD');
+}
 
 export default function IposPage() {
   const [ipos, setIpos] = useState([]);
@@ -52,6 +59,8 @@ export default function IposPage() {
         ipoSegment: values.ipoSegment,
         lotAmountRii: values.lotAmountRii,
         registrar: values.registrar,
+        openDate: toDateParam(values.openDate),
+        lastApplyDate: toDateParam(values.lastApplyDate),
         allowedCategories,
       };
       if (values.enableHni && values.lotAmountHni != null && values.lotAmountHni !== '') {
@@ -66,6 +75,71 @@ export default function IposPage() {
       message.error(getErrorMessage(err, 'Failed'));
     }
   };
+
+  const actionStackStyle = { display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch', minWidth: 108 };
+
+  const renderActiveActions = (_, r) => (
+    <div style={actionStackStyle} onClick={(e) => e.stopPropagation()}>
+      <Link to={`/ipos/${r.id}`}>
+        <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />} block>
+          View
+        </Button>
+      </Link>
+      {r.status === 'OPEN' ? (
+        <Popconfirm
+          title="Close this IPO?"
+          description="Status only — does not return funds to providers or members."
+          onConfirm={async () => {
+            try {
+              await client.post(`/ipos/${r.id}/close`);
+              message.success('IPO closed');
+              load();
+            } catch (err) {
+              message.error(getErrorMessage(err));
+            }
+          }}
+        >
+          <Button size="small" icon={<LockOutlined />} danger block>
+            Close
+          </Button>
+        </Popconfirm>
+      ) : (
+        <Popconfirm
+          title="Reopen this IPO?"
+          onConfirm={async () => {
+            try {
+              await client.post(`/ipos/${r.id}/reopen`);
+              message.success('IPO reopened');
+              load();
+            } catch (err) {
+              message.error(getErrorMessage(err));
+            }
+          }}
+        >
+          <Button size="small" icon={<UnlockOutlined />} block>
+            Reopen
+          </Button>
+        </Popconfirm>
+      )}
+      <Popconfirm
+        title="Mark as invalid IPO?"
+        description="Hides from the main list. Records are kept — you can restore later."
+        onConfirm={async () => {
+          try {
+            await client.post(`/ipos/${r.id}/invalidate`);
+            message.success('IPO marked invalid');
+            load();
+          } catch (err) {
+            message.error(getErrorMessage(err));
+          }
+        }}
+      >
+        <Button size="small" icon={<StopOutlined />} block>
+          Invalid
+        </Button>
+      </Popconfirm>
+    </div>
+  );
 
   const columns = [
     {
@@ -116,6 +190,23 @@ export default function IposPage() {
       render: (v) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v ?? 0}</span>,
     },
     {
+      title: 'Allotted',
+      dataIndex: 'allotted_count',
+      width: 96,
+      align: 'center',
+      render: (v) => {
+        const n = Number(v) || 0;
+        if (n <= 0) {
+          return <span style={{ color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>0</span>;
+        }
+        return (
+          <Tag color="success" style={{ marginInlineEnd: 0, minWidth: 28, textAlign: 'center' }}>
+            {n}
+          </Tag>
+        );
+      },
+    },
+    {
       title: 'Pending return',
       dataIndex: 'pending_return_count',
       width: 120,
@@ -134,125 +225,66 @@ export default function IposPage() {
     },
     {
       title: 'Actions',
-      width: 268,
-      align: 'right',
+      width: 124,
+      align: 'center',
       fixed: 'right',
-      render: (_, r) => (
-        <Space size={6} wrap={false} onClick={(e) => e.stopPropagation()}>
-          <Link to={`/ipos/${r.id}`}>
-            <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />}>
-              View
-            </Button>
-          </Link>
-          {r.status === 'OPEN' ? (
-            <Popconfirm
-              title="Close this IPO?"
-              description="Status only — does not return funds to providers or members."
-              onConfirm={async () => {
-                try {
-                  await client.post(`/ipos/${r.id}/close`);
-                  message.success('IPO closed');
-                  load();
-                } catch (err) {
-                  message.error(getErrorMessage(err));
-                }
-              }}
-            >
-              <Button size="small" icon={<LockOutlined />} danger>
-                Close
-              </Button>
-            </Popconfirm>
-          ) : (
-            <Popconfirm
-              title="Reopen this IPO?"
-              onConfirm={async () => {
-                try {
-                  await client.post(`/ipos/${r.id}/reopen`);
-                  message.success('IPO reopened');
-                  load();
-                } catch (err) {
-                  message.error(getErrorMessage(err));
-                }
-              }}
-            >
-              <Button size="small" icon={<UnlockOutlined />}>
-                Reopen
-              </Button>
-            </Popconfirm>
-          )}
-          <Popconfirm
-            title="Mark as invalid IPO?"
-            description="Hides from the main list. Records are kept — you can restore later."
-            onConfirm={async () => {
-              try {
-                await client.post(`/ipos/${r.id}/invalidate`);
-                message.success('IPO marked invalid');
-                load();
-              } catch (err) {
-                message.error(getErrorMessage(err));
-              }
-            }}
-          >
-            <Button size="small" icon={<StopOutlined />}>
-              Invalid
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+      render: renderActiveActions,
     },
   ];
+
+  const renderInvalidActions = (_, r) => (
+    <div style={actionStackStyle} onClick={(e) => e.stopPropagation()}>
+      <Link to={`/ipos/${r.id}`}>
+        <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />} block>
+          View
+        </Button>
+      </Link>
+      <Popconfirm
+        title="Restore to main IPO list?"
+        onConfirm={async () => {
+          try {
+            await client.post(`/ipos/${r.id}/restore`);
+            message.success('IPO restored');
+            load();
+          } catch (err) {
+            message.error(getErrorMessage(err));
+          }
+        }}
+      >
+        <Button size="small" icon={<RollbackOutlined />} block>
+          Restore
+        </Button>
+      </Popconfirm>
+      <Popconfirm
+        title="Permanently delete this IPO?"
+        description="Only empty invalid IPOs can be deleted. This cannot be undone."
+        okText="Delete"
+        okButtonProps={{ danger: true }}
+        onConfirm={async () => {
+          try {
+            await client.delete(`/ipos/${r.id}`);
+            message.success('IPO deleted');
+            load();
+          } catch (err) {
+            message.error(getErrorMessage(err));
+          }
+        }}
+      >
+        <Button size="small" danger icon={<DeleteOutlined />} block>
+          Delete
+        </Button>
+      </Popconfirm>
+    </div>
+  );
 
   const invalidColumns = [
     ...columns.slice(0, -1),
     {
       title: 'Actions',
-      width: 260,
-      align: 'right',
+      width: 124,
+      align: 'center',
       fixed: 'right',
-      render: (_, r) => (
-        <Space size={6} wrap={false} onClick={(e) => e.stopPropagation()}>
-          <Link to={`/ipos/${r.id}`}>
-            <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />}>
-              View
-            </Button>
-          </Link>
-          <Popconfirm
-            title="Restore to main IPO list?"
-            onConfirm={async () => {
-              try {
-                await client.post(`/ipos/${r.id}/restore`);
-                message.success('IPO restored');
-                load();
-              } catch (err) {
-                message.error(getErrorMessage(err));
-              }
-            }}
-          >
-            <Button size="small" icon={<RollbackOutlined />}>
-              Restore
-            </Button>
-          </Popconfirm>
-          <Popconfirm
-            title="Permanently delete this IPO?"
-            description="Only empty invalid IPOs can be deleted. This cannot be undone."
-            okText="Delete"
-            okButtonProps={{ danger: true }}
-            onConfirm={async () => {
-              try {
-                await client.delete(`/ipos/${r.id}`);
-                message.success('IPO deleted');
-                load();
-              } catch (err) {
-                message.error(getErrorMessage(err));
-              }
-            }}
-          >
-            <Button size="small" danger icon={<DeleteOutlined />}>
-              Delete
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+      render: renderInvalidActions,
     },
   ];
 
@@ -304,7 +336,14 @@ export default function IposPage() {
         </ContentCard>
       )}
 
-      <Modal title="Create IPO" open={modalOpen} onCancel={() => setModalOpen(false)} onOk={() => form.submit()} destroyOnClose width={560}>
+      <Modal
+        title="Create IPO"
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        onOk={() => form.submit()}
+        destroyOnClose
+        width={560}
+      >
         <Form form={form} layout="vertical" onFinish={onCreate}>
           <Form.Item name="name" label="IPO Name" rules={[{ required: true }]}>
             <Input prefix={<StockOutlined style={{ color: '#94a3b8' }} />} placeholder="Orkla India" />
@@ -334,6 +373,18 @@ export default function IposPage() {
           <Form.Item name="registrar" label="Allotment registrar (optional)">
             <Select allowClear placeholder="KFintech, Link Intime, etc." options={registrarOptions} />
           </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="openDate" label="Open date">
+                <ModalDatePicker />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="lastApplyDate" label="Close date (last apply)">
+                <ModalDatePicker />
+              </Form.Item>
+            </Col>
+          </Row>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             New IPOs start as OPEN. Close from the IPO page when finished.
           </Typography.Text>

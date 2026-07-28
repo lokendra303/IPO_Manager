@@ -51,6 +51,8 @@ export default function IposScreen() {
         registrar: form.registrar,
         allowedCategories,
       };
+      if (form.openDate?.trim()) payload.openDate = form.openDate.trim();
+      if (form.lastApplyDate?.trim()) payload.lastApplyDate = form.lastApplyDate.trim();
       if (form.enableHni && form.lotAmountHni) payload.lotAmountHni = Number(form.lotAmountHni);
       const { data: created } = await client.post('/ipos', payload);
       setModalOpen(false);
@@ -271,6 +273,24 @@ export default function IposScreen() {
             style={ui.input}
           />
         )}
+        <TextInput
+          label="Open date (YYYY-MM-DD)"
+          value={form.openDate || ''}
+          onChangeText={(v) => setForm({ ...form, openDate: v })}
+          placeholder="2026-07-28"
+          mode="outlined"
+          style={ui.input}
+          autoCapitalize="none"
+        />
+        <TextInput
+          label="Close date / last apply (YYYY-MM-DD)"
+          value={form.lastApplyDate || ''}
+          onChangeText={(v) => setForm({ ...form, lastApplyDate: v })}
+          placeholder="2026-07-30"
+          mode="outlined"
+          style={ui.input}
+          autoCapitalize="none"
+        />
         <Button mode="contained" onPress={onCreate}>
           Create
         </Button>

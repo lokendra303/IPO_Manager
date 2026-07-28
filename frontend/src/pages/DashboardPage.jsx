@@ -11,6 +11,7 @@ import {
   FallOutlined,
   BankOutlined,
   PercentageOutlined,
+  FundOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
@@ -60,6 +61,7 @@ export default function DashboardPage() {
     [summary]
   );
   const totalPendingReturn = pendingReturns.reduce((s, r) => s + Number(r.willReceiveFromTeam), 0);
+  const pendingReturnAppCount = summary?.totals?.pendingReturnApplicationCount ?? 0;
 
   if (loading) return <PageLoading />;
 
@@ -69,6 +71,16 @@ export default function DashboardPage() {
   const managerLoss = overall.managerLoss ?? 0;
   const grossIpoPnL = overall.grossIpoPnL ?? summary?.totals?.totalIpoProfit ?? 0;
   const activeMembers = summary?.rows?.filter((r) => r.status === 'ACTIVE').length ?? 0;
+  const openIpoRows = (summary?.ipoSummary?.rows ?? []).filter((r) => r.status === 'OPEN');
+  const openIpoTotals = openIpoRows.reduce(
+    (acc, r) => ({
+      totalDistributed: acc.totalDistributed + Number(r.totalDistributed || 0),
+      totalReturned: acc.totalReturned + Number(r.totalReturned || 0),
+      pendingReturn: acc.pendingReturn + Number(r.pendingReturn || 0),
+      applicationCount: acc.applicationCount + Number(r.applicationCount || 0),
+    }),
+    { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
+  );
 
   const txnCols = [
     { title: 'Date', dataIndex: 'txn_date', render: (v) => new Date(v).toLocaleString('en-IN') },
@@ -99,6 +111,41 @@ export default function DashboardPage() {
     },
   ];
 
+  const openIpoCols = [
+    {
+      title: 'IPO',
+      dataIndex: 'name',
+      render: (v, r) => (
+        <Link to={`/ipos/${r.ipoId}`} style={{ fontWeight: 500 }}>
+          {v}
+        </Link>
+      ),
+    },
+    {
+      title: 'Distributed',
+      dataIndex: 'totalDistributed',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      title: 'Returned',
+      dataIndex: 'totalReturned',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      title: 'Still with members',
+      dataIndex: 'pendingReturn',
+      render: (v) => (
+        <span className={Number(v) > 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
+      ),
+    },
+    {
+      title: 'Members',
+      dataIndex: 'applicationCount',
+      width: 88,
+      align: 'center',
+    },
+  ];
+
   return (
     <div>
       <PageHeader
@@ -121,12 +168,14 @@ export default function DashboardPage() {
           style={{ marginBottom: 16 }}
         />
       )}
-      {pendingReturns.length > 0 && (
+      {totalPendingReturn > 0 && (
         <Alert
           type="error"
           showIcon
           icon={<ClockCircleOutlined />}
-          message={`${formatCurrency(totalPendingReturn)} pending from ${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'} (Given − Received)`}
+          message={`${formatCurrency(totalPendingReturn)} pending return from ${pendingReturnAppCount} application${
+            pendingReturnAppCount === 1 ? '' : 's'
+          } (${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'}) — allotted / not allotted, not yet received`}
           action={
             <Link to="/summary">
               <Button size="small">View summary</Button>
@@ -135,6 +184,65 @@ export default function DashboardPage() {
           style={{ marginBottom: 24 }}
         />
       )}
+      <ContentCard
+        title={`Open IPOs — distributed${openIpoRows.length ? ` (${openIpoRows.length})` : ''}`}
+        extra={(
+          <Link to="/summary" className="content-card-extra-link">
+            Full summary <ArrowRightOutlined />
+          </Link>
+        )}
+        padded
+        style={{ marginBottom: 24 }}
+      >
+        <Row gutter={[16, 16]} style={{ marginBottom: openIpoRows.length ? 16 : 0 }}>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Distributed (open IPOs)"
+              value={formatCurrency(openIpoTotals.totalDistributed)}
+              icon={<FundOutlined />}
+              variant="info"
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Returned"
+              value={formatCurrency(openIpoTotals.totalReturned)}
+              icon={<RiseOutlined />}
+              variant="success"
+            />
+          </Col>
+          <Col xs={24} sm={8}>
+            <StatCard
+              title="Still with members"
+              value={formatCurrency(openIpoTotals.pendingReturn)}
+              icon={<ClockCircleOutlined />}
+              variant="warning"
+            />
+          </Col>
+        </Row>
+        {openIpoRows.length > 0 ? (
+          <Table
+            rowKey="ipoId"
+            columns={openIpoCols}
+            dataSource={openIpoRows}
+            pagination={false}
+            {...tableDefaults}
+            summary={() => (
+              <Table.Summary fixed>
+                <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
+                  <Table.Summary.Cell index={0}>TOTAL</Table.Summary.Cell>
+                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalDistributed)}</Table.Summary.Cell>
+                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalReturned)}</Table.Summary.Cell>
+                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.pendingReturn)}</Table.Summary.Cell>
+                  <Table.Summary.Cell>{openIpoTotals.applicationCount}</Table.Summary.Cell>
+                </Table.Summary.Row>
+              </Table.Summary>
+            )}
+          />
+        ) : (
+          <Typography.Text type="secondary">No open IPOs right now.</Typography.Text>
+        )}
+      </ContentCard>
       <ContentCard
         title="P&L overview"
         extra={(

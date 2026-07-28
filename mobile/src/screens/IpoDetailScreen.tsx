@@ -37,6 +37,21 @@ const ALLOTMENT_OPTIONS = [
 
 type ReturnFilter = 'all' | 'returned' | 'pending' | 'not_applied' | 'allotted' | 'not_allotted';
 
+function toIsoDateInput(value: unknown): string {
+  if (!value) return '';
+  const s = String(value);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function formatIpoDate(value: unknown): string {
+  const iso = toIsoDateInput(value);
+  if (!iso) return '—';
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 function isFundReturned(app: any) {
   return app.trns_received === 'Received';
 }
@@ -67,6 +82,8 @@ export default function IpoDetailScreen() {
   const [editIpoModalOpen, setEditIpoModalOpen] = useState(false);
   const [editIpoSaving, setEditIpoSaving] = useState(false);
   const [editIpoName, setEditIpoName] = useState('');
+  const [editOpenDate, setEditOpenDate] = useState('');
+  const [editLastApplyDate, setEditLastApplyDate] = useState('');
   const [returnFilter, setReturnFilter] = useState<ReturnFilter>('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState<number[]>([]);
   const [receiveAccountId, setReceiveAccountId] = useState<number | null>(null);
@@ -343,6 +360,8 @@ export default function IpoDetailScreen() {
 
   const openEditIpo = () => {
     setEditIpoName(ipo?.name || '');
+    setEditOpenDate(toIsoDateInput(ipo?.open_date));
+    setEditLastApplyDate(toIsoDateInput(ipo?.last_apply_date));
     setEditIpoModalOpen(true);
   };
 
@@ -354,10 +373,15 @@ export default function IpoDetailScreen() {
     }
     setEditIpoSaving(true);
     try {
-      const { data } = await client.patch(`/ipos/${id}`, { name });
+      const body: Record<string, unknown> = {
+        name,
+        openDate: editOpenDate.trim() || null,
+        lastApplyDate: editLastApplyDate.trim() || null,
+      };
+      const { data } = await client.patch(`/ipos/${id}`, body);
       setIpo(data);
       setEditIpoModalOpen(false);
-      Alert.alert('Success', 'IPO name updated');
+      Alert.alert('Success', 'IPO updated');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not update IPO'));
     } finally {
@@ -760,7 +784,9 @@ export default function IpoDetailScreen() {
       <PageHeader
         title={ipo.name}
         subtitle={
-          `${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'} · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
+          `${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'}` +
+          ` · Open ${formatIpoDate(ipo.open_date)} · Close ${formatIpoDate(ipo.last_apply_date)}` +
+          ` · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
           (ipoAllowsHni(ipo) && ipoHasHniLot(ipo)
             ? ` · HNI ${formatCurrency(getLotAmountForCategory(ipo, 'HNI'))}`
             : '')
@@ -1297,6 +1323,24 @@ export default function IpoDetailScreen() {
               mode="outlined"
               style={ui.input}
               maxLength={120}
+            />
+            <TextInput
+              label="Open date (YYYY-MM-DD)"
+              value={editOpenDate}
+              onChangeText={setEditOpenDate}
+              placeholder="2026-07-28"
+              mode="outlined"
+              style={ui.input}
+              autoCapitalize="none"
+            />
+            <TextInput
+              label="Close date / last apply (YYYY-MM-DD)"
+              value={editLastApplyDate}
+              onChangeText={setEditLastApplyDate}
+              placeholder="2026-07-30"
+              mode="outlined"
+              style={ui.input}
+              autoCapitalize="none"
             />
             <Button mode="contained" loading={editIpoSaving} onPress={onSaveEditIpo}>Save</Button>
             <Button mode="text" onPress={() => setEditIpoModalOpen(false)}>Cancel</Button>

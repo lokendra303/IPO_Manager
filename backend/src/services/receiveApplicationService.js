@@ -1,7 +1,11 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { parseAmount } from '../utils/validate.js';
 import { requireBankAccountId, syncOwnerWalletTotal } from './bankAccountService.js';
-import { resolveApplicationProfitSplit, revokeProfitShareDistribution } from './profitShareService.js';
+import {
+  resolveApplicationProfitSplit,
+  revokeProfitShareDistribution,
+  assertIpoApplicationsEditable,
+} from './profitShareService.js';
 import { applyWalletDelta, creditWallet, ensureWallet } from './walletService.js';
 
 function round2(n) {
@@ -85,6 +89,7 @@ export async function receiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
+  await assertIpoApplicationsEditable(conn, tenantId, app.ipo_id);
   const amounts = await resolveReceiveAmounts(conn, tenantId, app, amount);
 
   const now = new Date();
@@ -302,6 +307,13 @@ export async function receiveIpoApplicationsBulk(conn, {
   );
   const appById = new Map(apps.map((row) => [row.id, row]));
 
+  if (apps.length) {
+    const ipoIds = [...new Set(apps.map((a) => a.ipo_id))];
+    for (const ipoId of ipoIds) {
+      await assertIpoApplicationsEditable(conn, tenantId, ipoId);
+    }
+  }
+
   const [existingLedger] = await conn.query(
     `SELECT ipo_application_id FROM member_ledger_entries
      WHERE ipo_application_id IN (${placeholders}) AND type = 'RECEIVED'`,
@@ -388,6 +400,7 @@ export async function undoReceiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
+  await assertIpoApplicationsEditable(conn, tenantId, app.ipo_id);
 
   const [walletRows] = await conn.query(
     `SELECT * FROM wallet_transactions

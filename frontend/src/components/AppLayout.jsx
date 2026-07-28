@@ -16,6 +16,7 @@ import {
   HistoryOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  RiseOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +33,7 @@ const MENU_PATH_KEYS = [
   '/wallet',
   '/ipos',
   '/summary',
+  '/profit-analysis',
   '/profit-sharing',
   '/audit-log',
   '/settings',
@@ -82,6 +84,7 @@ export default function AppLayout({ children }) {
     { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
     { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
+    { key: '/profit-analysis', icon: <RiseOutlined />, label: <Link to="/profit-analysis">Profit Analysis</Link> },
     { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
     { key: '/audit-log', icon: <HistoryOutlined />, label: <Link to="/audit-log">Audit Log</Link> },
     { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },

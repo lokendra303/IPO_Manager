@@ -3,9 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Table, Button, Tag, Modal, InputNumber, Steps, Checkbox, Alert, Form,
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
+  Row, Col,
 } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
+import ModalDatePicker from '../components/ModalDatePicker';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
@@ -25,6 +28,43 @@ import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
 import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoProfit';
+
+function toDateParam(v) {
+  if (!v) return null;
+  return dayjs.isDayjs(v) ? v.format('YYYY-MM-DD') : dayjs(v).format('YYYY-MM-DD');
+}
+
+function toDayjsOrNull(v) {
+  if (!v) return null;
+  const d = dayjs(v);
+  return d.isValid() ? d : null;
+}
+
+function formatIpoDate(v) {
+  const d = toDayjsOrNull(v);
+  return d ? d.format('DD MMM YYYY') : '—';
+}
+
+function ProfitShareAmounts({ record }) {
+  if (!record?.profit_share_distribution_id) return null;
+  const rows = [
+    { label: 'Member', amount: record.share_member_amount },
+    { label: 'Manager', amount: record.share_manager_amount },
+    { label: 'Provider', amount: record.share_provider_amount },
+  ];
+  return (
+    <div style={{ marginBottom: 6, lineHeight: 1.45 }}>
+      {rows.map(({ label, amount }) => (
+        <div key={label} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+          <Typography.Text type="secondary">{label}: </Typography.Text>
+          <Typography.Text className={pnlClassName(amount)} strong>
+            {formatCurrency(amount)}
+          </Typography.Text>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function IpoDetailPage() {
   const { id } = useParams();
@@ -242,16 +282,24 @@ export default function IpoDetailPage() {
   };
 
   const openEditIpo = () => {
-    editIpoForm.setFieldsValue({ name: ipo?.name || '' });
+    editIpoForm.setFieldsValue({
+      name: ipo?.name || '',
+      openDate: toDayjsOrNull(ipo?.open_date),
+      lastApplyDate: toDayjsOrNull(ipo?.last_apply_date),
+    });
     setEditIpoModalOpen(true);
   };
 
   const onSaveEditIpo = async (values) => {
     setEditIpoSaving(true);
     try {
-      const { data } = await client.patch(`/ipos/${id}`, { name: values.name?.trim() });
+      const { data } = await client.patch(`/ipos/${id}`, {
+        name: values.name?.trim(),
+        openDate: toDateParam(values.openDate),
+        lastApplyDate: toDateParam(values.lastApplyDate),
+      });
       setIpo(data);
-      message.success('IPO name updated');
+      message.success('IPO updated');
       setEditIpoModalOpen(false);
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not update IPO'));
@@ -462,6 +510,10 @@ export default function IpoDetailPage() {
   };
 
   const onSaveBulk = async () => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to save changes');
+      return;
+    }
     const updates = Object.entries(editedRows).map(([appId, vals]) => {
       const update = { id: Number(appId) };
       if (vals.allotmentStatus !== undefined) update.allotmentStatus = vals.allotmentStatus;
@@ -531,6 +583,10 @@ export default function IpoDetailPage() {
   };
 
   const onReceive = async (appId) => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to mark returns');
+      return;
+    }
     if (missingReceiveAccount) {
       message.warning('Select which bank account should receive the returned funds');
       return;
@@ -578,6 +634,10 @@ export default function IpoDetailPage() {
   };
 
   const onUndoReceive = async (appId, { revokeProfitSplit = false } = {}) => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to undo actions');
+      return;
+    }
     setUndoingAppId(appId);
     try {
       const { data } = await client.post(`/ipos/applications/${appId}/undo-receive`, {
@@ -628,6 +688,10 @@ export default function IpoDetailPage() {
   };
 
   const onRevokeProfitSplit = async (appId) => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to change P&L splits');
+      return;
+    }
     setRevokingProfitAppId(appId);
     try {
       await client.post('/profit-shares/revoke', { applicationId: appId });
@@ -641,6 +705,10 @@ export default function IpoDetailPage() {
   };
 
   const onReceiveBulk = async () => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to mark returns');
+      return;
+    }
     if (!receivableSelectedIds.length) {
       message.warning('Select members whose funds you have received back');
       return;
@@ -808,7 +876,7 @@ export default function IpoDetailPage() {
           <Select
             size="small"
             style={{ width: 68 }}
-            disabled={isClosed}
+            disabled={isFrozen}
             value={value}
             onChange={(val) => updateRow(r.id, 'investorCategory', val)}
             options={categoryCompactOptionsForIpo(ipo)}
@@ -826,7 +894,7 @@ export default function IpoDetailPage() {
         <InputNumber
           size="small"
           min={1}
-          disabled={isClosed}
+          disabled={isFrozen}
           style={{ width: '100%' }}
           value={getRowVal(r, 'amount', 'amount')}
           onChange={(val) => updateAmount(r, val)}
@@ -863,6 +931,7 @@ export default function IpoDetailPage() {
         <Select
           size="small"
           style={{ width: '100%', minWidth: 132 }}
+          disabled={isFrozen}
           value={getRowVal(r, 'allotmentStatus', 'allotment_status')}
           onChange={(val) => {
             updateRow(r.id, 'allotmentStatus', val);
@@ -888,6 +957,7 @@ export default function IpoDetailPage() {
           <InputNumber
             size="small"
             min={0}
+            disabled={isFrozen}
             style={{ width: '100%' }}
             placeholder="Received"
             value={getRowVal(r, 'withdrawalMoney', 'withdrawal_money')}
@@ -914,11 +984,11 @@ export default function IpoDetailPage() {
     },
     {
       title: 'P&L share',
-      width: 96,
+      width: 108,
       render: (_, r) => {
         if (r.profit_share_distribution_id) {
           return (
-            <Tag color="purple" style={{ marginInlineEnd: 0 }} title={`Provider ${formatCurrency(r.share_provider_amount)} · Manager ${formatCurrency(r.share_manager_amount)}`}>
+            <Tag color="purple" style={{ marginInlineEnd: 0 }}>
               Split done
             </Tag>
           );
@@ -934,13 +1004,18 @@ export default function IpoDetailPage() {
     {
       title: 'Remarks',
       dataIndex: 'remarks',
-      width: 120,
+      width: 200,
       render: (v, r) => (
-        <Input
-          size="small"
-          value={getRowVal(r, 'remarks', 'remarks') ?? ''}
-          onChange={(e) => updateRow(r.id, 'remarks', e.target.value)}
-        />
+        <div style={{ minWidth: 168 }}>
+          <ProfitShareAmounts record={r} />
+          <Input
+            size="small"
+            disabled={isFrozen}
+            placeholder={r.profit_share_distribution_id ? 'Notes' : 'Remarks'}
+            value={getRowVal(r, 'remarks', 'remarks') ?? ''}
+            onChange={(e) => updateRow(r.id, 'remarks', e.target.value)}
+          />
+        </div>
       ),
     },
     {
@@ -950,6 +1025,16 @@ export default function IpoDetailPage() {
       align: 'center',
       render: (_, r) => {
         const hasProfitSplit = Boolean(r.profit_share_distribution_id);
+        if (isFrozen) {
+          if (r.trns_received === 'Received') {
+            return <Tag color="green" style={{ marginInlineEnd: 0 }}>Settled</Tag>;
+          }
+          return (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              Reopen IPO
+            </Typography.Text>
+          );
+        }
         if (r.trns_received === 'Received') {
           return (
             <Space size={4} wrap>
@@ -1046,14 +1131,18 @@ export default function IpoDetailPage() {
             {ipo?.name}
             <Tag color={isClosed ? 'error' : 'success'}>{isClosed ? 'CLOSED' : 'OPEN'}</Tag>
             {isInvalid && <Tag color="default">INVALID</Tag>}
-            <Button size="small" type="text" icon={<EditOutlined />} onClick={openEditIpo}>
+            <Button size="small" type="text" icon={<EditOutlined />} onClick={openEditIpo} disabled={isInvalid}>
               Edit
             </Button>
           </Space>
         }
         subtitle={
           <>
-            RII lot {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}
+            Open {formatIpoDate(ipo?.open_date)}
+            {' '}
+            · Close {formatIpoDate(ipo?.last_apply_date)}
+            {' '}
+            · RII lot {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}
             {ipoAllowsHni(ipo) && (
               <>
                 {' '}
@@ -1100,14 +1189,14 @@ export default function IpoDetailPage() {
                 Distribute Funds
               </Button>
             </Tooltip>
-            <Button icon={<UndoOutlined />} onClick={onUndoChanges} disabled={!unsavedRowCount}>
+            <Button icon={<UndoOutlined />} onClick={onUndoChanges} disabled={!unsavedRowCount || isFrozen}>
               Undo{unsavedRowCount ? ` (${unsavedRowCount})` : ''}
             </Button>
-            <Button icon={<SaveOutlined />} onClick={onSaveBulk} disabled={!unsavedRowCount} type={unsavedRowCount ? 'primary' : 'default'}>
+            <Button icon={<SaveOutlined />} onClick={onSaveBulk} disabled={!unsavedRowCount || isFrozen} type={unsavedRowCount && !isFrozen ? 'primary' : 'default'}>
               Save Changes
             </Button>
             {applications.length > 0 && (
-              <Button icon={<SearchOutlined />} onClick={() => setAllotmentCheckOpen(true)}>
+              <Button icon={<SearchOutlined />} onClick={() => setAllotmentCheckOpen(true)} disabled={isFrozen}>
                 Check allotment (PAN)
               </Button>
             )}
@@ -1308,7 +1397,17 @@ export default function IpoDetailPage() {
         <Alert
           type="warning"
           message="IPO is closed"
-          description="Closing only locks the IPO — it does not return money to fund providers. Wallet and provider ledger entries are frozen (no P&L splits or reversals on save). You can still mark member returns when funds come back. Reopen the IPO to distribute to more members or run P&L splits."
+          description="Applications are read-only while closed — no edits, receive, undo, or P&L changes. Reopen the IPO from the header to continue working."
+          style={{ marginBottom: 16 }}
+          showIcon
+        />
+      )}
+
+      {isInvalid && !isClosed && (
+        <Alert
+          type="warning"
+          message="Invalid IPO"
+          description="Applications are read-only. Restore this IPO from the IPO list to edit or perform actions."
           style={{ marginBottom: 16 }}
           showIcon
         />
@@ -1329,7 +1428,7 @@ export default function IpoDetailPage() {
         />
       )}
 
-      {bankAccounts.length > 0 && (
+      {!isFrozen && bankAccounts.length > 0 && (
         <div className="ipo-receive-account-row" style={{ marginBottom: 16 }}>
           <Typography.Text type="secondary">Member returns credit to: </Typography.Text>
           <Select
@@ -1381,7 +1480,7 @@ export default function IpoDetailPage() {
                 {returnedCount} of {applications.length} member{applications.length !== 1 ? 's' : ''} returned funds
               </Typography.Text>
             )}
-            {receivableSelectedIds.length > 0 && (
+            {receivableSelectedIds.length > 0 && !isFrozen && (
               <Button type="primary" loading={receivingBulk} onClick={onReceiveBulk}>
                 Receive selected ({receivableSelectedIds.length})
               </Button>
@@ -1396,7 +1495,7 @@ export default function IpoDetailPage() {
           size="middle"
           columns={columns}
           dataSource={filteredApplications}
-          rowSelection={{
+          rowSelection={isFrozen ? undefined : {
             selectedRowKeys: selectedReceiveIds,
             onChange: setSelectedReceiveIds,
             getCheckboxProps: (record) => ({
@@ -2035,6 +2134,18 @@ export default function IpoDetailPage() {
           >
             <Input placeholder="e.g. Acme Industries" maxLength={120} />
           </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="openDate" label="Open date">
+                <ModalDatePicker allowClear />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="lastApplyDate" label="Close date (last apply)">
+                <ModalDatePicker allowClear />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 

@@ -1,4 +1,5 @@
 import { syncOwnerWalletTotal } from './bankAccountService.js';
+import { APPLICATION_RETURN_DUE_SQL, PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
 
 function mapIpoSummaryRow(row, share = {}) {
   return {
@@ -33,7 +34,7 @@ const IPO_SUMMARY_SELECT = `
     COUNT(a.id) AS application_count,
     COALESCE(SUM(a.amount), 0) AS total_distributed,
     COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
-    COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN 0 ELSE a.amount END), 0) AS pending_return,
+    COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return,
     SUM(CASE WHEN a.trns_received = 'Received' THEN 1 ELSE 0 END) AS returned_count,
     SUM(CASE WHEN a.allotment_status = 'ALLOTED' THEN 1 ELSE 0 END) AS allotted_count,
     SUM(CASE WHEN a.allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS not_allotted_count,
@@ -165,8 +166,9 @@ export async function getSummary(pool, tenantId) {
     `SELECT member_id,
             COUNT(*) as ipos_applied,
             SUM(CASE WHEN allotment_status = 'ALLOTED' THEN 1 ELSE 0 END) as ipos_alloted,
-            SUM(CASE WHEN allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL THEN COALESCE(profit_loss, 0) ELSE 0 END) as total_ipo_profit
-     FROM ipo_applications WHERE tenant_id = ?
+            SUM(CASE WHEN allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL THEN COALESCE(profit_loss, 0) ELSE 0 END) as total_ipo_profit,
+            COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return_due
+     FROM ipo_applications a WHERE tenant_id = ?
      GROUP BY member_id`,
     [tenantId]
   );
@@ -201,13 +203,20 @@ export async function getSummary(pool, tenantId) {
       iposApplied: Number(row.ipos_applied),
       iposAlloted: Number(row.ipos_alloted),
       totalIpoProfit: Number(row.total_ipo_profit),
+      pendingReturnDue: Number(row.pending_return_due),
     };
   }
 
   const rows = members.map((m) => {
     const lg = ledgerMap[m.id] || { given: 0, received: 0, bonus: 0 };
-    const ap = appMap[m.id] || { iposApplied: 0, iposAlloted: 0, totalIpoProfit: 0 };
-    const willReceiveFromTeam = lg.given - lg.received;
+    const ap = appMap[m.id] || {
+      iposApplied: 0,
+      iposAlloted: 0,
+      totalIpoProfit: 0,
+      pendingReturnDue: 0,
+    };
+    const ledgerNet = lg.given - lg.received;
+    const willReceiveFromTeam = ap.pendingReturnDue;
     return {
       memberId: m.id,
       displayName: m.display_name,
@@ -225,7 +234,7 @@ export async function getSummary(pool, tenantId) {
       iposAlloted: ap.iposAlloted,
       totalIpoProfit: ap.totalIpoProfit,
       willReceiveFromTeam,
-      mismatch: willReceiveFromTeam !== 0,
+      mismatch: Math.abs(ledgerNet - willReceiveFromTeam) > 0.01,
     };
   });
 
@@ -242,6 +251,14 @@ export async function getSummary(pool, tenantId) {
   );
 
   const ipoSummary = await getIpoWiseSummary(pool, tenantId);
+
+  const [[pendingReturnApps]] = await pool.query(
+    `SELECT COUNT(*) AS cnt
+     FROM ipo_applications a
+     WHERE a.tenant_id = ? AND ${APPLICATION_RETURN_DUE_SQL}`,
+    [tenantId]
+  );
+  totals.pendingReturnApplicationCount = Number(pendingReturnApps?.cnt ?? 0);
 
   return {
     rows,

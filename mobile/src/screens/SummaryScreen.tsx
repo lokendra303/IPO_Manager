@@ -15,15 +15,28 @@ import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
 
 function ipoRowSubtitle(r: any) {
+  const distributed = formatCurrency(r.totalDistributed);
   const pending = formatCurrency(r.pendingReturn);
   const pnl = formatCurrency(r.totalProfitLoss);
-  return `Pending ${pending} · P&L ${pnl}`;
+  return `${distributed} distributed · ${pending} with members · P&L ${pnl}`;
 }
 
 function memberRowSubtitle(r: any) {
   const pending = formatCurrency(r.willReceiveFromTeam);
   const pnl = formatCurrency(r.totalIpoProfit);
   return `Pending ${pending} · P&L ${pnl}`;
+}
+
+function sumOpenIpoTotals(rows: any[]) {
+  return rows.reduce(
+    (acc, r) => ({
+      totalDistributed: acc.totalDistributed + Number(r.totalDistributed || 0),
+      totalReturned: acc.totalReturned + Number(r.totalReturned || 0),
+      pendingReturn: acc.pendingReturn + Number(r.pendingReturn || 0),
+      applicationCount: acc.applicationCount + Number(r.applicationCount || 0),
+    }),
+    { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
+  );
 }
 
 export default function SummaryScreen() {
@@ -50,6 +63,8 @@ export default function SummaryScreen() {
   const ipo = data.ipoSummary;
   const ipoTotals = ipo?.totals;
   const memberTotals = data.totals;
+  const openIpoRows = (ipo?.rows ?? []).filter((r: any) => r.status === 'OPEN');
+  const openIpoTotals = sumOpenIpoTotals(openIpoRows);
 
   return (
     <Screen>
@@ -58,6 +73,11 @@ export default function SummaryScreen() {
       <ContentCard title="Overview">
         <View style={ui.statRow}>
           <StatCard title="Free Wallet" value={formatCurrency(data.availableFreeAmount)} variant="primary" />
+          <StatCard
+            title="Distributed (open)"
+            value={formatCurrency(openIpoTotals.totalDistributed)}
+            variant="info"
+          />
           <PnlStatCard title="Team IPO Profit" value={profit} formatted={formatCurrency(profit)} />
           <StatCard
             title="Pending From Team"
@@ -67,8 +87,48 @@ export default function SummaryScreen() {
         </View>
       </ContentCard>
 
+      <ContentCard title={`Open IPOs — current distributed (${openIpoRows.length})`}>
+        <View style={ui.statRow}>
+          <StatCard
+            title="Distributed now"
+            value={formatCurrency(openIpoTotals.totalDistributed)}
+            variant="info"
+          />
+          <StatCard
+            title="Returned"
+            value={formatCurrency(openIpoTotals.totalReturned)}
+            variant="success"
+          />
+          <StatCard
+            title="With members"
+            value={formatCurrency(openIpoTotals.pendingReturn)}
+            variant="warning"
+          />
+        </View>
+        {openIpoRows.length > 0 ? (
+          <>
+            {openIpoRows.map((r: any) => (
+              <ListRow
+                key={r.ipoId}
+                title={r.name}
+                subtitle={`${formatCurrency(r.totalDistributed)} distributed · ${formatCurrency(r.pendingReturn)} with members`}
+                badge="Open"
+                onPress={() => router.push(`/(manager)/ipos/${r.ipoId}`)}
+              />
+            ))}
+            <Text style={styles.totalsLine}>
+              Total: {formatCurrency(openIpoTotals.totalDistributed)} distributed ·{' '}
+              {formatCurrency(openIpoTotals.totalReturned)} returned ·{' '}
+              {formatCurrency(openIpoTotals.pendingReturn)} with members
+            </Text>
+          </>
+        ) : (
+          <Text style={styles.empty}>No open IPOs right now.</Text>
+        )}
+      </ContentCard>
+
       {ipo?.rows?.length > 0 && (
-        <ContentCard title={`IPOs (${ipoTotals.ipoCount})`}>
+        <ContentCard title={`All IPOs (${ipoTotals.ipoCount})`}>
           {ipo.rows.map((r: any) => (
             <ListRow
               key={r.ipoId}
@@ -80,7 +140,7 @@ export default function SummaryScreen() {
           ))}
 
           <Text style={styles.totalsLine}>
-            Totals: {formatCurrency(ipoTotals.totalDistributed)} distributed ·{' '}
+            All: {formatCurrency(ipoTotals.totalDistributed)} distributed ·{' '}
             {formatCurrency(ipoTotals.totalProfitLoss)} P&L · {formatCurrency(ipoTotals.pendingReturn)} pending
           </Text>
         </ContentCard>
@@ -116,5 +176,10 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderLight,
     lineHeight: 18,
+  },
+  empty: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 4,
   },
 });

@@ -1,4 +1,9 @@
 import { AppError } from '../middleware/errorHandler.js';
+import {
+  appendIpoIdIn,
+  formatPeriodLabel,
+  resolvePeriodIpoIds,
+} from './profitAnalysisFilters.js';
 
 export function validatePercents(providerPercent, managerPercent, label = 'Share') {
   const p = Number(providerPercent);
@@ -820,6 +825,22 @@ export async function isIpoFinancialsFrozen(conn, tenantId, ipoId) {
   return rows[0]?.status === 'CLOSED';
 }
 
+/** Block application edits, receive, undo, etc. when IPO is closed or invalid. */
+export async function assertIpoApplicationsEditable(conn, tenantId, ipoId) {
+  const [rows] = await conn.query(
+    `SELECT status, COALESCE(is_invalid, 0) AS is_invalid
+     FROM ipos WHERE id = ? AND tenant_id = ?`,
+    [ipoId, tenantId]
+  );
+  if (!rows.length) throw new AppError('IPO not found', 404);
+  if (rows[0].status === 'CLOSED') {
+    throw new AppError('IPO is closed. Reopen the IPO to edit applications or perform actions.');
+  }
+  if (rows[0].is_invalid) {
+    throw new AppError('Invalid IPO. Restore it from the IPO list to edit applications or perform actions.');
+  }
+}
+
 /** Auto-apply member share rules when app is ALLOTED with non-zero P&L (skips if already distributed). */
 export async function tryAutoDistributeApplication(conn, { tenantId, applicationId, userId }) {
   const [app] = await conn.query(
@@ -1190,40 +1211,87 @@ export async function getProfitShareReport(pool, tenantId) {
   };
 }
 
-export async function getProfitTotalsReport(pool, tenantId) {
+export async function getProfitTotalsReport(pool, tenantId, filters = {}) {
+  const ipoIds = await resolvePeriodIpoIds(pool, tenantId, filters);
+
+  const empty = () => ({
+    overall: {
+      grossIpoPnL: 0,
+      ipoProfit: 0,
+      ipoLoss: 0,
+      grossDistributed: 0,
+      grossPending: 0,
+      pendingCount: 0,
+      providerShare: 0,
+      managerShare: 0,
+      memberShare: 0,
+      distributionCount: 0,
+      distributedProfit: 0,
+      distributedLoss: 0,
+      managerProfit: 0,
+      managerLoss: 0,
+    },
+    manager: {
+      totalShare: 0,
+      profitShare: 0,
+      lossShare: 0,
+      label: 'Manager (you)',
+    },
+    byMember: [],
+    byProvider: [],
+  });
+
+  if (Array.isArray(ipoIds) && ipoIds.length === 0) {
+    return empty();
+  }
+
+  const distParams = [tenantId];
+  const distIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, distParams);
   const [overallDist] = await pool.query(
     `SELECT
        COUNT(*) as distribution_count,
-       COALESCE(SUM(gross_profit_loss), 0) as gross_distributed,
-       COALESCE(SUM(provider_amount), 0) as provider_share,
-       COALESCE(SUM(manager_amount), 0) as manager_share,
-       COALESCE(SUM(member_amount), 0) as member_share,
-       COALESCE(SUM(CASE WHEN pnl_type = 'PROFIT' THEN gross_profit_loss ELSE 0 END), 0) as gross_profit,
-       COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN gross_profit_loss ELSE 0 END), 0) as gross_loss,
-       COALESCE(SUM(CASE WHEN pnl_type = 'PROFIT' THEN manager_amount ELSE 0 END), 0) as manager_profit,
-       COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN manager_amount ELSE 0 END), 0) as manager_loss
-     FROM profit_share_distributions WHERE tenant_id = ?`,
-    [tenantId]
+       COALESCE(SUM(psd.gross_profit_loss), 0) as gross_distributed,
+       COALESCE(SUM(psd.provider_amount), 0) as provider_share,
+       COALESCE(SUM(psd.manager_amount), 0) as manager_share,
+       COALESCE(SUM(psd.member_amount), 0) as member_share,
+       COALESCE(SUM(CASE WHEN psd.pnl_type = 'PROFIT' THEN psd.gross_profit_loss ELSE 0 END), 0) as gross_profit,
+       COALESCE(SUM(CASE WHEN psd.pnl_type = 'LOSS' THEN psd.gross_profit_loss ELSE 0 END), 0) as gross_loss,
+       COALESCE(SUM(CASE WHEN psd.pnl_type = 'PROFIT' THEN psd.manager_amount ELSE 0 END), 0) as manager_profit,
+       COALESCE(SUM(CASE WHEN psd.pnl_type = 'LOSS' THEN psd.manager_amount ELSE 0 END), 0) as manager_loss
+     FROM profit_share_distributions psd
+     JOIN ipo_applications a ON a.id = psd.ipo_application_id
+     WHERE psd.tenant_id = ?${distIpoSql}`,
+    distParams
   );
 
+  const ipoParams = [tenantId];
+  const ipoFilterSql = appendIpoIdIn('ipo_id', ipoIds, ipoParams);
   const [overallIpo] = await pool.query(
     `SELECT
        COALESCE(SUM(profit_loss), 0) as gross_ipo_pnl,
        COALESCE(SUM(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END), 0) as ipo_profit,
        COALESCE(SUM(CASE WHEN profit_loss < 0 THEN profit_loss ELSE 0 END), 0) as ipo_loss
      FROM ipo_applications
-     WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL`,
-    [tenantId]
+     WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL${ipoFilterSql}`,
+    ipoParams
   );
 
+  const pendParams = [tenantId];
+  const pendIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, pendParams);
   const [pendingGross] = await pool.query(
     `SELECT COALESCE(SUM(a.profit_loss), 0) as pending_gross, COUNT(*) as pending_count
      FROM ipo_applications a
      LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL`,
-    [tenantId]
+     WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL${pendIpoSql}`,
+    pendParams
   );
 
+  const memberAppParams = [tenantId];
+  const memberAppIpoSql = appendIpoIdIn('ipo_id', ipoIds, memberAppParams);
+  const memberDistParams = [tenantId];
+  const memberDistIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, memberDistParams);
+  const memberPendParams = [tenantId];
+  const memberPendIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, memberPendParams);
   const [byMember] = await pool.query(
     `SELECT m.id AS member_id, m.display_name, m.pan,
             COALESCE(app.gross_ipo_pnl, 0) AS gross_ipo_pnl,
@@ -1240,47 +1308,64 @@ export async function getProfitTotalsReport(pool, tenantId) {
               SUM(profit_loss) AS gross_ipo_pnl,
               COUNT(*) AS ipo_count
        FROM ipo_applications
-       WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL
+       WHERE tenant_id = ? AND allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL AND profit_loss IS NOT NULL${memberAppIpoSql}
        GROUP BY member_id
      ) app ON app.member_id = m.id
      LEFT JOIN (
-       SELECT member_id,
-              SUM(gross_profit_loss) AS gross_distributed,
-              SUM(provider_amount) AS provider_share,
-              SUM(manager_amount) AS manager_share,
-              SUM(member_amount) AS member_share,
+       SELECT psd.member_id,
+              SUM(psd.gross_profit_loss) AS gross_distributed,
+              SUM(psd.provider_amount) AS provider_share,
+              SUM(psd.manager_amount) AS manager_share,
+              SUM(psd.member_amount) AS member_share,
               COUNT(*) AS distribution_count
-       FROM profit_share_distributions
-       WHERE tenant_id = ?
-       GROUP BY member_id
+       FROM profit_share_distributions psd
+       JOIN ipo_applications a ON a.id = psd.ipo_application_id
+       WHERE psd.tenant_id = ?${memberDistIpoSql}
+       GROUP BY psd.member_id
      ) dist ON dist.member_id = m.id
      LEFT JOIN (
        SELECT a.member_id, SUM(a.profit_loss) AS pending_gross
        FROM ipo_applications a
        LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-       WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL
+       WHERE a.tenant_id = ? AND a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL AND a.profit_loss IS NOT NULL AND psd.id IS NULL${memberPendIpoSql}
        GROUP BY a.member_id
      ) pend ON pend.member_id = m.id
      WHERE m.tenant_id = ?
      HAVING gross_ipo_pnl != 0 OR gross_distributed != 0 OR pending_gross != 0
      ORDER BY m.sort_order, m.id`,
-    [tenantId, tenantId, tenantId, tenantId]
+    [...memberAppParams, ...memberDistParams, ...memberPendParams, tenantId]
   );
 
-  const [byProvider] = await pool.query(
-    `SELECT fp.id AS fund_provider_id, fp.name AS provider_name,
-            COALESCE(SUM(psdr.provider_amount), 0) AS total_share,
-            COALESCE(SUM(CASE WHEN psd.pnl_type = 'PROFIT' THEN psdr.provider_amount ELSE 0 END), 0) AS profit_share,
-            COALESCE(SUM(CASE WHEN psd.pnl_type = 'LOSS' THEN psdr.provider_amount ELSE 0 END), 0) AS loss_share,
-            COUNT(DISTINCT psdr.id) AS distribution_count
-     FROM fund_providers fp
-     LEFT JOIN profit_share_distribution_rules psdr ON psdr.fund_provider_id = fp.id
-     LEFT JOIN profit_share_distributions psd ON psd.id = psdr.distribution_id AND psd.tenant_id = fp.tenant_id
-     WHERE fp.tenant_id = ?
-     GROUP BY fp.id, fp.name
-     HAVING total_share != 0
-     ORDER BY fp.name`,
-    [tenantId]
+  const providerParams = [tenantId];
+  const providerIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, providerParams);
+  const [byProviderRows] = await pool.query(
+    ipoIds == null
+      ? `SELECT fp.id AS fund_provider_id, fp.name AS provider_name,
+              COALESCE(SUM(psdr.provider_amount), 0) AS total_share,
+              COALESCE(SUM(CASE WHEN psd.pnl_type = 'PROFIT' THEN psdr.provider_amount ELSE 0 END), 0) AS profit_share,
+              COALESCE(SUM(CASE WHEN psd.pnl_type = 'LOSS' THEN psdr.provider_amount ELSE 0 END), 0) AS loss_share,
+              COUNT(DISTINCT psdr.id) AS distribution_count
+       FROM fund_providers fp
+       LEFT JOIN profit_share_distribution_rules psdr ON psdr.fund_provider_id = fp.id
+       LEFT JOIN profit_share_distributions psd ON psd.id = psdr.distribution_id AND psd.tenant_id = fp.tenant_id
+       WHERE fp.tenant_id = ?
+       GROUP BY fp.id, fp.name
+       HAVING total_share != 0
+       ORDER BY fp.name`
+      : `SELECT fp.id AS fund_provider_id, fp.name AS provider_name,
+              COALESCE(SUM(psdr.provider_amount), 0) AS total_share,
+              COALESCE(SUM(CASE WHEN psd.pnl_type = 'PROFIT' THEN psdr.provider_amount ELSE 0 END), 0) AS profit_share,
+              COALESCE(SUM(CASE WHEN psd.pnl_type = 'LOSS' THEN psdr.provider_amount ELSE 0 END), 0) AS loss_share,
+              COUNT(DISTINCT psdr.id) AS distribution_count
+       FROM fund_providers fp
+       INNER JOIN profit_share_distribution_rules psdr ON psdr.fund_provider_id = fp.id
+       INNER JOIN profit_share_distributions psd ON psd.id = psdr.distribution_id AND psd.tenant_id = fp.tenant_id
+       INNER JOIN ipo_applications a ON a.id = psd.ipo_application_id
+       WHERE fp.tenant_id = ?${providerIpoSql}
+       GROUP BY fp.id, fp.name
+       HAVING total_share != 0
+       ORDER BY fp.name`,
+    providerParams
   );
 
   const dist = overallDist[0] || {};
@@ -1325,7 +1410,7 @@ export async function getProfitTotalsReport(pool, tenantId) {
       memberShare: num(r.member_share),
       distributionCount: Number(r.distribution_count),
     })),
-    byProvider: byProvider.map((r) => ({
+    byProvider: byProviderRows.map((r) => ({
       fundProviderId: r.fund_provider_id,
       providerName: r.provider_name,
       totalShare: num(r.total_share),
@@ -1336,3 +1421,321 @@ export async function getProfitTotalsReport(pool, tenantId) {
     })),
   };
 }
+
+/**
+ * Profit analysis: revenue-style split (member / manager / provider),
+ * member-wise detail, and sub-group leader rollups (members keep profit attribution;
+ * leader section shows each member’s share + group totals).
+ * @param {{ year?: number|null, months?: number[] }} [filters]
+ */
+export async function getProfitAnalysisReport(pool, tenantId, filters = {}) {
+  const totals = await getProfitTotalsReport(pool, tenantId, filters);
+  const ipoIds = await resolvePeriodIpoIds(pool, tenantId, filters);
+  const periodLabel = formatPeriodLabel(filters);
+  const num = (v) => Number(v ?? 0);
+
+  const [groups] = await pool.query(
+    `SELECT mg.id, mg.name, mg.owner_member_id,
+            owner.display_name AS owner_display_name, owner.pan AS owner_pan
+     FROM member_groups mg
+     LEFT JOIN members owner ON owner.id = mg.owner_member_id
+     WHERE mg.tenant_id = ?
+     ORDER BY mg.sort_order, mg.id`,
+    [tenantId]
+  );
+
+  const [groupMembers] = await pool.query(
+    `SELECT m.id, m.display_name, m.pan, m.status, m.member_group_id, m.sort_order
+     FROM members m
+     WHERE m.tenant_id = ? AND m.member_group_id IS NOT NULL
+     ORDER BY m.sort_order, m.id`,
+    [tenantId]
+  );
+
+  const memberShareMap = Object.fromEntries(
+    (totals.byMember || []).map((r) => [r.memberId, r])
+  );
+
+  const membersByGroup = {};
+  for (const m of groupMembers) {
+    const gid = m.member_group_id;
+    if (!membersByGroup[gid]) membersByGroup[gid] = [];
+    membersByGroup[gid].push(m);
+  }
+
+  const emptyShare = () => ({
+    grossIpoPnL: 0,
+    ipoCount: 0,
+    grossDistributed: 0,
+    pendingGross: 0,
+    providerShare: 0,
+    managerShare: 0,
+    memberShare: 0,
+    distributionCount: 0,
+  });
+
+  const subGroups = groups.map((g) => {
+    const members = (membersByGroup[g.id] || []).map((m) => {
+      const share = memberShareMap[m.id] || emptyShare();
+      return {
+        memberId: m.id,
+        displayName: m.display_name,
+        pan: m.pan,
+        status: m.status,
+        isLeader: Number(m.id) === Number(g.owner_member_id),
+        ...share,
+      };
+    });
+
+    const groupTotals = members.reduce(
+      (acc, m) => ({
+        grossIpoPnL: acc.grossIpoPnL + m.grossIpoPnL,
+        ipoCount: acc.ipoCount + m.ipoCount,
+        grossDistributed: acc.grossDistributed + m.grossDistributed,
+        pendingGross: acc.pendingGross + m.pendingGross,
+        providerShare: acc.providerShare + m.providerShare,
+        managerShare: acc.managerShare + m.managerShare,
+        memberShare: acc.memberShare + m.memberShare,
+        distributionCount: acc.distributionCount + m.distributionCount,
+      }),
+      emptyShare()
+    );
+
+    return {
+      groupId: g.id,
+      groupName: g.name,
+      leaderMemberId: g.owner_member_id,
+      leaderDisplayName: g.owner_display_name,
+      leaderPan: g.owner_pan,
+      memberCount: members.length,
+      totals: groupTotals,
+      members,
+    };
+  }).filter((g) => g.memberCount > 0);
+
+  const segParams = [tenantId];
+  const segIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, segParams);
+  const [bySegment] = await pool.query(
+    `SELECT COALESCE(i.ipo_segment, 'MAINBOARD') AS ipo_segment,
+            COALESCE(SUM(psd.gross_profit_loss), 0) AS gross_distributed,
+            COALESCE(SUM(psd.provider_amount), 0) AS provider_share,
+            COALESCE(SUM(psd.manager_amount), 0) AS manager_share,
+            COALESCE(SUM(psd.member_amount), 0) AS member_share,
+            COUNT(psd.id) AS distribution_count
+     FROM profit_share_distributions psd
+     JOIN ipo_applications a ON a.id = psd.ipo_application_id
+     JOIN ipos i ON i.id = a.ipo_id
+     WHERE psd.tenant_id = ?${segIpoSql}
+     GROUP BY COALESCE(i.ipo_segment, 'MAINBOARD')
+     ORDER BY ipo_segment`,
+    segParams
+  );
+
+  const catParams = [tenantId];
+  const catIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, catParams);
+  const [byCategory] = await pool.query(
+    `SELECT COALESCE(a.investor_category, 'RII') AS investor_category,
+            COALESCE(SUM(psd.gross_profit_loss), 0) AS gross_distributed,
+            COALESCE(SUM(psd.provider_amount), 0) AS provider_share,
+            COALESCE(SUM(psd.manager_amount), 0) AS manager_share,
+            COALESCE(SUM(psd.member_amount), 0) AS member_share,
+            COUNT(psd.id) AS distribution_count
+     FROM profit_share_distributions psd
+     JOIN ipo_applications a ON a.id = psd.ipo_application_id
+     WHERE psd.tenant_id = ?${catIpoSql}
+     GROUP BY COALESCE(a.investor_category, 'RII')
+     ORDER BY investor_category`,
+    catParams
+  );
+
+  const scopeParams = [tenantId];
+  const scopeIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, scopeParams);
+  const [[ipoScope]] = await pool.query(
+    `SELECT
+       COUNT(DISTINCT a.ipo_id) AS ipo_count,
+       COUNT(a.id) AS allotted_app_count,
+       SUM(CASE WHEN a.profit_loss > 0.005 THEN 1 ELSE 0 END) AS profit_apps,
+       SUM(CASE WHEN a.profit_loss < -0.005 THEN 1 ELSE 0 END) AS loss_apps,
+       SUM(CASE WHEN ABS(a.profit_loss) <= 0.005 THEN 1 ELSE 0 END) AS flat_apps,
+       COUNT(DISTINCT CASE WHEN psd.id IS NOT NULL THEN a.ipo_id END) AS ipos_with_splits
+     FROM ipo_applications a
+     LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
+     JOIN ipos i ON i.id = a.ipo_id AND COALESCE(i.is_invalid, 0) = 0
+     WHERE a.tenant_id = ?
+       AND a.allotment_status = 'ALLOTED'
+       AND a.withdrawal_money IS NOT NULL
+       AND a.profit_loss IS NOT NULL${scopeIpoSql}`,
+    scopeParams
+  );
+
+  // Active applications = distinct ACTIVE members who applied on report IPOs
+  // (team application base). Profit/loss counts stay at allotted-app level.
+  const activeOuterParams = [tenantId];
+  const activeOuterIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, activeOuterParams);
+  const activeInnerParams = [tenantId];
+  const activeInnerIpoSql = appendIpoIdIn('a2.ipo_id', ipoIds, activeInnerParams);
+  const [[activeScope]] = await pool.query(
+    `SELECT COUNT(DISTINCT a.member_id) AS application_count
+     FROM ipo_applications a
+     JOIN members m ON m.id = a.member_id AND m.status = 'ACTIVE'
+     JOIN ipos i ON i.id = a.ipo_id AND COALESCE(i.is_invalid, 0) = 0
+     WHERE a.tenant_id = ?
+       AND a.allotment_status <> 'NOT_APPLIED'${activeOuterIpoSql}
+       AND a.ipo_id IN (
+         SELECT DISTINCT a2.ipo_id
+         FROM ipo_applications a2
+         JOIN ipos i2 ON i2.id = a2.ipo_id AND COALESCE(i2.is_invalid, 0) = 0
+         WHERE a2.tenant_id = ?
+           AND a2.allotment_status = 'ALLOTED'
+           AND a2.withdrawal_money IS NOT NULL
+           AND a2.profit_loss IS NOT NULL${activeInnerIpoSql}
+       )`,
+    [...activeOuterParams, ...activeInnerParams]
+  );
+
+  // IPO coverage in period (or all time): every IPO the team applied to vs those that made profit.
+  const lifeProfitParams = [tenantId];
+  const lifeProfitIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, lifeProfitParams);
+  const lifeLossParams = [tenantId];
+  const lifeLossIpoSql = appendIpoIdIn('a.ipo_id', ipoIds, lifeLossParams);
+  const lifeOuterParams = [tenantId];
+  const lifeOuterIpoSql = appendIpoIdIn('i.id', ipoIds, lifeOuterParams);
+  const [ipoLifeRows] = await pool.query(
+    `SELECT
+       COUNT(*) AS ipos_applied,
+       SUM(CASE WHEN profit_ipos.ipo_id IS NOT NULL THEN 1 ELSE 0 END) AS ipos_profit,
+       SUM(CASE WHEN loss_ipos.ipo_id IS NOT NULL THEN 1 ELSE 0 END) AS ipos_loss
+     FROM ipos i
+     LEFT JOIN (
+       SELECT DISTINCT a.ipo_id
+       FROM ipo_applications a
+       WHERE a.tenant_id = ?
+         AND a.profit_loss > 0.005${lifeProfitIpoSql}
+     ) profit_ipos ON profit_ipos.ipo_id = i.id
+     LEFT JOIN (
+       SELECT DISTINCT a.ipo_id
+       FROM ipo_applications a
+       WHERE a.tenant_id = ?
+         AND a.profit_loss < -0.005${lifeLossIpoSql}
+     ) loss_ipos ON loss_ipos.ipo_id = i.id
+     WHERE i.tenant_id = ?
+       AND COALESCE(i.is_invalid, 0) = 0${lifeOuterIpoSql}
+       AND EXISTS (
+         SELECT 1 FROM ipo_applications a
+         WHERE a.ipo_id = i.id
+           AND a.tenant_id = i.tenant_id
+           AND a.allotment_status <> 'NOT_APPLIED'
+       )`,
+    [...lifeProfitParams, ...lifeLossParams, ...lifeOuterParams]
+  );
+
+  const ungroupedMembers = (totals.byMember || []).filter((m) => {
+    const inGroup = groupMembers.some((gm) => Number(gm.id) === Number(m.memberId));
+    return !inGroup;
+  });
+
+  const membersEnriched = (totals.byMember || []).map((m) => {
+    const gm = groupMembers.find((x) => Number(x.id) === Number(m.memberId));
+    const group = gm ? groups.find((g) => Number(g.id) === Number(gm.member_group_id)) : null;
+    return {
+      ...m,
+      memberGroupId: group?.id ?? null,
+      memberGroupName: group?.name ?? null,
+      isGroupLeader: group ? Number(group.owner_member_id) === Number(m.memberId) : false,
+    };
+  });
+
+  const ipoCount = Number(ipoScope?.ipo_count ?? 0);
+  const applicationCount = Number(activeScope?.application_count ?? 0);
+  const allottedAppCount = Number(ipoScope?.allotted_app_count ?? 0);
+  const profitApps = Number(ipoScope?.profit_apps ?? 0);
+  const lossApps = Number(ipoScope?.loss_apps ?? 0);
+  const flatApps = Number(ipoScope?.flat_apps ?? 0);
+  const iposWithSplits = Number(ipoScope?.ipos_with_splits ?? 0);
+  const iposApplied = Number(ipoLifeRows[0]?.ipos_applied ?? 0);
+  const iposProfit = Number(ipoLifeRows[0]?.ipos_profit ?? 0);
+  const iposLoss = Number(ipoLifeRows[0]?.ipos_loss ?? 0);
+
+  return {
+    overall: {
+      ...totals.overall,
+      ipoCount,
+      applicationCount,
+      allottedAppCount,
+      profitApps,
+      lossApps,
+      flatApps,
+      iposWithSplits,
+      iposApplied,
+      iposProfit,
+      iposLoss,
+    },
+    manager: totals.manager,
+    providers: totals.byProvider || [],
+    members: membersEnriched,
+    ungroupedMembers,
+    subGroups,
+    bySegment: bySegment.map((r) => ({
+      ipoSegment: r.ipo_segment,
+      label: r.ipo_segment === 'SME' ? 'SME' : 'Mainboard',
+      grossDistributed: num(r.gross_distributed),
+      providerShare: num(r.provider_share),
+      managerShare: num(r.manager_share),
+      memberShare: num(r.member_share),
+      distributionCount: Number(r.distribution_count),
+    })),
+    byCategory: byCategory.map((r) => ({
+      investorCategory: r.investor_category,
+      label: r.investor_category,
+      grossDistributed: num(r.gross_distributed),
+      providerShare: num(r.provider_share),
+      managerShare: num(r.manager_share),
+      memberShare: num(r.member_share),
+      distributionCount: Number(r.distribution_count),
+    })),
+    revenue: {
+      memberShare: num(totals.overall?.memberShare),
+      managerShare: num(totals.overall?.managerShare),
+      providerShare: num(totals.overall?.providerShare),
+      grossDistributed: num(totals.overall?.grossDistributed),
+      pendingGross: num(totals.overall?.grossPending),
+      ipoCount,
+      applicationCount,
+      allottedAppCount,
+      profitApps,
+      lossApps,
+      flatApps,
+      iposApplied,
+      iposProfit,
+      iposLoss,
+    },
+    reportScope: {
+      ipoCount,
+      applicationCount,
+      allottedAppCount,
+      profitApps,
+      lossApps,
+      flatApps,
+      iposWithSplits,
+      iposApplied,
+      iposProfit,
+      iposLoss,
+      label: ipoCount === 1 ? '1 IPO' : `${ipoCount} IPOs`,
+      applicationsLabel:
+        applicationCount === 1
+          ? '1 active application'
+          : `${applicationCount} active applications`,
+      iposAppliedLabel:
+        iposApplied === 1 ? '1 IPO applied' : `${iposApplied} IPOs applied`,
+      iposProfitLabel:
+        iposProfit === 1 ? '1 IPO gave profit' : `${iposProfit} IPOs gave profit`,
+      filters: {
+        year: filters.year ?? null,
+        months: filters.months || [],
+        label: periodLabel,
+      },
+      periodLabel,
+    },
+  };
+}
+

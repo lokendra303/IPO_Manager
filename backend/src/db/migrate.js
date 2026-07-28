@@ -1317,6 +1317,26 @@ async function applyIpoInvalidFlagV46(conn) {
   console.log('Added ipos.is_invalid for soft-hiding duplicate/invalid IPOs');
 }
 
+async function applyIpoLastApplyDateV50(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+  if (!(await columnExists(conn, 'ipos', 'last_apply_date'))) {
+    await conn.query(
+      `ALTER TABLE ipos
+       ADD COLUMN last_apply_date DATE DEFAULT NULL AFTER open_date`
+    );
+    console.log('Added ipos.last_apply_date');
+  }
+  // Backfill open_date from created_at so month/year filters work for older IPOs
+  const [result] = await conn.query(
+    `UPDATE ipos
+     SET open_date = DATE(created_at)
+     WHERE open_date IS NULL AND created_at IS NOT NULL`
+  );
+  if (result.affectedRows > 0) {
+    console.log(`Backfilled open_date for ${result.affectedRows} IPO(s) from created_at`);
+  }
+}
+
 async function applyPersonalWithdrawV47(conn) {
   if (!(await tableExists(conn, 'wallet_transactions'))) return;
   const [col] = await conn.query(
@@ -1464,6 +1484,7 @@ async function migrate() {
   await applyPersonalWithdrawV47(conn);
   await applyStripUnusedDefaultHniV48(conn);
   await applyMemberShareRuleActiveV49(conn);
+  await applyIpoLastApplyDateV50(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

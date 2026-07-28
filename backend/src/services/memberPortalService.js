@@ -8,6 +8,7 @@ import {
   listFundReturnClaims,
 } from './memberPortalExtrasService.js';
 import { formatPan } from '../utils/validate.js';
+import { PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
 
 function mapMemberRuleRow(row) {
   return {
@@ -111,37 +112,26 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
 
   const [members] = await pool.query(
     `SELECT m.id, m.display_name, m.pan, m.upi, m.status,
-            COALESCE(given.total, 0) - COALESCE(recv.total, 0) AS pending_return,
+            COALESCE(apps.pending_return_due, 0) AS pending_return,
             COALESCE(apps.c, 0) AS ipos_applied,
             COALESCE(apps.ipos_pending, 0) AS ipos_pending,
             COALESCE(apps.ipos_alloted, 0) AS ipos_alloted,
             COALESCE(apps.ipos_not_alloted, 0) AS ipos_not_alloted
      FROM members m
      LEFT JOIN (
-       SELECT member_id, SUM(amount) AS total
-       FROM member_ledger_entries
-       WHERE tenant_id = ? AND type = 'GIVEN'
-       GROUP BY member_id
-     ) given ON given.member_id = m.id
-     LEFT JOIN (
-       SELECT member_id, SUM(amount) AS total
-       FROM member_ledger_entries
-       WHERE tenant_id = ? AND type = 'RECEIVED'
-       GROUP BY member_id
-     ) recv ON recv.member_id = m.id
-     LEFT JOIN (
        SELECT member_id,
               COUNT(*) AS c,
               SUM(allotment_status = 'PENDING') AS ipos_pending,
               SUM(allotment_status = 'ALLOTED') AS ipos_alloted,
-              SUM(allotment_status = 'NOT_ALLOTED') AS ipos_not_alloted
-       FROM ipo_applications
+              SUM(allotment_status = 'NOT_ALLOTED') AS ipos_not_alloted,
+              COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return_due
+       FROM ipo_applications a
        WHERE tenant_id = ?
        GROUP BY member_id
      ) apps ON apps.member_id = m.id
      WHERE m.member_group_id = ? AND m.tenant_id = ?
      ORDER BY m.sort_order, m.display_name, m.id`,
-    [tenantId, tenantId, tenantId, memberGroupId, tenantId]
+    [tenantId, memberGroupId, tenantId]
   );
 
   const bulkPayments = await listGroupBulkTransactions(pool, tenantId, memberGroupId);

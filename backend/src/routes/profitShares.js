@@ -16,8 +16,10 @@ import {
   distributeProfitShares,
   previewProfitShares,
   revokeProfitShareDistribution,
+  assertIpoApplicationsEditable,
   getProfitShareReport,
   getProfitTotalsReport,
+  getProfitAnalysisReport,
   calculateMultiRuleSplit,
   validateMemberRulesSet,
   addMemberShareRule,
@@ -26,6 +28,7 @@ import {
   resolveRulesForIpo,
   resolveOptionalIpoId,
 } from '../services/profitShareService.js';
+import { parseProfitAnalysisFilters } from '../services/profitAnalysisFilters.js';
 
 const router = Router();
 
@@ -543,6 +546,12 @@ router.post('/revoke', async (req, res, next) => {
     const results = await withTransaction(async (conn) => {
       const out = [];
       for (const applicationId of applicationIds) {
+        const [appRows] = await conn.query(
+          'SELECT ipo_id FROM ipo_applications WHERE id = ? AND tenant_id = ?',
+          [applicationId, req.tenantId]
+        );
+        if (!appRows.length) throw new AppError(`Application #${applicationId} not found`, 404);
+        await assertIpoApplicationsEditable(conn, req.tenantId, appRows[0].ipo_id);
         const result = await revokeProfitShareDistribution(conn, {
           tenantId: req.tenantId,
           applicationId,
@@ -593,6 +602,17 @@ router.get('/totals', async (req, res, next) => {
   try {
     const totals = await getProfitTotalsReport(pool, req.tenantId);
     res.json(totals);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Profit analysis: revenue buckets, member-wise, provider, manager, sub-group rollups */
+router.get('/analysis', async (req, res, next) => {
+  try {
+    const filters = parseProfitAnalysisFilters(req.query);
+    const analysis = await getProfitAnalysisReport(pool, req.tenantId, filters);
+    res.json(analysis);
   } catch (err) {
     next(err);
   }

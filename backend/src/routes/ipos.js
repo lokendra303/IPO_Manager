@@ -41,8 +41,12 @@ router.get('/', async (req, res, next) => {
         (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count,
 
         (SELECT COUNT(*) FROM ipo_applications a
+          WHERE a.ipo_id = i.id AND a.allotment_status = 'ALLOTED') as allotted_count,
+
+        (SELECT COUNT(*) FROM ipo_applications a
           WHERE a.ipo_id = i.id
-            AND (a.trns_received IS NULL OR a.trns_received <> 'Received')) as pending_return_count
+            AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
+            AND a.allotment_status <> 'PENDING') as pending_return_count
 
        FROM ipos i WHERE i.tenant_id = ? ${invalidFilter} ORDER BY i.created_at DESC`,
 
@@ -67,7 +71,7 @@ router.post('/', async (req, res, next) => {
   try {
 
     const {
-      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, registrar, ipoSegment, allowedCategories,
+      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, registrar, ipoSegment, allowedCategories,
     } = req.body;
 
     if (!name?.trim()) throw new AppError('IPO name is required');
@@ -102,11 +106,11 @@ router.post('/', async (req, res, next) => {
 
     const [result] = await pool.query(
 
-      `INSERT INTO ipos (tenant_id, name, lot_amount_rii, lot_amount_hni, lot_amount, status, open_date, registrar, ipo_segment, allowed_categories)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ipos (tenant_id, name, lot_amount_rii, lot_amount_hni, lot_amount, status, open_date, last_apply_date, registrar, ipo_segment, allowed_categories)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
       [
-        req.tenantId, name.trim(), lotRii, lotHni, lotRii, status || 'OPEN', openDate || null,
+        req.tenantId, name.trim(), lotRii, lotHni, lotRii, status || 'OPEN', openDate || null, lastApplyDate || null,
         registrar || null, segment, categoriesJson,
       ]
 
@@ -161,7 +165,7 @@ router.patch('/:id', async (req, res, next) => {
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
     const {
-      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, registrar, ipoSegment, allowedCategories,
+      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, registrar, ipoSegment, allowedCategories,
     } = req.body;
 
     const [existing] = await pool.query(
@@ -229,6 +233,14 @@ router.patch('/:id', async (req, res, next) => {
       fields.push('open_date = ?');
 
       values.push(openDate || null);
+
+    }
+
+    if (lastApplyDate !== undefined) {
+
+      fields.push('last_apply_date = ?');
+
+      values.push(lastApplyDate || null);
 
     }
 

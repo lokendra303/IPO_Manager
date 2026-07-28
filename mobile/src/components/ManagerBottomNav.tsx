@@ -39,7 +39,10 @@ const MANAGER_TABS: BottomNavTab[] = [
     icon: 'bar-chart-outline',
     iconActive: 'bar-chart',
     href: '/(manager)/summary',
-    match: (path) => path.startsWith('/(manager)/summary') || path.startsWith('/(manager)/profit-sharing'),
+    match: (path) =>
+      path.startsWith('/(manager)/summary') ||
+      path.startsWith('/(manager)/profit-sharing') ||
+      path.startsWith('/(manager)/profit-analysis'),
   },
 ];
 

@@ -24,6 +24,7 @@ import IpoDetailPage from './pages/IpoDetailPage';
 import SummaryPage from './pages/SummaryPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfitSharingPage from './pages/ProfitSharingPage';
+import ProfitAnalysisPage from './pages/ProfitAnalysisPage';
 import MemberPortalPage from './pages/MemberPortalPage';
 import NotificationsPage from './pages/NotificationsPage';
 import MemberGroupsPage from './pages/MemberGroupsPage';
@@ -78,6 +79,7 @@ function AppRoutes() {
       <Route path="/summary" element={<ManagerRoute><SummaryPage /></ManagerRoute>} />
       <Route path="/settings" element={<ManagerRoute><SettingsPage /></ManagerRoute>} />
       <Route path="/profit-sharing" element={<ManagerRoute><ProfitSharingPage /></ManagerRoute>} />
+      <Route path="/profit-analysis" element={<ManagerRoute><ProfitAnalysisPage /></ManagerRoute>} />
       <Route path="/audit-log" element={<ManagerRoute><AuditLogPage /></ManagerRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

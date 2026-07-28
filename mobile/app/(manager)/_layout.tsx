@@ -21,6 +21,7 @@ const MENU = [
   { href: '/(manager)/wallet' as const, label: 'Wallet', icon: 'wallet-outline' as const },
   { href: '/(manager)/ipos' as const, label: 'IPOs', icon: 'trending-up-outline' as const },
   { href: '/(manager)/summary' as const, label: 'Summary', icon: 'bar-chart-outline' as const },
+  { href: '/(manager)/profit-analysis' as const, label: 'Profit Analysis', icon: 'analytics-outline' as const },
   { href: '/(manager)/profit-sharing' as const, label: 'Profit Sharing', icon: 'pie-chart-outline' as const },
   { href: '/(manager)/audit-log' as const, label: 'Audit Log', icon: 'time-outline' as const },
   { href: '/(manager)/settings' as const, label: 'Settings', icon: 'settings-outline' as const },
@@ -143,6 +144,7 @@ export default function ManagerLayout() {
         <Drawer.Screen name="ipos/index" />
         <Drawer.Screen name="ipos/[id]" options={{ drawerItemStyle: { display: 'none' } }} />
         <Drawer.Screen name="summary" />
+        <Drawer.Screen name="profit-analysis" />
         <Drawer.Screen name="profit-sharing" />
         <Drawer.Screen name="audit-log" />
         <Drawer.Screen name="settings" />

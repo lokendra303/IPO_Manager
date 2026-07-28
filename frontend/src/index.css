@@ -791,6 +791,53 @@ body {
   font-size: 13px;
 }
 
+.profit-analysis-overview .profit-analysis-section-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+
+.profit-analysis-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.profit-analysis-stat-grid .stat-card {
+  min-width: 0;
+  min-height: 92px;
+  height: 100%;
+}
+
+.profit-analysis-stat-grid .stat-card-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profit-analysis-stat-grid .stat-card-value {
+  font-size: clamp(16px, 1.4vw, 22px);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+@media (max-width: 992px) {
+  .profit-analysis-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 576px) {
+  .profit-analysis-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .dashboard-manager-card .ant-card-body--padded {
   padding: 20px !important;
 }
@@ -1452,6 +1499,40 @@ body {
   max-height: none !important;
 }
 
+/* Inline date picker used inside modals (avoids clipped dropdown calendars) */
+.modal-date-picker {
+  position: relative;
+  width: 100%;
+}
+
+.modal-date-picker-clear {
+  color: rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.modal-date-picker-clear:hover {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.modal-date-picker-panel {
+  margin-top: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.modal-date-picker-panel .ant-picker-calendar {
+  background: #fff;
+}
+
+.modal-date-picker-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
 .member-form-modal .ant-form-item {
   margin-bottom: 16px;
 }
@@ -1723,6 +1804,11 @@ body {
   .ant-modal-body {
     max-height: calc(100vh - 160px);
     overflow-y: auto;
+  }
+
+  .member-form-modal .ant-modal-body {
+    max-height: none;
+    overflow: visible !important;
   }
 
   .ant-drawer-content-wrapper {
