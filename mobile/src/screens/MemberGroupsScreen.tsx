@@ -32,6 +32,11 @@ type MemberOption = {
 
 function getOwnerLabel(group: any) {
   if (!group) return null;
+  if (group.ownerExternalName) {
+    return group.ownerExternalPan
+      ? `${group.ownerExternalName} (${formatPan(group.ownerExternalPan)})`
+      : group.ownerExternalName;
+  }
   if (group.ownerDisplayName) {
     return group.ownerPan
       ? `${group.ownerDisplayName} (${formatPan(group.ownerPan)})`
@@ -61,6 +66,12 @@ export default function MemberGroupsScreen() {
   const [assignGroup, setAssignGroup] = useState<any>(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
   const [ownerMemberId, setOwnerMemberId] = useState<number | null>(null);
+  const [ownerMode, setOwnerMode] = useState<'member' | 'external'>('member');
+  const [ownerExternalName, setOwnerExternalName] = useState('');
+  const [ownerExternalPan, setOwnerExternalPan] = useState('');
+  const [viewOwnerMode, setViewOwnerMode] = useState<'member' | 'external'>('member');
+  const [viewOwnerExternalName, setViewOwnerExternalName] = useState('');
+  const [viewOwnerExternalPan, setViewOwnerExternalPan] = useState('');
 
   const fetcher = useCallback(async (): Promise<MemberGroupsCache> => {
     const [g, m] = await Promise.all([client.get('/member-groups'), client.get('/members')]);
@@ -124,9 +135,45 @@ export default function MemberGroupsScreen() {
     }
   };
 
+  const groupHasOwner = (group: any) =>
+    Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
+
+  const syncOwnerFormFromGroup = (group: any) => {
+    if (group?.ownerExternalName?.trim()) {
+      setViewOwnerMode('external');
+      setViewOwnerExternalName(group.ownerExternalName.trim());
+      setViewOwnerExternalPan(group.ownerExternalPan || '');
+      setViewOwnerId(null);
+    } else {
+      setViewOwnerMode('member');
+      setViewOwnerId(group?.ownerMemberId ?? null);
+      setViewOwnerExternalName('');
+      setViewOwnerExternalPan('');
+    }
+  };
+
+  const buildOwnerPayload = (
+    mode: 'member' | 'external',
+    memberId: number | null,
+    extName: string,
+    extPan: string
+  ) => {
+    if (mode === 'external') {
+      const name = extName.trim();
+      if (!name) return null;
+      return {
+        ownerMemberId: null,
+        ownerExternalName: name,
+        ownerExternalPan: extPan.trim() ? extPan.trim().toUpperCase() : null,
+      };
+    }
+    if (!memberId) return null;
+    return { ownerMemberId: memberId, ownerExternalName: null, ownerExternalPan: null };
+  };
+
   const openViewInfo = (group: any) => {
     setViewGroup(group);
-    setViewOwnerId(group.ownerMemberId ?? null);
+    syncOwnerFormFromGroup(group);
     setBulkTxns([]);
     setBulkTxnsLoading(true);
     client
@@ -144,16 +191,27 @@ export default function MemberGroupsScreen() {
 
   const onSaveViewOwner = async () => {
     if (!viewGroup) return;
-    if (!viewOwnerId) {
-      Alert.alert('Warning', 'Select a group owner from the list');
+    const payload = buildOwnerPayload(
+      viewOwnerMode,
+      viewOwnerId,
+      viewOwnerExternalName,
+      viewOwnerExternalPan
+    );
+    if (!payload) {
+      Alert.alert(
+        'Warning',
+        viewOwnerMode === 'external'
+          ? 'Enter a name for the third-party owner'
+          : 'Select a member as owner, or switch to third party'
+      );
       return;
     }
     setSaving(true);
     try {
-      const { data } = await client.patch(`/member-groups/${viewGroup.id}`, { ownerMemberId: viewOwnerId });
+      const { data } = await client.patch(`/member-groups/${viewGroup.id}`, payload);
       Alert.alert('Success', 'Group owner saved');
       setViewGroup(data);
-      setViewOwnerId(data.ownerMemberId ?? null);
+      syncOwnerFormFromGroup(data);
       load();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not save owner'));
@@ -165,13 +223,26 @@ export default function MemberGroupsScreen() {
   const openAssignMembers = (group: any) => {
     setAssignGroup(group);
     setSelectedMemberIds((group.members || []).map((m: any) => m.id));
-    setOwnerMemberId(group.ownerMemberId ?? null);
+    if (group.ownerExternalName?.trim()) {
+      setOwnerMode('external');
+      setOwnerExternalName(group.ownerExternalName.trim());
+      setOwnerExternalPan(group.ownerExternalPan || '');
+      setOwnerMemberId(null);
+    } else {
+      setOwnerMode('member');
+      setOwnerMemberId(group.ownerMemberId ?? null);
+      setOwnerExternalName('');
+      setOwnerExternalPan('');
+    }
   };
 
   const closeAssign = () => {
     setAssignGroup(null);
     setSelectedMemberIds([]);
     setOwnerMemberId(null);
+    setOwnerMode('member');
+    setOwnerExternalName('');
+    setOwnerExternalPan('');
   };
 
   const onSaveMembers = async () => {
@@ -192,18 +263,21 @@ export default function MemberGroupsScreen() {
 
     setSaving(true);
     try {
+      const ownerPayload = buildOwnerPayload(ownerMode, ownerMemberId, ownerExternalName, ownerExternalPan);
       await client.put(`/member-groups/${assignGroup.id}/members`, {
         memberIds: selectedMemberIds,
-        ownerMemberId: ownerMemberId ?? null,
+        ...(ownerPayload
+          ? ownerPayload
+          : { ownerMemberId: null, ownerExternalName: null, ownerExternalPan: null }),
       });
-      Alert.alert('Success', ownerMemberId ? 'Group members and owner updated' : 'Group members updated');
+      Alert.alert('Success', ownerPayload ? 'Group members and owner updated' : 'Group members updated');
       closeAssign();
       if (viewGroup?.id === assignGroup.id) {
         const { data: refreshed } = await client.get('/member-groups');
         const updated = refreshed.data.find((g: any) => g.id === assignGroup.id);
         if (updated) {
           setViewGroup(updated);
-          setViewOwnerId(updated.ownerMemberId ?? null);
+          syncOwnerFormFromGroup(updated);
         }
       }
       load();
@@ -275,7 +349,7 @@ export default function MemberGroupsScreen() {
   if (loading && !groups.length) return <Loading />;
 
   const viewOwnerLabel = viewGroup ? getOwnerLabel(viewGroup) : null;
-  const viewHasOwner = Boolean(viewGroup?.ownerMemberId && viewOwnerLabel);
+  const viewHasOwner = groupHasOwner(viewGroup);
   const bulkTotal = bulkTxns.reduce((s, t) => s + Number(t.totalAmount || 0), 0);
 
   return (
@@ -355,15 +429,45 @@ export default function MemberGroupsScreen() {
 
               {!viewHasOwner && (viewGroup.members?.length ?? 0) > 0 && (
                 <ContentCard title="Set group owner">
-                  {viewGroup.members.map((m: any) => (
-                    <Pressable
-                      key={m.id}
-                      style={[styles.ownerOption, viewOwnerId === m.id && styles.ownerOptionActive]}
-                      onPress={() => setViewOwnerId(m.id)}
-                    >
-                      <Text>{m.displayName} ({formatPan(m.pan)})</Text>
-                    </Pressable>
-                  ))}
+                  <SegmentedButtons
+                    value={viewOwnerMode}
+                    onValueChange={(v) => setViewOwnerMode(v as 'member' | 'external')}
+                    buttons={[
+                      { value: 'member', label: 'Member' },
+                      { value: 'external', label: 'Third party' },
+                    ]}
+                    style={{ marginBottom: 12 }}
+                  />
+                  {viewOwnerMode === 'member' ? (
+                    viewGroup.members.map((m: any) => (
+                      <Pressable
+                        key={m.id}
+                        style={[styles.ownerOption, viewOwnerId === m.id && styles.ownerOptionActive]}
+                        onPress={() => setViewOwnerId(m.id)}
+                      >
+                        <Text>{m.displayName} ({formatPan(m.pan)})</Text>
+                      </Pressable>
+                    ))
+                  ) : (
+                    <>
+                      <TextInput
+                        label="Owner name"
+                        value={viewOwnerExternalName}
+                        onChangeText={setViewOwnerExternalName}
+                        mode="outlined"
+                        style={styles.input}
+                        placeholder="Not on member list"
+                      />
+                      <TextInput
+                        label="PAN (optional)"
+                        value={viewOwnerExternalPan}
+                        onChangeText={(v) => setViewOwnerExternalPan(v.toUpperCase())}
+                        mode="outlined"
+                        style={styles.input}
+                        maxLength={10}
+                      />
+                    </>
+                  )}
                   <Button mode="contained" loading={saving} onPress={onSaveViewOwner} style={{ marginTop: 12 }}>
                     Save owner
                   </Button>
@@ -448,25 +552,56 @@ export default function MemberGroupsScreen() {
             </View>
 
             <ContentCard title="Group owner" style={{ marginTop: 16 }}>
-              <Text style={styles.hint}>Receives bulk IPO pay. Must be a selected member.</Text>
-              {selectedMemberIds.length === 0 ? (
-                <Text style={styles.muted}>Select members first</Text>
+              <Text style={styles.hint}>
+                Bulk IPO pay goes to the owner. Use a group member or a third-party name (not on your member list).
+              </Text>
+              <SegmentedButtons
+                value={ownerMode}
+                onValueChange={(v) => setOwnerMode(v as 'member' | 'external')}
+                buttons={[
+                  { value: 'member', label: 'Member' },
+                  { value: 'external', label: 'Third party' },
+                ]}
+                style={{ marginBottom: 12 }}
+              />
+              {ownerMode === 'member' ? (
+                selectedMemberIds.length === 0 ? (
+                  <Text style={styles.muted}>Select members first</Text>
+                ) : (
+                  selectedMemberIds.map((mid) => {
+                    const m = memberOptions.find((o) => o.id === mid);
+                    if (!m) return null;
+                    return (
+                      <Pressable
+                        key={m.id}
+                        style={[styles.ownerOption, ownerMemberId === m.id && styles.ownerOptionActive]}
+                        onPress={() => setOwnerMemberId(m.id)}
+                      >
+                        <Text>{m.displayName} ({formatPan(m.pan)})</Text>
+                      </Pressable>
+                    );
+                  })
+                )
               ) : (
-                selectedMemberIds.map((mid) => {
-                  const m = memberOptions.find((o) => o.id === mid);
-                  if (!m) return null;
-                  return (
-                    <Pressable
-                      key={m.id}
-                      style={[styles.ownerOption, ownerMemberId === m.id && styles.ownerOptionActive]}
-                      onPress={() => setOwnerMemberId(m.id)}
-                    >
-                      <Text>{m.displayName} ({formatPan(m.pan)})</Text>
-                    </Pressable>
-                  );
-                })
+                <>
+                  <TextInput
+                    label="Owner name"
+                    value={ownerExternalName}
+                    onChangeText={setOwnerExternalName}
+                    mode="outlined"
+                    style={styles.input}
+                  />
+                  <TextInput
+                    label="PAN (optional)"
+                    value={ownerExternalPan}
+                    onChangeText={(v) => setOwnerExternalPan(v.toUpperCase())}
+                    mode="outlined"
+                    style={styles.input}
+                    maxLength={10}
+                  />
+                </>
               )}
-              {ownerMemberId != null && (
+              {ownerMode === 'member' && ownerMemberId != null && (
                 <Button mode="text" onPress={() => setOwnerMemberId(null)}>Clear owner</Button>
               )}
             </ContentCard>

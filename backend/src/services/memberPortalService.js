@@ -88,7 +88,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
   if (!memberGroupId) return null;
 
   const [groupRows] = await pool.query(
-    `SELECT g.id, g.name, g.owner_member_id,
+    `SELECT g.id, g.name, g.owner_member_id, g.owner_external_name, g.owner_external_pan,
             o.display_name AS owner_display_name, o.pan AS owner_pan
      FROM member_groups g
      LEFT JOIN members o ON o.id = g.owner_member_id
@@ -99,13 +99,16 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
 
   const group = groupRows[0];
   const isLeader = Number(group.owner_member_id) === Number(memberId);
+  const leaderName =
+    group.owner_display_name ?? group.owner_external_name?.trim() ?? null;
+  const leaderPan = group.owner_pan ?? group.owner_external_pan ?? null;
 
   const base = {
     id: group.id,
     name: group.name,
     isLeader,
-    leaderDisplayName: group.owner_display_name ?? null,
-    leaderPan: formatPan(group.owner_pan),
+    leaderDisplayName: leaderName,
+    leaderPan: formatPan(leaderPan),
   };
 
   if (!isLeader) return base;

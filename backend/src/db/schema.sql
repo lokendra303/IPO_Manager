@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   allotment_status ENUM('PENDING', 'ALLOTED', 'NOT_ALLOTED', 'NOT_APPLIED') NOT NULL DEFAULT 'PENDING',
   investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII',
   paid_to_member_id INT DEFAULT NULL,
+  paid_to_external_name VARCHAR(120) DEFAULT NULL,
   profit_loss DECIMAL(15, 2) DEFAULT NULL,
   withdrawal_money DECIMAL(15, 2) DEFAULT NULL,
   remarks TEXT DEFAULT NULL,

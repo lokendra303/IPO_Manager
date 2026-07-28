@@ -15,6 +15,7 @@ import {
   Row,
   Col,
   Divider,
+  Radio,
 } from 'antd';
 import {
   PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined,
@@ -36,8 +37,14 @@ export default function MemberGroupsPage() {
   const [assignGroup, setAssignGroup] = useState(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
   const [ownerMemberId, setOwnerMemberId] = useState(null);
+  const [ownerMode, setOwnerMode] = useState('member');
+  const [ownerExternalName, setOwnerExternalName] = useState('');
+  const [ownerExternalPan, setOwnerExternalPan] = useState('');
   const [viewGroup, setViewGroup] = useState(null);
   const [viewOwnerId, setViewOwnerId] = useState(null);
+  const [viewOwnerMode, setViewOwnerMode] = useState('member');
+  const [viewOwnerExternalName, setViewOwnerExternalName] = useState('');
+  const [viewOwnerExternalPan, setViewOwnerExternalPan] = useState('');
   const [groupBulkTxns, setGroupBulkTxns] = useState([]);
   const [bulkTxnsLoading, setBulkTxnsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -86,9 +93,40 @@ export default function MemberGroupsPage() {
     }
   };
 
+  const groupHasOwner = (group) =>
+    Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
+
+  const syncOwnerFormFromGroup = (group) => {
+    if (group?.ownerExternalName?.trim()) {
+      setViewOwnerMode('external');
+      setViewOwnerExternalName(group.ownerExternalName.trim());
+      setViewOwnerExternalPan(group.ownerExternalPan || '');
+      setViewOwnerId(null);
+    } else {
+      setViewOwnerMode('member');
+      setViewOwnerId(group?.ownerMemberId ?? null);
+      setViewOwnerExternalName('');
+      setViewOwnerExternalPan('');
+    }
+  };
+
+  const buildOwnerPayload = (mode, memberId, extName, extPan) => {
+    if (mode === 'external') {
+      const name = extName?.trim();
+      if (!name) return null;
+      return {
+        ownerMemberId: null,
+        ownerExternalName: name,
+        ownerExternalPan: extPan?.trim() ? extPan.trim().toUpperCase() : null,
+      };
+    }
+    if (!memberId) return null;
+    return { ownerMemberId: memberId, ownerExternalName: null, ownerExternalPan: null };
+  };
+
   const openViewInfo = (group) => {
     setViewGroup(group);
-    setViewOwnerId(group.ownerMemberId ?? null);
+    syncOwnerFormFromGroup(group);
     setGroupBulkTxns([]);
     setBulkTxnsLoading(true);
     client.get(`/member-groups/${group.id}/bulk-transactions`)
@@ -99,18 +137,26 @@ export default function MemberGroupsPage() {
 
   const onSaveViewOwner = async () => {
     if (!viewGroup) return;
-    if (!viewOwnerId) {
-      message.warning('Select a group owner from the list');
+    const payload = buildOwnerPayload(
+      viewOwnerMode,
+      viewOwnerId,
+      viewOwnerExternalName,
+      viewOwnerExternalPan
+    );
+    if (!payload) {
+      message.warning(
+        viewOwnerMode === 'external'
+          ? 'Enter a name for the third-party owner'
+          : 'Select a group member as owner, or switch to third party'
+      );
       return;
     }
     setSaving(true);
     try {
-      const { data } = await client.patch(`/member-groups/${viewGroup.id}`, {
-        ownerMemberId: viewOwnerId,
-      });
+      const { data } = await client.patch(`/member-groups/${viewGroup.id}`, payload);
       message.success('Group owner saved');
       setViewGroup(data);
-      setViewOwnerId(data.ownerMemberId ?? null);
+      syncOwnerFormFromGroup(data);
       load();
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not save owner'));
@@ -122,7 +168,17 @@ export default function MemberGroupsPage() {
   const openAssignMembers = (group) => {
     setAssignGroup(group);
     setSelectedMemberIds(group.members.map((m) => m.id));
-    setOwnerMemberId(group.ownerMemberId ?? null);
+    if (group.ownerExternalName?.trim()) {
+      setOwnerMode('external');
+      setOwnerExternalName(group.ownerExternalName.trim());
+      setOwnerExternalPan(group.ownerExternalPan || '');
+      setOwnerMemberId(null);
+    } else {
+      setOwnerMode('member');
+      setOwnerMemberId(group.ownerMemberId ?? null);
+      setOwnerExternalName('');
+      setOwnerExternalPan('');
+    }
     setMembersModalOpen(true);
   };
 
@@ -130,18 +186,26 @@ export default function MemberGroupsPage() {
     if (!assignGroup) return;
     setSaving(true);
     try {
+      const ownerPayload = buildOwnerPayload(
+        ownerMode,
+        ownerMemberId,
+        ownerExternalName,
+        ownerExternalPan
+      );
       await client.put(`/member-groups/${assignGroup.id}/members`, {
         memberIds: selectedMemberIds,
-        ownerMemberId: ownerMemberId ?? null,
+        ...(ownerPayload
+          ? ownerPayload
+          : { ownerMemberId: null, ownerExternalName: null, ownerExternalPan: null }),
       });
-      message.success(ownerMemberId ? 'Group members and owner updated' : 'Group members updated');
+      message.success(ownerPayload ? 'Group members and owner updated' : 'Group members updated');
       setMembersModalOpen(false);
       if (viewGroup?.id === assignGroup.id) {
         const { data: refreshed } = await client.get('/member-groups');
         const updated = refreshed.data.find((g) => g.id === assignGroup.id);
         if (updated) {
           setViewGroup(updated);
-          setViewOwnerId(updated.ownerMemberId ?? null);
+          syncOwnerFormFromGroup(updated);
         }
       }
       load();
@@ -164,6 +228,11 @@ export default function MemberGroupsPage() {
 
   const getOwnerLabel = (group) => {
     if (!group) return null;
+    if (group.ownerExternalName) {
+      return group.ownerExternalPan
+        ? `${group.ownerExternalName} (${formatPan(group.ownerExternalPan)})`
+        : group.ownerExternalName;
+    }
     if (group.ownerDisplayName) {
       return group.ownerPan
         ? `${group.ownerDisplayName} (${group.ownerPan})`
@@ -310,7 +379,7 @@ export default function MemberGroupsPage() {
           const ownerMember = viewGroup.members?.find((m) => m.id === viewGroup.ownerMemberId);
           const ownerName = viewGroup.ownerDisplayName || ownerMember?.displayName;
           const ownerPan = viewGroup.ownerPan || ownerMember?.pan;
-          const hasOwner = Boolean(viewGroup.ownerMemberId && ownerName);
+          const hasOwner = groupHasOwner(viewGroup);
           const bulkTotal = groupBulkTxns.reduce((s, t) => s + Number(t.totalAmount || 0), 0);
           return (
           <div className="subgroup-view">
@@ -363,21 +432,45 @@ export default function MemberGroupsPage() {
                 <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
                   Set group owner
                 </Typography.Text>
-                <Space wrap>
-                  <Select
-                    style={{ minWidth: 260 }}
-                    placeholder="Choose owner from members"
-                    value={viewOwnerId}
-                    onChange={setViewOwnerId}
-                    options={viewGroup.members.map((m) => ({
-                      value: m.id,
-                      label: `${m.displayName} (${formatPan(m.pan)})`,
-                    }))}
-                  />
-                  <Button type="primary" loading={saving} onClick={onSaveViewOwner}>
-                    Save owner
-                  </Button>
-                </Space>
+                <Radio.Group
+                  value={viewOwnerMode}
+                  onChange={(e) => setViewOwnerMode(e.target.value)}
+                  style={{ marginBottom: 12 }}
+                >
+                  <Radio value="member">Member in this group</Radio>
+                  <Radio value="external">Third party (name only)</Radio>
+                </Radio.Group>
+                {viewOwnerMode === 'member' ? (
+                  <Space wrap>
+                    <Select
+                      style={{ minWidth: 260 }}
+                      placeholder="Choose owner from members"
+                      value={viewOwnerId}
+                      onChange={setViewOwnerId}
+                      options={viewGroup.members.map((m) => ({
+                        value: m.id,
+                        label: `${m.displayName} (${formatPan(m.pan)})`,
+                      }))}
+                    />
+                  </Space>
+                ) : (
+                  <Space direction="vertical" style={{ width: '100%', maxWidth: 360 }}>
+                    <Input
+                      placeholder="Owner name (not on member list)"
+                      value={viewOwnerExternalName}
+                      onChange={(e) => setViewOwnerExternalName(e.target.value)}
+                    />
+                    <Input
+                      placeholder="PAN (optional)"
+                      value={viewOwnerExternalPan}
+                      onChange={(e) => setViewOwnerExternalPan(e.target.value.toUpperCase())}
+                      maxLength={10}
+                    />
+                  </Space>
+                )}
+                <Button type="primary" loading={saving} onClick={onSaveViewOwner} style={{ marginTop: 12 }}>
+                  Save owner
+                </Button>
               </div>
             )}
 
@@ -558,18 +651,42 @@ export default function MemberGroupsPage() {
         <Form.Item
           label="Group owner"
           style={{ marginTop: 16, marginBottom: 0 }}
-          extra="Receives bulk IPO payments for the whole group. Must be one of the members above."
+          extra="Receives bulk IPO payments. Pick a member in this group, or enter a third-party name (not on your member list)."
         >
-          <Select
-            allowClear
-            placeholder="Select owner from group members"
-            value={ownerMemberId}
-            onChange={setOwnerMemberId}
-            options={selectedMemberIds.map((mid) => {
-              const m = memberOptions.find((o) => o.id === mid);
-              return m ? { value: m.id, label: `${m.displayName} (${formatPan(m.pan)})` } : null;
-            }).filter(Boolean)}
-          />
+          <Radio.Group
+            value={ownerMode}
+            onChange={(e) => setOwnerMode(e.target.value)}
+            style={{ marginBottom: 12 }}
+          >
+            <Radio value="member">Member in group</Radio>
+            <Radio value="external">Third party (name only)</Radio>
+          </Radio.Group>
+          {ownerMode === 'member' ? (
+            <Select
+              allowClear
+              placeholder="Select owner from group members"
+              value={ownerMemberId}
+              onChange={setOwnerMemberId}
+              options={selectedMemberIds.map((mid) => {
+                const m = memberOptions.find((o) => o.id === mid);
+                return m ? { value: m.id, label: `${m.displayName} (${formatPan(m.pan)})` } : null;
+              }).filter(Boolean)}
+            />
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input
+                placeholder="Owner name"
+                value={ownerExternalName}
+                onChange={(e) => setOwnerExternalName(e.target.value)}
+              />
+              <Input
+                placeholder="PAN (optional)"
+                value={ownerExternalPan}
+                onChange={(e) => setOwnerExternalPan(e.target.value.toUpperCase())}
+                maxLength={10}
+              />
+            </Space>
+          )}
         </Form.Item>
       </Modal>
     </div>

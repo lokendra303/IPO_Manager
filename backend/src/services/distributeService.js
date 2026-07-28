@@ -64,6 +64,8 @@ async function buildDistributionPlan(conn, {
     );
     const lot = lotAmountForCategory(ipo, cat);
     const ownerId = group.owner_member_id;
+    const ownerExternal = group.owner_external_name?.trim() || null;
+    const ownerLabel = ownerExternal || group.owner_display_name || 'group owner';
     let groupTotal = 0;
 
     for (const m of members) {
@@ -72,20 +74,24 @@ async function buildDistributionPlan(conn, {
         memberId: m.id,
         amount: lot,
         investorCategory: cat,
-        paidToMemberId: ownerId,
+        paidToMemberId: ownerId || null,
+        paidToExternalName: ownerExternal,
       });
       groupTotal += lot;
       ledgers.push({
         memberId: m.id,
         type: 'GIVEN',
         amount: lot,
-        notes: `IPO: ${ipo.name} — ${group.name} (paid to group owner)`,
+        notes: ownerExternal
+          ? `IPO: ${ipo.name} — ${group.name} (paid to ${ownerLabel})`
+          : `IPO: ${ipo.name} — ${group.name} (paid to group owner)`,
       });
     }
 
     bulkPayments.push({
       memberGroupId: group.id,
-      ownerMemberId: ownerId,
+      ownerMemberId: ownerId || null,
+      ownerExternalName: ownerExternal,
       totalAmount: groupTotal,
       memberCount: members.length,
       investorCategory: cat,
@@ -233,8 +239,8 @@ export async function distributeIpo(conn, {
     const [appResult] = await conn.query(
       `INSERT INTO ipo_applications
        (ipo_id, member_id, tenant_id, amount, date_received, trns_received, date_given, trns_given,
-        allotment_status, investor_category, paid_to_member_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+        allotment_status, investor_category, paid_to_member_id, paid_to_external_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`,
       [
         ipoIdNum,
         plan.memberId,
@@ -245,7 +251,8 @@ export async function distributeIpo(conn, {
         markGiven ? now : null,
         markGiven ? 'Given' : null,
         plan.investorCategory,
-        plan.paidToMemberId,
+        plan.paidToMemberId ?? null,
+        plan.paidToExternalName ?? null,
       ]
     );
     appIdByMember.set(plan.memberId, appResult.insertId);
@@ -264,13 +271,14 @@ export async function distributeIpo(conn, {
   for (const bp of bulkPaymentPlans || []) {
     await conn.query(
       `INSERT INTO member_group_bulk_payments
-       (tenant_id, member_group_id, ipo_id, owner_member_id, total_amount, member_count, investor_category, paid_at, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, member_group_id, ipo_id, owner_member_id, owner_external_name, total_amount, member_count, investor_category, paid_at, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         bp.memberGroupId,
         ipoIdNum,
-        bp.ownerMemberId,
+        bp.ownerMemberId ?? null,
+        bp.ownerExternalName ?? null,
         bp.totalAmount,
         bp.memberCount,
         bp.investorCategory,

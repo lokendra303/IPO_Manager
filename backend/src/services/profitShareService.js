@@ -1435,7 +1435,7 @@ export async function getProfitAnalysisReport(pool, tenantId, filters = {}) {
   const num = (v) => Number(v ?? 0);
 
   const [groups] = await pool.query(
-    `SELECT mg.id, mg.name, mg.owner_member_id,
+    `SELECT mg.id, mg.name, mg.owner_member_id, mg.owner_external_name, mg.owner_external_pan,
             owner.display_name AS owner_display_name, owner.pan AS owner_pan
      FROM member_groups mg
      LEFT JOIN members owner ON owner.id = mg.owner_member_id
@@ -1505,8 +1505,8 @@ export async function getProfitAnalysisReport(pool, tenantId, filters = {}) {
       groupId: g.id,
       groupName: g.name,
       leaderMemberId: g.owner_member_id,
-      leaderDisplayName: g.owner_display_name,
-      leaderPan: g.owner_pan,
+      leaderDisplayName: g.owner_display_name ?? g.owner_external_name?.trim() ?? null,
+      leaderPan: g.owner_pan ?? g.owner_external_pan ?? null,
       memberCount: members.length,
       totals: groupTotals,
       members,

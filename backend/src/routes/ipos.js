@@ -440,6 +440,7 @@ router.get('/:id/applications', async (req, res, next) => {
       `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
               mg.name AS member_group_name,
               pay.display_name AS paid_to_display_name,
+              a.paid_to_external_name,
               psd.id AS profit_share_distribution_id,
               psd.provider_amount AS share_provider_amount,
               psd.manager_amount AS share_manager_amount,

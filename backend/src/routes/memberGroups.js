@@ -6,7 +6,7 @@ import {
   listGroupBulkTransactions,
   assertGroupNameUnique,
   assignMembersToGroup,
-  assertGroupOwner,
+  setGroupOwner,
 } from '../services/memberGroupService.js';
 import { parsePositiveInt } from '../utils/validate.js';
 
@@ -99,8 +99,12 @@ router.patch('/:id', async (req, res, next) => {
       );
     }
 
-    if (req.body.ownerMemberId !== undefined) {
-      await withTransaction((conn) => assertGroupOwner(conn, req.tenantId, id, req.body.ownerMemberId));
+    if (
+      req.body.ownerMemberId !== undefined
+      || req.body.ownerExternalName !== undefined
+      || req.body.ownerExternalPan !== undefined
+    ) {
+      await withTransaction((conn) => setGroupOwner(conn, req.tenantId, id, req.body));
     }
 
     const groups = await listMemberGroups(pool, req.tenantId);
@@ -116,8 +120,12 @@ router.put('/:id/members', async (req, res, next) => {
     const memberIds = Array.isArray(req.body.memberIds) ? req.body.memberIds : [];
     await withTransaction(async (conn) => {
       await assignMembersToGroup(conn, req.tenantId, id, memberIds);
-      if (req.body.ownerMemberId !== undefined) {
-        await assertGroupOwner(conn, req.tenantId, id, req.body.ownerMemberId);
+      if (
+        req.body.ownerMemberId !== undefined
+        || req.body.ownerExternalName !== undefined
+        || req.body.ownerExternalPan !== undefined
+      ) {
+        await setGroupOwner(conn, req.tenantId, id, req.body);
       }
     });
     const groups = await listMemberGroups(pool, req.tenantId);

@@ -1317,6 +1317,50 @@ async function applyIpoInvalidFlagV46(conn) {
   console.log('Added ipos.is_invalid for soft-hiding duplicate/invalid IPOs');
 }
 
+async function applyGroupExternalOwnerV51(conn) {
+  if (!(await tableExists(conn, 'member_groups'))) return;
+
+  if (!(await columnExists(conn, 'member_groups', 'owner_external_name'))) {
+    await conn.query(
+      `ALTER TABLE member_groups
+       ADD COLUMN owner_external_name VARCHAR(120) DEFAULT NULL AFTER owner_member_id,
+       ADD COLUMN owner_external_pan VARCHAR(10) DEFAULT NULL AFTER owner_external_name`
+    );
+    console.log('Added member_groups.owner_external_name / owner_external_pan');
+  }
+
+  if (await tableExists(conn, 'member_group_bulk_payments')) {
+    if (!(await columnExists(conn, 'member_group_bulk_payments', 'owner_external_name'))) {
+      await conn.query(
+        `ALTER TABLE member_group_bulk_payments
+         ADD COLUMN owner_external_name VARCHAR(120) DEFAULT NULL AFTER owner_member_id`
+      );
+      console.log('Added member_group_bulk_payments.owner_external_name');
+    }
+    const [bpCol] = await conn.query(
+      `SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_group_bulk_payments'
+         AND COLUMN_NAME = 'owner_member_id'`
+    );
+    if (bpCol[0]?.IS_NULLABLE === 'NO') {
+      await conn.query(
+        'ALTER TABLE member_group_bulk_payments MODIFY owner_member_id INT DEFAULT NULL'
+      );
+      console.log('Made member_group_bulk_payments.owner_member_id nullable');
+    }
+  }
+
+  if (await tableExists(conn, 'ipo_applications')) {
+    if (!(await columnExists(conn, 'ipo_applications', 'paid_to_external_name'))) {
+      await conn.query(
+        `ALTER TABLE ipo_applications
+         ADD COLUMN paid_to_external_name VARCHAR(120) DEFAULT NULL AFTER paid_to_member_id`
+      );
+      console.log('Added ipo_applications.paid_to_external_name');
+    }
+  }
+}
+
 async function applyIpoLastApplyDateV50(conn) {
   if (!(await tableExists(conn, 'ipos'))) return;
   if (!(await columnExists(conn, 'ipos', 'last_apply_date'))) {
@@ -1485,6 +1529,7 @@ async function migrate() {
   await applyStripUnusedDefaultHniV48(conn);
   await applyMemberShareRuleActiveV49(conn);
   await applyIpoLastApplyDateV50(conn);
+  await applyGroupExternalOwnerV51(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

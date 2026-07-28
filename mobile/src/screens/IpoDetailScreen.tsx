@@ -1081,7 +1081,9 @@ export default function IpoDetailScreen() {
                     const bulkSelected = isGroupBulkSelected(group.id);
                     const selectedInGroup = groupAvailable.filter((m: any) => selectedIds.includes(m.id));
                     const allSelected = !bulkSelected && groupAvailable.length > 0 && selectedInGroup.length === groupAvailable.length;
-                    const hasOwner = !!group.ownerMemberId;
+                    const hasOwner = Boolean(
+                      group.ownerMemberId || (group.ownerExternalName && String(group.ownerExternalName).trim())
+                    );
                     const noAvailableLabel = !groupAvailable.length
                       ? group.members.every((m: any) => getGroupMemberDistributeReason(m) === 'inactive')
                         ? ' · no active members'
@@ -1473,6 +1475,9 @@ function ApplicationCard({
         {app.member_group_name ? <Tag label={app.member_group_name} color="#3b82f6" /> : null}
         {app.paid_to_member_id && app.paid_to_member_id !== app.member_id ? (
           <Tag label={`To ${app.paid_to_display_name}`} color="#d97706" />
+        ) : null}
+        {app.paid_to_external_name ? (
+          <Tag label={`To ${app.paid_to_external_name}`} color="#d97706" />
         ) : null}
       </View>
 

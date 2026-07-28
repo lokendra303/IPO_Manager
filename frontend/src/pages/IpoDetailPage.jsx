@@ -45,6 +45,10 @@ function formatIpoDate(v) {
   return d ? d.format('DD MMM YYYY') : '—';
 }
 
+function groupHasOwner(group) {
+  return Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
+}
+
 function ProfitShareAmounts({ record }) {
   if (!record?.profit_share_distribution_id) return null;
   const rows = [
@@ -862,6 +866,15 @@ export default function IpoDetailPage() {
             </Tooltip>
           );
         }
+        if (r.paid_to_external_name) {
+          return (
+            <Tooltip title="Group bulk — paid to third-party owner; collect from them, then receive per member">
+              <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+                To {r.paid_to_external_name}
+              </Tag>
+            </Tooltip>
+          );
+        }
         return <Typography.Text type="secondary">Direct</Typography.Text>;
       },
     },
@@ -1671,7 +1684,7 @@ export default function IpoDetailPage() {
                         && groupAvailable.length > 0
                         && selectedInGroup.length === groupAvailable.length;
                       const someSelected = selectedInGroup.length > 0 && !allSelected;
-                      const hasOwner = !!group.ownerMemberId;
+                      const hasOwner = groupHasOwner(group);
                       const bulkTotal = groupAvailable.length * (lotForSelectedCategory ?? 0);
                       const noAvailableLabel = group.members.every(
                         (m) => getGroupMemberDistributeReason(m) === 'inactive'
