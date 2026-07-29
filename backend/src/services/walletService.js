@@ -281,20 +281,21 @@ export async function transferBetweenBankAccounts(conn, {
   const txnDateVal = txnDate instanceof Date ? txnDate : txnDate ? parseDate(txnDate, 'transfer date') : new Date();
 
   await ensureWallet(conn, tenantId);
-  const fromAccount = await getBankAccount(conn, tenantId, fromId);
-  const toAccount = await getBankAccount(conn, tenantId, toId);
-  if (!fromAccount.is_active || !toAccount.is_active) {
-    throw new AppError('Both accounts must be active');
-  }
+
+  // Lock both accounts in consistent order to prevent deadlocks;
+  // lockAccount also fetches label/balance, so no separate getBankAccount needed.
+  const [firstId, secondId] = fromId < toId ? [fromId, toId] : [toId, fromId];
+  const firstLocked = await lockAccount(conn, tenantId, firstId);
+  const secondLocked = await lockAccount(conn, tenantId, secondId);
+
+  const fromAccount = fromId === firstId ? firstLocked : secondLocked;
+  const toAccount = toId === firstId ? firstLocked : secondLocked;
+
   if (Number(fromAccount.balance) < transferAmount) {
     throw new AppError(
       `Insufficient balance in ${fromAccount.label}. Available: ₹${fromAccount.balance}`
     );
   }
-
-  const [firstId, secondId] = fromId < toId ? [fromId, toId] : [toId, fromId];
-  await lockAccount(conn, tenantId, firstId);
-  await lockAccount(conn, tenantId, secondId);
 
   const [transferResult] = await conn.query(
     `INSERT INTO bank_account_transfers
@@ -315,6 +316,7 @@ export async function transferBetweenBankAccounts(conn, {
     txnDate: txnDateVal,
     notes: `${baseNote} → ${toAccount.label}`,
     userId,
+    skipSync: true,
   });
   await applyAccountDelta(conn, {
     tenantId,
@@ -326,6 +328,7 @@ export async function transferBetweenBankAccounts(conn, {
     txnDate: txnDateVal,
     notes: `${baseNote} ← ${fromAccount.label}`,
     userId,
+    skipSync: true,
   });
 
   const totalBalance = await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [fromId, toId] });
