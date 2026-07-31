@@ -6,7 +6,7 @@ import {
   revokeProfitShareDistribution,
   assertIpoApplicationsEditable,
 } from './profitShareService.js';
-import { applyWalletDelta, creditWallet, ensureWallet } from './walletService.js';
+import { creditWallet, ensureWallet } from './walletService.js';
 
 function round2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
@@ -492,33 +492,38 @@ export async function undoReceiveIpoApplication(conn, {
 
   const now = new Date();
   let walletReversed = 0;
+  const touchedAccountIds = [];
 
+  // Reverse RETURN_IN by debiting the account and removing that ledger row.
+  // Do NOT insert a second negative ADJUSTMENT — that double-counts on ledger reconcile
+  // (delete +amount and add -amount ⇒ -2× on replay).
   for (const wt of walletRows) {
-    const amount = Number(wt.amount);
-    if (amount !== 0) {
-      try {
-        await applyWalletDelta(conn, {
-          tenantId,
-          delta: -amount,
-          bankAccountId: wt.bank_account_id,
-          type: 'ADJUSTMENT',
-          refType: 'receive_reversal',
-          refId: appId,
-          txnDate: now,
-          notes: `Undo settle — ${app.display_name} (${app.ipo_name})`,
-          userId,
-          allowNegativeBalance: false,
-        });
-      } catch (err) {
-        if (err instanceof AppError) {
-          throw new AppError(
-            `Undo settle is not available right now for ${app.display_name}. ${err.message} ` +
-              'Put the money back into the wallet first, then try again.',
-            err.status || 400
-          );
-        }
-        throw err;
+    const amount = round2(Number(wt.amount || 0));
+    if (amount !== 0 && wt.bank_account_id) {
+      const [accRows] = await conn.query(
+        `SELECT id, label, balance FROM manager_bank_accounts
+         WHERE id = ? AND tenant_id = ? FOR UPDATE`,
+        [wt.bank_account_id, tenantId]
+      );
+      const acc = accRows[0];
+      if (!acc) {
+        throw new AppError(
+          `Undo settle is not available for ${app.display_name} because the bank account that received this return is missing.`,
+          400
+        );
       }
+      const newBal = round2(Number(acc.balance) - amount);
+      if (newBal < -0.001) {
+        throw new AppError(
+          `Undo settle is not available right now for ${app.display_name}. Insufficient balance in ${acc.label}. Available: ₹${acc.balance}, needed: ₹${amount} Put the money back into the wallet first, then try again.`,
+          400
+        );
+      }
+      await conn.query('UPDATE manager_bank_accounts SET balance = ? WHERE id = ?', [
+        newBal,
+        wt.bank_account_id,
+      ]);
+      touchedAccountIds.push(wt.bank_account_id);
       walletReversed += amount;
     }
     await conn.query('DELETE FROM wallet_transactions WHERE id = ? AND tenant_id = ?', [
@@ -552,7 +557,9 @@ export async function undoReceiveIpoApplication(conn, {
     profitRevoked = Boolean(result.revoked);
   }
 
-  await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
+  await syncOwnerWalletTotal(conn, tenantId, {
+    bankAccountIds: touchedAccountIds.length ? [...new Set(touchedAccountIds)] : null,
+  });
 
   return {
     appId,

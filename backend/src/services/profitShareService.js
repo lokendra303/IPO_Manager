@@ -750,19 +750,29 @@ export async function revokeProfitShareDistribution(conn, { tenantId, applicatio
   const now = new Date();
   const managerAmount = Number(distribution.manager_amount ?? 0);
 
+  // Manager share is normally credited only on Receive (inside RETURN_IN), not at split time.
+  // Only reverse wallet cash when a legacy profit_share wallet credit exists for this app.
   if (managerAmount !== 0) {
-    const { applyWalletDelta } = await import('./walletService.js');
-    await applyWalletDelta(conn, {
-      tenantId,
-      delta: -managerAmount,
-      type: 'ADJUSTMENT',
-      refType: 'profit_share_reversal',
-      refId: applicationId,
-      txnDate: now,
-      notes: `Reversal — manager share (${distribution.display_name}, ${distribution.ipo_name})`,
-      userId,
-      allowNegativeBalance: true,
-    });
+    const [legacyCredits] = await conn.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM wallet_transactions
+       WHERE tenant_id = ? AND ref_type = 'profit_share' AND ref_id = ?`,
+      [tenantId, applicationId]
+    );
+    const legacyManagerInWallet = Number(legacyCredits[0]?.total ?? 0);
+    if (Math.abs(legacyManagerInWallet) > 0.001) {
+      const { applyWalletDelta } = await import('./walletService.js');
+      await applyWalletDelta(conn, {
+        tenantId,
+        delta: -legacyManagerInWallet,
+        type: 'ADJUSTMENT',
+        refType: 'profit_share_reversal',
+        refId: applicationId,
+        txnDate: now,
+        notes: `Reversal — manager share (${distribution.display_name}, ${distribution.ipo_name})`,
+        userId,
+        allowNegativeBalance: true,
+      });
+    }
   }
 
   const [ruleLines] = await conn.query(
