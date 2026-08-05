@@ -250,13 +250,20 @@ export async function listGroupBulkTransactions(pool, tenantId, groupId = null) 
 export async function assertGroupNameUnique(pool, tenantId, name, excludeId = null) {
   const trimmed = name.trim();
   const params = [tenantId, trimmed];
-  let sql = 'SELECT id FROM member_groups WHERE tenant_id = ? AND name = ?';
+  let sql =
+    'SELECT id, name FROM member_groups WHERE tenant_id = ? AND LOWER(TRIM(name)) = LOWER(?)';
   if (excludeId) {
     sql += ' AND id != ?';
     params.push(excludeId);
   }
   const [rows] = await pool.query(sql, params);
-  if (rows.length) throw new AppError('A group with this name already exists', 409);
+  if (rows.length) {
+    const existing = rows[0].name?.trim() || trimmed;
+    throw new AppError(
+      `A sub-group named “${existing}” already exists. Open it from the list, or use a different name.`,
+      409
+    );
+  }
 }
 
 /** Members already in a different sub-group must be unassigned there before joining another. */

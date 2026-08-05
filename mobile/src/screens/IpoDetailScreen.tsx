@@ -89,6 +89,10 @@ export default function IpoDetailScreen() {
   const [receiveAccountId, setReceiveAccountId] = useState<number | null>(null);
   const [receivingAppId, setReceivingAppId] = useState<number | null>(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
+  const [bulkAllotting, setBulkAllotting] = useState(false);
+  const [receiveByGroupOpen, setReceiveByGroupOpen] = useState(false);
+  const [selectedReceiveGroupIds, setSelectedReceiveGroupIds] = useState<number[]>([]);
+  const [receivingByGroup, setReceivingByGroup] = useState(false);
   const [undistributingAppId, setUndistributingAppId] = useState<number | null>(null);
   const [undoingAppId, setUndoingAppId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -204,6 +208,47 @@ export default function IpoDetailScreen() {
     const app = applications.find((a) => a.id === appId);
     return app && !isFundReturned(app);
   });
+
+  const receivableGroups = useMemo(() => {
+    const pendingByGroup = new Map<number, { count: number; amount: number; name: string }>();
+    for (const app of applications) {
+      if (isFundReturned(app)) continue;
+      const gid = app.member_group_id;
+      if (gid == null) continue;
+      const cur = pendingByGroup.get(gid) || {
+        count: 0,
+        amount: 0,
+        name: app.member_group_name || `Group #${gid}`,
+      };
+      cur.count += 1;
+      cur.amount += Number(app.amount || 0);
+      pendingByGroup.set(gid, cur);
+    }
+    return memberGroups
+      .map((g) => {
+        const pending = pendingByGroup.get(g.id);
+        if (!pending?.count) return null;
+        return {
+          id: g.id,
+          name: g.name,
+          ownerDisplayName: g.ownerDisplayName as string | null | undefined,
+          pendingCount: pending.count,
+          pendingAmount: pending.amount,
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: number;
+      name: string;
+      ownerDisplayName?: string | null;
+      pendingCount: number;
+      pendingAmount: number;
+    }>;
+  }, [applications, memberGroups]);
+
+  const selectedReceiveGroupPendingCount = selectedReceiveGroupIds.reduce((sum, gid) => {
+    const g = receivableGroups.find((x) => x.id === gid);
+    return sum + (g?.pendingCount || 0);
+  }, 0);
 
   const groupAvailableIds = (group: any) =>
     group.members.filter((m: any) => isMemberAvailable(m.id)).map((m: any) => m.id);
@@ -459,19 +504,6 @@ export default function IpoDetailScreen() {
     }
 
     for (const u of updates) {
-      const row = applications.find((a) => a.id === u.id);
-      const status = u.allotmentStatus ?? row?.allotment_status;
-      if (status === 'ALLOTED') {
-        const withdrawal = u.withdrawalMoney !== undefined
-          ? u.withdrawalMoney
-          : (editedRows[u.id]?.withdrawalMoney ?? row?.withdrawal_money);
-        const wasAllotted = row?.allotment_status === 'ALLOTED';
-        const hadPnL = row?.profit_loss != null || row?.withdrawal_money != null;
-        if (!wasAllotted && !hadPnL && (withdrawal == null || withdrawal === '')) {
-          Alert.alert('Warning', 'Enter withdrawal money for newly allotted applications before saving');
-          return;
-        }
-      }
       if (u.amount !== undefined && (u.amount == null || u.amount <= 0)) {
         Alert.alert('Error', 'Application amount must be greater than zero');
         return;
@@ -492,6 +524,68 @@ export default function IpoDetailScreen() {
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Update failed'));
     }
+  };
+
+  const onBulkSetAllotment = (status: 'ALLOTED' | 'NOT_ALLOTED') => {
+    const ids = selectedReceiveIds.filter((appId) => applications.some((a) => a.id === appId));
+    if (!ids.length) {
+      Alert.alert('Warning', 'Select at least one application');
+      return;
+    }
+    const label = status === 'ALLOTED' ? 'Alloted' : 'Not alloted';
+    const run = async () => {
+      setBulkAllotting(true);
+      try {
+        const updates = ids.map((appId) => ({ id: appId, allotmentStatus: status }));
+        const { data } = await client.patch('/ipo-applications/bulk', { updates });
+        const auto = data.autoDistributions || [];
+        const applied = auto.filter((r: any) => !r.skipped);
+        setApplications((prev) =>
+          prev.map((a) => {
+            if (!ids.includes(a.id)) return a;
+            const next = { ...a, allotment_status: status };
+            if (status === 'NOT_ALLOTED') {
+              next.profit_loss = null;
+              next.withdrawal_money = null;
+            }
+            return next;
+          })
+        );
+        setEditedRows((prev) => {
+          const next = { ...prev };
+          for (const appId of ids) {
+            if (!next[appId]) continue;
+            const { allotmentStatus: _as, profitLoss: _pl, withdrawalMoney: _wm, ...rest } = next[appId];
+            if (Object.keys(rest).length <= 1) delete next[appId];
+            else next[appId] = { ...rest, id: appId };
+          }
+          return next;
+        });
+        setSelectedReceiveIds([]);
+        void refreshReceiveData();
+        const extra = applied.length ? `\nP&L share applied for ${applied.length}.` : '';
+        const tip =
+          status === 'ALLOTED' ? '\nEnter withdrawal money, then Save for P&L.' : '';
+        Alert.alert('Success', `Set ${ids.length} member(s) to ${label}.${extra}${tip}`);
+      } catch (err) {
+        Alert.alert('Error', getErrorMessage(err, 'Could not update allotment'));
+      } finally {
+        setBulkAllotting(false);
+      }
+    };
+
+    if (status === 'NOT_ALLOTED') {
+      Alert.alert(
+        'Set Not alloted?',
+        `Clears withdrawal and P&L for ${ids.length} member(s).`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Set Not alloted', style: 'destructive', onPress: () => void run() },
+        ]
+      );
+      return;
+    }
+    void run();
   };
 
   const onDistribute = async () => {
@@ -736,6 +830,82 @@ export default function IpoDetailScreen() {
       Alert.alert('Error', getErrorMessage(err, 'Bulk receive failed'));
     } finally {
       setReceivingBulk(false);
+    }
+  };
+
+  const openReceiveByGroup = () => {
+    if (!receivableGroups.length) {
+      Alert.alert('Info', 'No sub-groups have pending returns for this IPO');
+      return;
+    }
+    if (missingReceiveAccount) {
+      Alert.alert('Warning', 'Select which bank account should receive returned funds');
+      return;
+    }
+    setSelectedReceiveGroupIds(receivableGroups.map((g) => g.id));
+    setReceiveByGroupOpen(true);
+  };
+
+  const onReceiveByGroups = async () => {
+    if (!selectedReceiveGroupIds.length) {
+      Alert.alert('Warning', 'Select at least one sub-group');
+      return;
+    }
+    if (missingReceiveAccount) {
+      Alert.alert('Warning', 'Select which bank account should receive returned funds');
+      return;
+    }
+    setReceivingByGroup(true);
+    try {
+      const { data } = await client.post(`/ipos/${id}/receive-by-groups`, {
+        groupIds: selectedReceiveGroupIds,
+        returnToWallet: true,
+        bankAccountId: receiveAccountId,
+      });
+      const ok = data.receivedCount || 0;
+      const fail = data.failed?.length || 0;
+      const receivedIds = new Set((data.received || []).map((r: { appId: number }) => r.appId));
+      const nowIso = new Date().toISOString();
+      if (receivedIds.size) {
+        setApplications((prev) =>
+          prev.map((a) =>
+            receivedIds.has(a.id)
+              ? { ...a, trns_received: 'Received', date_received: a.date_received || nowIso }
+              : a
+          )
+        );
+      }
+      if (data.walletBalance != null) {
+        setWallet(Number(data.walletBalance));
+      }
+      if (receiveAccountId != null && data.received?.length) {
+        const credited = data.received.reduce(
+          (sum: number, r: { walletAmount?: number }) => sum + Number(r.walletAmount || 0),
+          0
+        );
+        setBankAccounts((prev) =>
+          prev.map((a) =>
+            a.id === receiveAccountId
+              ? { ...a, balance: Math.round((Number(a.balance) + credited) * 100) / 100 }
+              : a
+          )
+        );
+      }
+      if (ok) {
+        Alert.alert(
+          'Success',
+          `Received ${ok} member(s) from ${selectedReceiveGroupIds.length} group(s)`
+        );
+      }
+      if (fail) Alert.alert('Warning', `${fail} could not be received`);
+      setReceiveByGroupOpen(false);
+      setSelectedReceiveGroupIds([]);
+      setSelectedReceiveIds([]);
+      void refreshReceiveData();
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Group receive failed'));
+    } finally {
+      setReceivingByGroup(false);
     }
   };
 
@@ -1041,9 +1211,34 @@ export default function IpoDetailScreen() {
             />
           </View>
         )}
+        {selectedReceiveIds.length > 0 && (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <Button
+              mode="outlined"
+              loading={bulkAllotting}
+              onPress={() => onBulkSetAllotment('ALLOTED')}
+              compact
+            >
+              Set Alloted ({selectedReceiveIds.length})
+            </Button>
+            <Button
+              mode="outlined"
+              loading={bulkAllotting}
+              onPress={() => onBulkSetAllotment('NOT_ALLOTED')}
+              compact
+            >
+              Set Not alloted ({selectedReceiveIds.length})
+            </Button>
+          </View>
+        )}
         {receivableSelectedIds.length > 0 && (
           <Button mode="contained" loading={receivingBulk} onPress={onReceiveBulk} style={{ marginBottom: 12 }}>
             Receive ({receivableSelectedIds.length})
+          </Button>
+        )}
+        {receivableGroups.length > 0 && (
+          <Button mode="outlined" onPress={openReceiveByGroup} style={{ marginBottom: 12 }}>
+            Receive by group ({receivableGroups.length})
           </Button>
         )}
 
@@ -1066,7 +1261,6 @@ export default function IpoDetailScreen() {
               getComputedProfit={getComputedProfit}
               selected={selectedReceiveIds.includes(app.id)}
               onToggleSelect={() =>
-                !isFundReturned(app) &&
                 setSelectedReceiveIds((prev) =>
                   prev.includes(app.id) ? prev.filter((aid) => aid !== app.id) : [...prev, app.id]
                 )
@@ -1085,6 +1279,68 @@ export default function IpoDetailScreen() {
           ))
         )}
       </ContentCard>
+
+      <Modal
+        visible={receiveByGroupOpen}
+        animationType="slide"
+        onRequestClose={() => {
+          setReceiveByGroupOpen(false);
+          setSelectedReceiveGroupIds([]);
+        }}
+      >
+        <SafeAreaView style={ui.modal}>
+          <View style={ui.modalHeader}>
+            <Text style={ui.modalTitle}>Receive by sub-group</Text>
+            <Button
+              mode="text"
+              onPress={() => {
+                setReceiveByGroupOpen(false);
+                setSelectedReceiveGroupIds([]);
+              }}
+            >
+              Cancel
+            </Button>
+          </View>
+          <ScrollView contentContainerStyle={ui.modalBody} keyboardShouldPersistTaps="handled">
+            <Text style={ui.hint}>
+              Collect returned funds from the group owner, then mark the whole sub-group received.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <Button
+                compact
+                mode="outlined"
+                onPress={() => setSelectedReceiveGroupIds(receivableGroups.map((g) => g.id))}
+              >
+                Select all
+              </Button>
+              <Button compact mode="text" onPress={() => setSelectedReceiveGroupIds([])}>
+                Clear
+              </Button>
+            </View>
+            {receivableGroups.map((g) => (
+              <Checkbox.Item
+                key={g.id}
+                label={`${g.name}${g.ownerDisplayName ? ` · ${g.ownerDisplayName}` : ''} — ${g.pendingCount} pending · ${formatCurrency(g.pendingAmount)}`}
+                status={selectedReceiveGroupIds.includes(g.id) ? 'checked' : 'unchecked'}
+                onPress={() =>
+                  setSelectedReceiveGroupIds((prev) =>
+                    prev.includes(g.id) ? prev.filter((gid) => gid !== g.id) : [...prev, g.id]
+                  )
+                }
+              />
+            ))}
+            <Button
+              mode="contained"
+              loading={receivingByGroup}
+              disabled={!selectedReceiveGroupIds.length || receivingByGroup}
+              onPress={onReceiveByGroups}
+              style={{ marginTop: 16 }}
+            >
+              Receive {selectedReceiveGroupPendingCount} member{selectedReceiveGroupPendingCount !== 1 ? 's' : ''}
+            </Button>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       {/* Distribute modal */}
       <Modal visible={distributeOpen} animationType="slide" onRequestClose={() => { setDistributeOpen(false); setStep(0); }}>

@@ -121,6 +121,7 @@ export async function personalWithdraw(conn, {
     txnDate: parseDate(txnDate, 'transaction date'),
     notes: `${baseNote} (manager profit wallet)`,
     userId,
+    purpose: 'MANAGER',
   });
 
   const updated = await getManagerProfitSummary(conn, tenantId, { skipEnsureWallet: true });

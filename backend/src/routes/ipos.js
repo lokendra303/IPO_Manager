@@ -6,7 +6,7 @@ import { AppError } from '../middleware/errorHandler.js';
 
 import { distributeIpo, undistributeIpoApplication } from '../services/distributeService.js';
 
-import { receiveIpoApplication, receiveIpoApplicationsBulk, undoReceiveIpoApplication } from '../services/receiveApplicationService.js';
+import { receiveIpoApplication, receiveIpoApplicationsBulk, receiveIpoApplicationsByGroups, undoReceiveIpoApplication } from '../services/receiveApplicationService.js';
 import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
@@ -439,6 +439,7 @@ router.get('/:id/applications', async (req, res, next) => {
 
       `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
               mg.name AS member_group_name,
+              m.member_group_id,
               pay.display_name AS paid_to_display_name,
               a.paid_to_external_name,
               psd.id AS profit_share_distribution_id,
@@ -589,6 +590,37 @@ router.post('/applications/receive-bulk', async (req, res, next) => {
 
   }
 
+});
+
+
+
+router.post('/:id/receive-by-groups', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const groupIds = dedupeIds(req.body.groupIds || []);
+    if (!groupIds.length) {
+      throw new AppError('Select at least one sub-group to receive');
+    }
+    const returnToWallet = req.body.returnToWallet !== false;
+    const { bankAccountId } = req.body;
+    const notes = req.body.notes?.trim() || null;
+
+    const result = await withTransaction(async (conn) =>
+      receiveIpoApplicationsByGroups(conn, {
+        tenantId: req.tenantId,
+        ipoId,
+        groupIds,
+        returnToWallet,
+        bankAccountId,
+        notes,
+        userId: req.user.userId,
+      })
+    );
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
 });
 
 

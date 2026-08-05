@@ -151,10 +151,30 @@ const RULES = [
   },
   {
     method: 'POST',
+    pattern: /^\/ipos\/\d+\/receive-by-groups$/,
+    action: 'IPO_RECEIVE_BY_GROUPS',
+    entityType: 'ipo',
+    summary: (req, path) => {
+      const count = Array.isArray(req.body?.groupIds) ? req.body.groupIds.length : 0;
+      return `Group bulk receive for ${count} sub-group(s) on IPO #${idFromPath(path)}`;
+    },
+  },
+  {
+    method: 'POST',
     pattern: /^\/ipos\/applications\/\d+\/receive$/,
     action: 'IPO_RECEIVE',
     entityType: 'ipo_application',
     summary: (_req, path) => `Recorded fund return for application #${idFromPath(path)}`,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/ipos\/applications\/receive-bulk$/,
+    action: 'IPO_RECEIVE_BULK',
+    entityType: 'ipo_application',
+    summary: (req) => {
+      const count = Array.isArray(req.body?.applicationIds) ? req.body.applicationIds.length : 0;
+      return `Bulk received ${count} IPO application(s)`;
+    },
   },
   {
     method: 'PATCH',

@@ -1,5 +1,5 @@
 import { AppError } from '../middleware/errorHandler.js';
-import { parseAmount } from '../utils/validate.js';
+import { parseAmount, parsePositiveInt } from '../utils/validate.js';
 import {
   requireBankAccountId,
   syncOwnerWalletTotal,
@@ -446,6 +446,87 @@ export async function receiveIpoApplicationsBulk(conn, {
   }
 
   return { received: results, failed, receivedCount: results.length, walletBalance };
+}
+
+/**
+ * Resolve unsettled applications for member sub-groups on an IPO, then settle like receive-bulk.
+ * Matches distribute's group-bulk mental model: collect from the group owner, mark the whole group received.
+ */
+export async function receiveIpoApplicationsByGroups(conn, {
+  tenantId,
+  ipoId,
+  groupIds,
+  returnToWallet = true,
+  bankAccountId,
+  notes,
+  userId,
+}) {
+  const ipoIdNum = parsePositiveInt(ipoId, 'IPO id');
+  const ids = [...new Set((groupIds || []).map((raw) => Number(raw)).filter((id) => id > 0))];
+  if (!ids.length) {
+    throw new AppError('Select at least one sub-group to receive');
+  }
+
+  await assertIpoApplicationsEditable(conn, tenantId, ipoIdNum);
+
+  const placeholders = ids.map(() => '?').join(',');
+  const [groupRows] = await conn.query(
+    `SELECT id, name FROM member_groups WHERE tenant_id = ? AND id IN (${placeholders})`,
+    [tenantId, ...ids]
+  );
+  if (groupRows.length !== ids.length) {
+    throw new AppError('One or more sub-groups were not found');
+  }
+
+  const [apps] = await conn.query(
+    `SELECT a.id, a.amount, m.member_group_id, m.display_name, g.name AS group_name
+     FROM ipo_applications a
+     JOIN members m ON m.id = a.member_id
+     JOIN member_groups g ON g.id = m.member_group_id
+     WHERE a.ipo_id = ? AND a.tenant_id = ?
+       AND m.member_group_id IN (${placeholders})
+       AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
+     ORDER BY g.sort_order, g.name, m.sort_order, m.id`,
+    [ipoIdNum, tenantId, ...ids]
+  );
+
+  if (!apps.length) {
+    throw new AppError(
+      'No pending returns for the selected sub-group(s). Members may already be marked received.'
+    );
+  }
+
+  const applicationIds = apps.map((a) => a.id);
+  const result = await receiveIpoApplicationsBulk(conn, {
+    tenantId,
+    applicationIds,
+    returnToWallet,
+    bankAccountId,
+    notes: notes || `Group bulk receive — ${[...new Set(apps.map((a) => a.group_name))].join(', ')}`,
+    userId,
+  });
+
+  const byGroup = new Map();
+  for (const app of apps) {
+    const key = app.member_group_id;
+    if (!byGroup.has(key)) {
+      byGroup.set(key, {
+        groupId: key,
+        groupName: app.group_name,
+        pendingCount: 0,
+        pendingAmount: 0,
+      });
+    }
+    const row = byGroup.get(key);
+    row.pendingCount += 1;
+    row.pendingAmount = round2(row.pendingAmount + Number(app.amount || 0));
+  }
+
+  return {
+    ...result,
+    groups: [...byGroup.values()],
+    applicationIds,
+  };
 }
 
 /**

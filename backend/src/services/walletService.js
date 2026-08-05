@@ -134,10 +134,11 @@ export async function debitWallet(conn, {
   txnDate,
   notes,
   userId,
+  purpose = 'PROVIDER',
 }) {
   const debit = parseAmount(amount, { allowNegative: false, allowZero: false, fieldName: 'debit amount' });
   await ensureWallet(conn, tenantId);
-  const accountId = await requireBankAccountId(conn, tenantId, bankAccountId);
+  const accountId = await requireBankAccountId(conn, tenantId, bankAccountId, { purpose });
   const result = await applyAccountDelta(conn, {
     tenantId,
     bankAccountId: accountId,
