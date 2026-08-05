@@ -665,8 +665,6 @@ router.post('/:id/reinvest-profit', async (req, res, next) => {
 
     const txnDateVal = parseDate(req.body.txnDate, 'transaction date');
     const notes = req.body.notes?.trim() || 'Profit reinvested into principal';
-    const creditToWallet = true;
-    const { bankAccountId } = req.body;
 
     const result = await withTransaction(async (conn) => {
       const [accruedRows] = await conn.query(
@@ -683,11 +681,8 @@ router.post('/:id/reinvest-profit', async (req, res, next) => {
         );
       }
 
-      let resolvedAccountId = null;
-      if (creditToWallet) {
-        resolvedAccountId = await requireBankAccountId(conn, req.tenantId, bankAccountId);
-      }
-
+      // Ledger only: P&L share cash is already in the wallet from IPO Receive
+      // (RETURN_IN includes provider share). Crediting wallet again would double-count.
       const [txnResult] = await conn.query(
         `INSERT INTO provider_transactions
          (fund_provider_id, tenant_id, amount, txn_date, account_label, bank_account_id, notes, provider_profit, created_by)
@@ -698,29 +693,14 @@ router.post('/:id/reinvest-profit', async (req, res, next) => {
           reinvestAmt,
           txnDateVal,
           'Profit Reinvested',
-          resolvedAccountId,
+          null,
           notes,
           -reinvestAmt,
           req.user.userId,
         ]
       );
 
-      let walletBalance = null;
-      if (creditToWallet) {
-        walletBalance = await creditWallet(conn, {
-          tenantId: req.tenantId,
-          amount: reinvestAmt,
-          bankAccountId: resolvedAccountId,
-          type: 'PROVIDER_IN',
-          refType: 'provider_transaction',
-          refId: txnResult.insertId,
-          txnDate: txnDateVal,
-          notes: `${notes} — ${provider[0].name}`,
-          userId: req.user.userId,
-        });
-      } else {
-        walletBalance = await syncOwnerWalletTotal(conn, req.tenantId);
-      }
+      const walletBalance = await syncOwnerWalletTotal(conn, req.tenantId);
 
       return {
         transactionId: txnResult.insertId,
@@ -734,9 +714,7 @@ router.post('/:id/reinvest-profit', async (req, res, next) => {
       transaction: txn[0],
       accruedProfitAfter: result.accruedAfter,
       walletBalance: result.walletBalance,
-      message: creditToWallet
-        ? `${reinvestAmt} moved from accrued profit into principal and credited to wallet`
-        : `${reinvestAmt} moved from accrued profit into provider principal (ledger only)`,
+      message: `${reinvestAmt} moved from accrued profit into principal (cash already in wallet from IPO returns)`,
     });
   } catch (err) {
     next(err);

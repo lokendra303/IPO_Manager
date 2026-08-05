@@ -29,27 +29,31 @@ router.get('/', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { label, bankName, accountNumber, sortOrder } = req.body;
+    const { label, bankName, accountNumber, sortOrder, purpose } = req.body;
     if (!label?.trim()) throw new AppError('Account label is required');
+    const accountPurpose = purpose === 'MANAGER' ? 'MANAGER' : 'PROVIDER';
 
     const row = await withTransaction(async (conn) => {
       const [existing] = await conn.query(
-        'SELECT id FROM manager_bank_accounts WHERE tenant_id = ? LIMIT 1',
-        [req.tenantId]
+        'SELECT id FROM manager_bank_accounts WHERE tenant_id = ? AND purpose = ? LIMIT 1',
+        [req.tenantId, accountPurpose]
       );
-      const isDefault = existing.length === 0 ? 1 : 0;
+      // Default only applies within PROVIDER accounts
+      const isDefault =
+        accountPurpose === 'PROVIDER' && existing.length === 0 ? 1 : 0;
 
       const [result] = await conn.query(
         `INSERT INTO manager_bank_accounts
-         (tenant_id, label, bank_name, account_number, is_default, is_active, balance, sort_order)
-         VALUES (?, ?, ?, ?, ?, 1, 0, ?)`,
+         (tenant_id, label, bank_name, account_number, is_default, is_active, purpose, balance, sort_order)
+         VALUES (?, ?, ?, ?, ?, 1, ?, 0, ?)`,
         [
           req.tenantId,
           label.trim(),
           bankName?.trim() || null,
           accountNumber?.trim() || null,
           isDefault,
-          sortOrder ?? 0,
+          accountPurpose,
+          sortOrder ?? (accountPurpose === 'MANAGER' ? 100 : 0),
         ]
       );
       await syncOwnerWalletTotal(conn, req.tenantId);

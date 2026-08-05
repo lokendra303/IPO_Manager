@@ -292,22 +292,12 @@ export default function FundProvidersPage() {
 
   const onReinvestProfit = async (values) => {
     if (!selected || reinvesting) return;
-    if (!values.bankAccountId && bankAccounts.length > 1) {
-      message.error('Select which bank account should receive the principal');
-      return;
-    }
-    if (!values.bankAccountId && bankAccounts.length === 0) {
-      message.error('Add a bank account under Wallet first');
-      return;
-    }
     setReinvesting(true);
     try {
       const { data } = await client.post(`/fund-providers/${selected.id}/reinvest-profit`, {
         amount: values.amount,
         txnDate: values.txnDate?.toISOString(),
         notes: values.notes,
-        bankAccountId: values.bankAccountId,
-        creditToWallet: values.creditToWallet !== false,
       });
       message.success(data.message || 'Profit reinvested into principal');
       setReinvestModal(false);
@@ -323,13 +313,10 @@ export default function FundProvidersPage() {
   };
 
   const openReinvestModal = () => {
-    const defAcct = bankAccounts.length === 1 ? bankAccounts[0].id : undefined;
     reinvestForm.setFieldsValue({
       amount: selected?.accruedProfit > 0 ? selected.accruedProfit : undefined,
       txnDate: dayjs(),
       notes: 'Profit reinvested into principal',
-      bankAccountId: defAcct,
-      creditToWallet: true,
     });
     setReinvestModal(true);
   };
@@ -538,8 +525,9 @@ export default function FundProvidersPage() {
           )}
         >
           <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-            Principal is funds given or repaid (updates wallet). Accrued profit is P&L share only — use
-            {' '}&quot;Add profit to principal&quot; to move it into principal and credit your wallet.
+            Principal is funds given or repaid (updates wallet). Accrued profit is P&L share already
+            sitting in your wallet from IPO returns — use &quot;Add profit to principal&quot; to move it
+            from accrued into principal (ledger only, no extra wallet credit).
           </Typography.Paragraph>
           <Table
             rowKey="id"
@@ -756,29 +744,16 @@ export default function FundProvidersPage() {
         <Typography.Paragraph type="secondary">
           Accrued profit available:{' '}
           <strong>{formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}</strong>
-          . This will increase provider principal and credit your manager wallet (same as new capital).
+          . This moves accrued P&L into principal only. Cash is already in your wallet from IPO
+          fund returns — it will not be credited again.
         </Typography.Paragraph>
-        <Form form={reinvestForm} layout="vertical" onFinish={onReinvestProfit} initialValues={{ creditToWallet: true }}>
+        <Form form={reinvestForm} layout="vertical" onFinish={onReinvestProfit}>
           <Form.Item
             name="amount"
             label="Amount to add to principal"
             rules={[{ required: true, message: 'Enter amount' }]}
           >
             <InputNumber min={0.01} max={selected?.accruedProfit ?? selected?.totalProfit} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="bankAccountId"
-            label="Credit to bank account"
-            rules={bankAccounts.length > 1 ? [{ required: true, message: 'Select account' }] : []}
-          >
-            <Select
-              placeholder="Select bank account"
-              allowClear={bankAccounts.length <= 1}
-              options={bankAccounts.map((a) => ({
-                value: a.id,
-                label: `${a.label} — ${formatCurrency(a.balance)}`,
-              }))}
-            />
           </Form.Item>
           <Form.Item name="txnDate" label="Date">
             <DatePicker style={{ width: '100%' }} />

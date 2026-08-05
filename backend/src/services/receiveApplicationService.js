@@ -1,6 +1,10 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { parseAmount } from '../utils/validate.js';
-import { requireBankAccountId, syncOwnerWalletTotal } from './bankAccountService.js';
+import {
+  requireBankAccountId,
+  syncOwnerWalletTotal,
+  ensureManagerProfitAccount,
+} from './bankAccountService.js';
 import {
   resolveApplicationProfitSplit,
   revokeProfitShareDistribution,
@@ -24,7 +28,8 @@ async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
 /**
  * Member ledger: distributed principal only (matches GIVEN). Member profit was already
  * kept by the member when P&L was split — it must not inflate RECEIVED or reduce pending return.
- * Wallet: withdrawal minus member profit (principal + manager + provider shares).
+ * Provider wallet: principal + provider share.
+ * Manager profit wallet: manager share.
  * If manager share was already credited via old profit-share wallet entries, subtract that too.
  */
 function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWallet) {
@@ -39,6 +44,7 @@ function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWall
     return {
       ledgerAmount: explicit,
       walletAmount: explicit,
+      providerWalletAmount: explicit,
       managerShare: 0,
       providerShare: 0,
       memberShareExcluded: 0,
@@ -46,15 +52,16 @@ function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWall
   }
 
   const { managerAmount, providerAmount, memberAmount } = split;
-  // Wallet = cash returned to team = withdrawal − member profit (− legacy manager wallet credits)
-  const walletAmount = Math.round(
-    (withdrawalAmount - memberAmount - managerAlreadyInWallet) * 100
-  ) / 100;
+  const managerShare = round2(managerAmount - managerAlreadyInWallet);
+  // Total cash back to team wallets = withdrawal − member profit (− legacy manager credits)
+  const walletAmount = round2(withdrawalAmount - memberAmount - managerAlreadyInWallet);
+  const providerWalletAmount = round2(Math.max(0, walletAmount - Math.max(0, managerShare)));
 
   return {
     ledgerAmount: distributedAmount,
     walletAmount,
-    managerShare: Math.round((managerAmount - managerAlreadyInWallet) * 100) / 100,
+    providerWalletAmount,
+    managerShare: Math.max(0, managerShare),
     providerShare: providerAmount,
     memberShareExcluded: memberAmount,
   };
@@ -68,6 +75,72 @@ async function resolveReceiveAmounts(conn, tenantId, app, explicitAmount) {
   const split = await resolveApplicationProfitSplit(conn, tenantId, app);
   const managerAlreadyInWallet = await getManagerShareAlreadyInWallet(conn, tenantId, app.id);
   return finalizeReceiveAmounts(app, undefined, split, managerAlreadyInWallet);
+}
+
+/** Credit provider principal wallet + manager profit wallet separately. */
+async function creditSplitReceiveToWallets(conn, {
+  tenantId,
+  amounts,
+  providerBankAccountId,
+  appId,
+  ipoName,
+  notes,
+  userId,
+  now,
+}) {
+  const touched = [];
+  const providerPart = round2(amounts.providerWalletAmount ?? amounts.walletAmount);
+  const managerPart = round2(amounts.managerShare);
+
+  if (providerPart > 0.001) {
+    await creditWallet(conn, {
+      tenantId,
+      amount: providerPart,
+      bankAccountId: providerBankAccountId,
+      type: 'RETURN_IN',
+      refType: 'ipo_application',
+      refId: appId,
+      txnDate: now,
+      notes: notes || `Return from ${ipoName} (provider wallet)`,
+      userId,
+      skipEnsureWallet: true,
+      skipSync: true,
+      resolvedBankAccountId: providerBankAccountId,
+    });
+    touched.push(providerBankAccountId);
+  }
+
+  if (managerPart > 0.001) {
+    const managerAccountId = await ensureManagerProfitAccount(conn, tenantId);
+    await creditWallet(conn, {
+      tenantId,
+      amount: managerPart,
+      bankAccountId: managerAccountId,
+      type: 'MANAGER_PROFIT_IN',
+      refType: 'ipo_application',
+      refId: appId,
+      txnDate: now,
+      notes: notes || `Manager profit from ${ipoName}`,
+      userId,
+      skipEnsureWallet: true,
+      skipSync: true,
+      resolvedBankAccountId: managerAccountId,
+    });
+    touched.push(managerAccountId);
+  }
+
+  return touched;
+}
+
+async function hasWalletReturnForApp(conn, tenantId, appId) {
+  const [rows] = await conn.query(
+    `SELECT id FROM wallet_transactions
+     WHERE tenant_id = ? AND ref_type = 'ipo_application' AND ref_id = ?
+       AND type IN ('RETURN_IN', 'MANAGER_PROFIT_IN')
+     LIMIT 1`,
+    [tenantId, appId]
+  );
+  return rows.length > 0;
 }
 
 export async function receiveIpoApplication(conn, {
@@ -100,13 +173,9 @@ export async function receiveIpoApplication(conn, {
     [appId]
   );
 
-  const [existingWalletReturn] = await conn.query(
-    `SELECT id FROM wallet_transactions
-     WHERE tenant_id = ? AND type = 'RETURN_IN' AND ref_type = 'ipo_application' AND ref_id = ?`,
-    [tenantId, appId]
-  );
+  const hasWalletReturn = await hasWalletReturnForApp(conn, tenantId, appId);
 
-  if (existingLedger.length && existingWalletReturn.length) {
+  if (existingLedger.length && hasWalletReturn) {
     throw new AppError('This application is already fully settled');
   }
 
@@ -129,27 +198,27 @@ export async function receiveIpoApplication(conn, {
   }
 
   if (returnToWallet) {
-    if (existingWalletReturn.length) {
+    if (hasWalletReturn) {
       throw new AppError('Funds were already returned to wallet for this application');
     }
 
     await ensureWallet(conn, tenantId);
-    const resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
-    await creditWallet(conn, {
-      tenantId,
-      amount: amounts.walletAmount,
-      bankAccountId,
-      type: 'RETURN_IN',
-      refType: 'ipo_application',
-      refId: appId,
-      txnDate: now,
-      notes: notes || `Return from ${app.ipo_name}`,
-      userId,
-      skipEnsureWallet: true,
-      skipSync: true,
-      resolvedBankAccountId,
+    const resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
+      purpose: 'PROVIDER',
     });
-    await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [resolvedBankAccountId] });
+    const touched = await creditSplitReceiveToWallets(conn, {
+      tenantId,
+      amounts,
+      providerBankAccountId: resolvedBankAccountId,
+      appId,
+      ipoName: app.ipo_name,
+      notes,
+      userId,
+      now,
+    });
+    if (touched.length) {
+      await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: touched });
+    }
   }
 
   return {
@@ -157,6 +226,7 @@ export async function receiveIpoApplication(conn, {
     memberId: app.member_id,
     amount: amounts.ledgerAmount,
     walletAmount: amounts.walletAmount,
+    providerWalletAmount: amounts.providerWalletAmount,
     managerShare: amounts.managerShare,
     providerShare: amounts.providerShare,
     memberShareExcluded: amounts.memberShareExcluded,
@@ -208,19 +278,15 @@ async function receiveOneFromCache(conn, {
       throw new AppError('Funds were already returned to wallet for this application');
     }
 
-    await creditWallet(conn, {
+    await creditSplitReceiveToWallets(conn, {
       tenantId,
-      amount: resolvedAmounts.walletAmount,
-      bankAccountId: resolvedBankAccountId,
-      type: 'RETURN_IN',
-      refType: 'ipo_application',
-      refId: appId,
-      txnDate: now,
-      notes: notes || `Return from ${app.ipo_name}`,
+      amounts: resolvedAmounts,
+      providerBankAccountId: resolvedBankAccountId,
+      appId,
+      ipoName: app.ipo_name,
+      notes,
       userId,
-      skipEnsureWallet: true,
-      skipSync: true,
-      resolvedBankAccountId,
+      now,
     });
   }
 
@@ -229,6 +295,7 @@ async function receiveOneFromCache(conn, {
     memberId: app.member_id,
     amount: resolvedAmounts.ledgerAmount,
     walletAmount: resolvedAmounts.walletAmount,
+    providerWalletAmount: resolvedAmounts.providerWalletAmount,
     managerShare: resolvedAmounts.managerShare,
     providerShare: resolvedAmounts.providerShare,
     memberShareExcluded: resolvedAmounts.memberShareExcluded,
@@ -323,7 +390,8 @@ export async function receiveIpoApplicationsBulk(conn, {
 
   const [existingWalletReturn] = await conn.query(
     `SELECT ref_id FROM wallet_transactions
-     WHERE tenant_id = ? AND type = 'RETURN_IN' AND ref_type = 'ipo_application'
+     WHERE tenant_id = ? AND ref_type = 'ipo_application'
+       AND type IN ('RETURN_IN', 'MANAGER_PROFIT_IN')
        AND ref_id IN (${placeholders})`,
     [tenantId, ...ids]
   );
@@ -332,7 +400,9 @@ export async function receiveIpoApplicationsBulk(conn, {
   let resolvedBankAccountId = null;
   if (returnToWallet) {
     await ensureWallet(conn, tenantId);
-    resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId);
+    resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
+      purpose: 'PROVIDER',
+    });
   }
 
   const amountsByAppId = await prefetchBulkReceiveAmounts(conn, tenantId, apps);
@@ -404,7 +474,8 @@ export async function undoReceiveIpoApplication(conn, {
 
   const [walletRows] = await conn.query(
     `SELECT * FROM wallet_transactions
-     WHERE tenant_id = ? AND type = 'RETURN_IN' AND ref_type = 'ipo_application' AND ref_id = ?
+     WHERE tenant_id = ? AND ref_type = 'ipo_application' AND ref_id = ?
+       AND type IN ('RETURN_IN', 'MANAGER_PROFIT_IN')
      ORDER BY id DESC`,
     [tenantId, appId]
   );

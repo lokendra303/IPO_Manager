@@ -143,19 +143,24 @@ export async function reconcileBalancesFromLedger(conn, tenantId, bankAccountIds
   }
 }
 
-export async function listBankAccounts(conn, tenantId, { activeOnly = true } = {}) {
-  let query = `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, balance, sort_order
+export async function listBankAccounts(conn, tenantId, { activeOnly = true, purpose = null } = {}) {
+  let query = `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, purpose, balance, sort_order
      FROM manager_bank_accounts WHERE tenant_id = ?`;
   const params = [tenantId];
   if (activeOnly) {
     query += ' AND is_active = 1';
   }
-  query += ' ORDER BY sort_order, id';
+  if (purpose) {
+    query += ' AND purpose = ?';
+    params.push(purpose);
+  }
+  query += ' ORDER BY FIELD(purpose, \'PROVIDER\', \'MANAGER\'), sort_order, id';
   const [rows] = await conn.query(query, params);
   return rows.map((r) => ({
     ...r,
     is_active: Boolean(r.is_active),
     is_default: Boolean(r.is_default),
+    purpose: r.purpose || 'PROVIDER',
     balance: Number(r.balance),
   }));
 }
@@ -163,7 +168,7 @@ export async function listBankAccounts(conn, tenantId, { activeOnly = true } = {
 export async function getBankAccount(conn, tenantId, accountId) {
   const id = parsePositiveInt(accountId, 'bank account id');
   const [rows] = await conn.query(
-    `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, balance, sort_order
+    `SELECT id, tenant_id, label, bank_name, account_number, is_active, is_default, purpose, balance, sort_order
      FROM manager_bank_accounts WHERE id = ? AND tenant_id = ?`,
     [id, tenantId]
   );
@@ -173,8 +178,46 @@ export async function getBankAccount(conn, tenantId, accountId) {
     ...r,
     is_active: Boolean(r.is_active),
     is_default: Boolean(r.is_default),
+    purpose: r.purpose || 'PROVIDER',
     balance: Number(r.balance),
   };
+}
+
+export async function getWalletBalancesByPurpose(conn, tenantId) {
+  const [rows] = await conn.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN purpose = 'MANAGER' THEN balance ELSE 0 END), 0) AS manager_balance,
+       COALESCE(SUM(CASE WHEN purpose = 'MANAGER' THEN 0 ELSE balance END), 0) AS provider_balance
+     FROM manager_bank_accounts
+     WHERE tenant_id = ? AND is_active = 1`,
+    [tenantId]
+  );
+  const providerBalance = Number(rows[0]?.provider_balance ?? 0);
+  const managerBalance = Number(rows[0]?.manager_balance ?? 0);
+  return {
+    providerBalance: Math.round(providerBalance * 100) / 100,
+    managerBalance: Math.round(managerBalance * 100) / 100,
+    totalBalance: Math.round((providerBalance + managerBalance) * 100) / 100,
+  };
+}
+
+/** Ensure a Manager Profit account exists; returns its id. */
+export async function ensureManagerProfitAccount(conn, tenantId) {
+  const [existing] = await conn.query(
+    `SELECT id FROM manager_bank_accounts
+     WHERE tenant_id = ? AND purpose = 'MANAGER' AND is_active = 1
+     ORDER BY id LIMIT 1`,
+    [tenantId]
+  );
+  if (existing.length) return existing[0].id;
+
+  const [result] = await conn.query(
+    `INSERT INTO manager_bank_accounts
+     (tenant_id, label, bank_name, is_default, is_active, purpose, balance, sort_order)
+     VALUES (?, 'Manager Profit', NULL, 0, 1, 'MANAGER', 0, 100)`,
+    [tenantId]
+  );
+  return result.insertId;
 }
 
 /**
@@ -211,17 +254,38 @@ export async function reconcileOwnerWallet(conn, tenantId) {
   return syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
 }
 
-/** Resolve bank account: explicit id, sole active account, default account, or first by sort order. */
-export async function requireBankAccountId(conn, tenantId, bankAccountId) {
+/**
+ * Resolve bank account: explicit id, sole active account of purpose, default, or first.
+ * @param {{ purpose?: 'PROVIDER'|'MANAGER' }} opts
+ */
+export async function requireBankAccountId(conn, tenantId, bankAccountId, { purpose = 'PROVIDER' } = {}) {
   if (bankAccountId != null && bankAccountId !== '') {
     const account = await getBankAccount(conn, tenantId, bankAccountId);
     if (!account.is_active) throw new AppError('Bank account is inactive');
+    if (purpose && account.purpose !== purpose) {
+      throw new AppError(
+        purpose === 'MANAGER'
+          ? `Account "${account.label}" is for provider funds. Choose a Manager Profit account.`
+          : `Account "${account.label}" is for manager profit. Choose a provider wallet account.`
+      );
+    }
     return account.id;
   }
 
-  const accounts = await listBankAccounts(conn, tenantId, { activeOnly: true });
+  if (purpose === 'MANAGER') {
+    return ensureManagerProfitAccount(conn, tenantId);
+  }
+
+  const accounts = await listBankAccounts(conn, tenantId, {
+    activeOnly: true,
+    purpose: purpose || 'PROVIDER',
+  });
   if (!accounts.length) {
-    throw new AppError('Add at least one bank account under Wallet before recording funds');
+    throw new AppError(
+      purpose === 'MANAGER'
+        ? 'Add a Manager Profit account under Wallet first'
+        : 'Add at least one provider bank account under Wallet before recording funds'
+    );
   }
   if (accounts.length === 1) {
     return accounts[0].id;
@@ -235,7 +299,14 @@ export async function requireBankAccountId(conn, tenantId, bankAccountId) {
   return accounts[0].id;
 }
 
-export async function assertAccountAllocations(conn, tenantId, allocations, totalRequired, actionLabel = 'allocation') {
+export async function assertAccountAllocations(
+  conn,
+  tenantId,
+  allocations,
+  totalRequired,
+  actionLabel = 'allocation',
+  { purpose = null } = {}
+) {
   if (!allocations?.length) {
     throw new AppError(`Select at least one bank account for ${actionLabel}`);
   }
@@ -249,6 +320,11 @@ export async function assertAccountAllocations(conn, tenantId, allocations, tota
     }
     const account = await getBankAccount(conn, tenantId, accountId);
     if (!account.is_active) throw new AppError(`Account "${account.label}" is inactive`);
+    if (purpose && account.purpose !== purpose) {
+      throw new AppError(
+        `Account "${account.label}" cannot be used for ${actionLabel} (wrong wallet type)`
+      );
+    }
     sum += amount;
     normalized.push({ bankAccountId: accountId, amount, label: account.label });
   }
@@ -262,5 +338,7 @@ export async function assertAccountAllocations(conn, tenantId, allocations, tota
 
 /** @deprecated Use assertAccountAllocations */
 export async function assertAccountDebits(conn, tenantId, debits, totalRequired) {
-  return assertAccountAllocations(conn, tenantId, debits, totalRequired, 'payment');
+  return assertAccountAllocations(conn, tenantId, debits, totalRequired, 'payment', {
+    purpose: 'PROVIDER',
+  });
 }

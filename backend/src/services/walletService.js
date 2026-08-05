@@ -291,6 +291,15 @@ export async function transferBetweenBankAccounts(conn, {
   const fromAccount = fromId === firstId ? firstLocked : secondLocked;
   const toAccount = toId === firstId ? firstLocked : secondLocked;
 
+  // Load purpose (lockAccount may not return it on older rows)
+  const fromFull = await getBankAccount(conn, tenantId, fromId);
+  const toFull = await getBankAccount(conn, tenantId, toId);
+  if (fromFull.purpose !== toFull.purpose) {
+    throw new AppError(
+      'Cannot transfer between provider wallet and manager profit wallet. Keep each wallet separate.'
+    );
+  }
+
   if (Number(fromAccount.balance) < transferAmount) {
     throw new AppError(
       `Insufficient balance in ${fromAccount.label}. Available: ₹${fromAccount.balance}`

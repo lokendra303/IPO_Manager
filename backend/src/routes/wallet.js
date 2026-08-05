@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { pool, withTransaction } from '../db/pool.js';
 import { ensureWallet } from '../services/walletService.js';
-import { listBankAccounts, syncOwnerWalletTotal } from '../services/bankAccountService.js';
+import {
+  listBankAccounts,
+  syncOwnerWalletTotal,
+  getWalletBalancesByPurpose,
+} from '../services/bankAccountService.js';
 import {
   getManagerProfitSummary,
   personalWithdraw,
@@ -16,11 +20,14 @@ router.get('/', async (req, res, next) => {
       await ensureWallet(conn, req.tenantId);
       const balance = await syncOwnerWalletTotal(conn, req.tenantId, { fullVerify: true });
       const accounts = await listBankAccounts(conn, req.tenantId);
+      const balances = await getWalletBalancesByPurpose(conn, req.tenantId);
       const managerProfit = await getManagerProfitSummary(conn, req.tenantId, {
         skipEnsureWallet: true,
       });
       res.json({
         balance,
+        providerBalance: balances.providerBalance,
+        managerBalance: balances.managerBalance,
         accounts,
         managerProfit,
       });
@@ -39,7 +46,7 @@ router.get('/transactions', async (req, res, next) => {
       ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500)
       : 500;
     const [rows] = await pool.query(
-      `SELECT wt.*, mba.label as bank_account_label
+      `SELECT wt.*, mba.label as bank_account_label, mba.purpose as bank_account_purpose
        FROM wallet_transactions wt
        LEFT JOIN manager_bank_accounts mba ON mba.id = wt.bank_account_id
        WHERE wt.tenant_id = ?

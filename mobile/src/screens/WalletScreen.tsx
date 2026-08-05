@@ -38,6 +38,8 @@ type ManagerProfit = {
 
 type WalletData = {
   balance: number;
+  providerBalance?: number;
+  managerBalance?: number;
   managerProfit: ManagerProfit | null;
   accounts: any[];
   txns: any[];
@@ -50,6 +52,8 @@ async function fetchWallet(): Promise<WalletData> {
   ]);
   return {
     balance: w.data.balance,
+    providerBalance: w.data.providerBalance,
+    managerBalance: w.data.managerBalance,
     managerProfit: w.data.managerProfit || null,
     accounts: w.data.accounts || [],
     txns: t.data,
@@ -105,8 +109,10 @@ export default function WalletScreen() {
   };
 
   const openPersonalWithdraw = () => {
-    const active = (data?.accounts ?? []).filter((a: any) => a.is_active);
-    const defaultAccount = active.find((a: any) => a.is_default) || active[0];
+    const managerAccs = (data?.accounts ?? []).filter(
+      (a: any) => a.is_active && a.purpose === 'MANAGER'
+    );
+    const defaultAccount = managerAccs[0];
     setPersonal({
       bankAccountId: defaultAccount ? String(defaultAccount.id) : '',
       amount: '',
@@ -149,14 +155,17 @@ export default function WalletScreen() {
   if (loading && !data) return <Loading />;
 
   const balance = data?.balance ?? 0;
+  const providerBalance = data?.providerBalance ?? data?.managerProfit?.providerBalance ?? 0;
+  const managerBalance = data?.managerBalance ?? data?.managerProfit?.managerBalance ?? 0;
   const managerProfit = data?.managerProfit;
   const accounts = data?.accounts ?? [];
   const txns = data?.txns ?? [];
   const activeAccounts = accounts.filter((a) => a.is_active);
+  const managerAccounts = activeAccounts.filter((a: any) => a.purpose === 'MANAGER');
   const maxWithdraw = Number(managerProfit?.maxWithdraw ?? 0);
 
   const withdrawalInfo =
-    'Personal withdrawals use manager IPO profit only. Provider profit is reserved and must be handled under Fund Providers.';
+    'Personal withdrawals come from the Manager Profit wallet only. Provider wallet is for IPO distribute.';
 
   const openAddAccount = () => {
     setEditingAccount(null);
@@ -210,8 +219,12 @@ export default function WalletScreen() {
         }
       />
       <View style={ui.statRow}>
-        <StatCard title="Balance" value={formatCurrency(balance)} variant="primary" />
-        <StatCard title="Max withdraw" value={formatCurrency(maxWithdraw)} variant="info" />
+        <StatCard title="Provider wallet" value={formatCurrency(providerBalance)} variant="primary" />
+        <StatCard title="Manager profit" value={formatCurrency(managerBalance)} variant="success" />
+      </View>
+      <View style={ui.statRow}>
+        <StatCard title="Total cash" value={formatCurrency(balance)} variant="info" />
+        <StatCard title="Max withdraw" value={formatCurrency(maxWithdraw)} variant="warning" />
       </View>
       <ContentCard
         title="Bank accounts"
@@ -219,7 +232,7 @@ export default function WalletScreen() {
           <Button
             compact
             mode="contained"
-            disabled={maxWithdraw <= 0 || activeAccounts.length === 0}
+            disabled={maxWithdraw <= 0 || managerAccounts.length === 0}
             onPress={openPersonalWithdraw}
           >
             Withdraw
@@ -231,7 +244,19 @@ export default function WalletScreen() {
             key={a.id}
             title={a.label}
             subtitle={formatCurrency(a.balance)}
-            right={<Tag label={a.is_active ? (a.is_default ? 'Default' : 'Active') : 'Inactive'} />}
+            right={
+              <Tag
+                label={
+                  a.purpose === 'MANAGER'
+                    ? 'Manager'
+                    : a.is_active
+                      ? a.is_default
+                        ? 'Default'
+                        : 'Provider'
+                      : 'Inactive'
+                }
+              />
+            }
             onPress={() => openAccountMore(a)}
           />
         ))}
@@ -284,16 +309,10 @@ export default function WalletScreen() {
         closeLabel="Cancel"
       >
         <Text style={ui.hint}>
-          Max: {formatCurrency(maxWithdraw)} · Manager profit{' '}
-          {formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
-          {managerProfit?.providerAccruedProfit
-            ? ` · Provider reserved ${formatCurrency(managerProfit.providerAccruedProfit)}`
-            : ''}
-          {' '}· Wallet {formatCurrency(balance)}
+          Max: {formatCurrency(maxWithdraw)} from manager profit wallet ({formatCurrency(managerBalance)})
         </Text>
         <Text style={[ui.hint, { marginBottom: 8 }]}>
-          Provider profit cannot be withdrawn here. Active accounts:{' '}
-          {activeAccounts.map((a) => `${a.id}:${a.label}`).join(', ')}
+          Manager accounts: {managerAccounts.map((a: any) => `${a.id}:${a.label}`).join(', ') || 'none'}
         </Text>
         <TextInput
           label="From account ID"

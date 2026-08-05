@@ -89,6 +89,7 @@ export default function IpoDetailScreen() {
   const [receiveAccountId, setReceiveAccountId] = useState<number | null>(null);
   const [receivingAppId, setReceivingAppId] = useState<number | null>(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
+  const [undistributingAppId, setUndistributingAppId] = useState<number | null>(null);
   const [undoingAppId, setUndoingAppId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -629,6 +630,36 @@ export default function IpoDetailScreen() {
     );
   };
 
+  const onUndistribute = (app: any) => {
+    Alert.alert(
+      'Undistribute member?',
+      `${app.display_name || 'This member'}: ${formatCurrency(app.amount)} will return to wallet and the application will be removed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Undistribute',
+          style: 'destructive',
+          onPress: async () => {
+            setUndistributingAppId(app.id);
+            try {
+              const { data } = await client.post(`/ipos/applications/${app.id}/undistribute`);
+              setSelectedReceiveIds((prev) => prev.filter((aid) => aid !== app.id));
+              await refreshReceiveData();
+              Alert.alert(
+                'Done',
+                `Undistributed ${data.memberName} — ${formatCurrency(data.amount)} returned to wallet`
+              );
+            } catch (err) {
+              Alert.alert('Error', getErrorMessage(err, 'Failed to undistribute'));
+            } finally {
+              setUndistributingAppId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const onRevokeProfitSplit = (appId: number) => {
     Alert.alert(
       'Revoke P&L profit split?',
@@ -1041,10 +1072,12 @@ export default function IpoDetailScreen() {
                 )
               }
               onReceive={() => onReceive(app.id)}
+              onUndistribute={() => onUndistribute(app)}
               onUndoReceive={() => onUndoReceive(app.id, false)}
               onUndoReceiveWithProfit={() => onUndoReceive(app.id, true)}
               onRevokeProfitSplit={() => onRevokeProfitSplit(app.id)}
               receiving={receivingAppId === app.id}
+              undistributing={undistributingAppId === app.id}
               undoing={undoingAppId === app.id}
               canReceive={!isFundReturned(app)}
               hasProfitSplit={Boolean(app.profit_share_distribution_id)}
@@ -1438,10 +1471,12 @@ function ApplicationCard({
   selected,
   onToggleSelect,
   onReceive,
+  onUndistribute,
   onUndoReceive,
   onUndoReceiveWithProfit,
   onRevokeProfitSplit,
   receiving,
+  undistributing,
   undoing,
   canReceive,
   hasProfitSplit,
@@ -1567,6 +1602,9 @@ function ApplicationCard({
         <View style={{ gap: 8 }}>
           <Button compact mode="contained" loading={receiving} onPress={onReceive}>
             Receive — return to wallet
+          </Button>
+          <Button compact mode="outlined" textColor="#dc2626" loading={undistributing} onPress={onUndistribute}>
+            Undistribute
           </Button>
           {hasProfitSplit ? (
             <Button compact mode="outlined" textColor="#dc2626" onPress={onRevokeProfitSplit}>

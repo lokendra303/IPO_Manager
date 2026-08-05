@@ -1473,6 +1473,338 @@ async function applyStripUnusedDefaultHniV48(conn) {
   }
 }
 
+async function applyWalletPurposeSplitV52(conn) {
+  if (!(await tableExists(conn, 'manager_bank_accounts'))) return;
+
+  if (!(await columnExists(conn, 'manager_bank_accounts', 'purpose'))) {
+    await conn.query(
+      `ALTER TABLE manager_bank_accounts
+       ADD COLUMN purpose ENUM('PROVIDER', 'MANAGER') NOT NULL DEFAULT 'PROVIDER'
+       AFTER is_active`
+    );
+    console.log('Added manager_bank_accounts.purpose');
+  }
+
+  if (await tableExists(conn, 'wallet_transactions')) {
+    const [col] = await conn.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wallet_transactions' AND COLUMN_NAME = 'type'`
+    );
+    const columnType = col[0]?.COLUMN_TYPE || '';
+    if (!columnType.includes('MANAGER_PROFIT_IN')) {
+      await conn.query(
+        `ALTER TABLE wallet_transactions
+         MODIFY COLUMN type ENUM(
+           'PROVIDER_IN', 'DISTRIBUTE_OUT', 'RETURN_IN', 'ADJUSTMENT', 'PROVIDER_OUT',
+           'TRANSFER_OUT', 'TRANSFER_IN', 'PERSONAL_OUT', 'MANAGER_PROFIT_IN'
+         ) NOT NULL`
+      );
+      console.log('Added MANAGER_PROFIT_IN to wallet_transactions.type');
+    }
+  }
+
+  // Ensure every tenant with any bank account also has a Manager Profit account
+  const [tenants] = await conn.query(
+    `SELECT DISTINCT tenant_id FROM manager_bank_accounts`
+  );
+  for (const { tenant_id: tenantId } of tenants) {
+    const [mgr] = await conn.query(
+      `SELECT id FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'MANAGER' LIMIT 1`,
+      [tenantId]
+    );
+    if (!mgr.length) {
+      await conn.query(
+        `INSERT INTO manager_bank_accounts
+         (tenant_id, label, bank_name, is_default, is_active, purpose, balance, sort_order)
+         VALUES (?, 'Manager Profit', NULL, 0, 1, 'MANAGER', 0, 100)`,
+        [tenantId]
+      );
+      console.log(`Created Manager Profit account for tenant ${tenantId}`);
+    }
+  }
+
+  // Peel manager profit cash out of PROVIDER accounts into MANAGER accounts.
+  // Never touch undeployed principal: only move excess above (principal − funds still with members).
+  // Also subtract prior profit_share_reversal adjustments (those amounts already left the wallet).
+  for (const { tenant_id: tenantId } of tenants) {
+    // Idempotent: skip tenants already split (V53 repairs over-peel separately)
+    const [[priorSplit]] = await conn.query(
+      `SELECT id FROM wallet_transactions
+       WHERE tenant_id = ? AND ref_type = 'wallet_split' LIMIT 1`,
+      [tenantId]
+    );
+    if (priorSplit) continue;
+
+    const [[mgrShare]] = await conn.query(
+      `SELECT COALESCE(SUM(manager_amount), 0) AS total
+       FROM profit_share_distributions WHERE tenant_id = ?`,
+      [tenantId]
+    );
+    const [[withdrawn]] = await conn.query(
+      `SELECT COALESCE(SUM(-amount), 0) AS total
+       FROM wallet_transactions WHERE tenant_id = ? AND type = 'PERSONAL_OUT'`,
+      [tenantId]
+    );
+    const [[reversed]] = await conn.query(
+      `SELECT COALESCE(SUM(-amount), 0) AS total
+       FROM wallet_transactions
+       WHERE tenant_id = ? AND type = 'ADJUSTMENT' AND ref_type = 'profit_share_reversal'`,
+      [tenantId]
+    );
+    const owed = Math.round(
+      (Number(mgrShare.total) - Number(withdrawn.total) - Number(reversed.total)) * 100
+    ) / 100;
+    if (owed <= 0.001) continue;
+
+    const [[mgrAcc]] = await conn.query(
+      `SELECT id, balance FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'MANAGER' AND is_active = 1
+       ORDER BY id LIMIT 1`,
+      [tenantId]
+    );
+    if (!mgrAcc) continue;
+
+    const alreadyInManager = Number(mgrAcc.balance);
+    let need = Math.round((owed - alreadyInManager) * 100) / 100;
+    if (need <= 0.001) continue;
+
+    const [[prin]] = await conn.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM provider_transactions WHERE tenant_id = ?`,
+      [tenantId]
+    );
+    const [[stillOut]] = await conn.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM ipo_applications
+       WHERE tenant_id = ? AND (trns_received IS NULL OR trns_received <> 'Received')`,
+      [tenantId]
+    );
+    const [[provSum]] = await conn.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'PROVIDER' AND is_active = 1`,
+      [tenantId]
+    );
+    const undeployedPrincipal = Math.round(
+      (Number(prin.total) - Number(stillOut.total)) * 100
+    ) / 100;
+    const excessOverPrincipal = Math.max(
+      0,
+      Math.round((Number(provSum.total) - undeployedPrincipal) * 100) / 100
+    );
+    need = Math.min(need, excessOverPrincipal);
+    if (need <= 0.001) {
+      console.log(
+        `Tenant ${tenantId}: skip manager peel — no excess over undeployed principal ₹${undeployedPrincipal}`
+      );
+      continue;
+    }
+
+    const [providerAccs] = await conn.query(
+      `SELECT id, label, balance FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'PROVIDER' AND is_active = 1 AND balance > 0
+       ORDER BY is_default DESC, id`,
+      [tenantId]
+    );
+
+    let remaining = need;
+    const now = new Date();
+    for (const acc of providerAccs) {
+      if (remaining <= 0.001) break;
+      // Keep enough in this account so overall provider side stays ≥ undeployed principal
+      const take = Math.min(Number(acc.balance), remaining);
+      if (take <= 0.001) continue;
+
+      const newProvBal = Math.round((Number(acc.balance) - take) * 100) / 100;
+      const [mgrBalRows] = await conn.query(
+        `SELECT balance FROM manager_bank_accounts WHERE id = ? FOR UPDATE`,
+        [mgrAcc.id]
+      );
+      const newMgrBal = Math.round((Number(mgrBalRows[0].balance) + take) * 100) / 100;
+
+      await conn.query(`UPDATE manager_bank_accounts SET balance = ? WHERE id = ?`, [
+        newProvBal,
+        acc.id,
+      ]);
+      await conn.query(`UPDATE manager_bank_accounts SET balance = ? WHERE id = ?`, [
+        newMgrBal,
+        mgrAcc.id,
+      ]);
+
+      await conn.query(
+        `INSERT INTO wallet_transactions
+         (tenant_id, bank_account_id, type, amount, balance_after, ref_type, ref_id, txn_date, notes, created_by)
+         VALUES (?, ?, 'TRANSFER_OUT', ?, ?, 'wallet_split', NULL, ?, ?, NULL)`,
+        [
+          tenantId,
+          acc.id,
+          -take,
+          newProvBal,
+          now,
+          `Split manager profit → Manager Profit (from ${acc.label})`,
+        ]
+      );
+      await conn.query(
+        `INSERT INTO wallet_transactions
+         (tenant_id, bank_account_id, type, amount, balance_after, ref_type, ref_id, txn_date, notes, created_by)
+         VALUES (?, ?, 'TRANSFER_IN', ?, ?, 'wallet_split', NULL, ?, ?, NULL)`,
+        [
+          tenantId,
+          mgrAcc.id,
+          take,
+          newMgrBal,
+          now,
+          `Split manager profit ← ${acc.label}`,
+        ]
+      );
+
+      remaining = Math.round((remaining - take) * 100) / 100;
+      console.log(
+        `Tenant ${tenantId}: moved ₹${take} manager profit from ${acc.label} → Manager Profit`
+      );
+    }
+
+    if (remaining > 0.01) {
+      console.log(
+        `Tenant ${tenantId}: could only move part of owed manager profit; shortfall ₹${remaining}`
+      );
+    }
+
+    const [[sum]] = await conn.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM manager_bank_accounts
+       WHERE tenant_id = ? AND is_active = 1`,
+      [tenantId]
+    );
+    await conn.query(`UPDATE owner_wallets SET balance = ? WHERE tenant_id = ?`, [
+      Number(sum.total),
+      tenantId,
+    ]);
+  }
+}
+
+/**
+ * V52 initially peeled SUM(manager_amount) − personal withdrawals without:
+ *  - subtracting profit_share_reversal amounts already removed from the wallet
+ *  - protecting undeployed principal (principal − funds still with members)
+ * That pulled principal cash into the Manager Profit wallet. Move the shortfall back.
+ */
+async function applyWalletSplitOverpeelRepairV53(conn) {
+  if (!(await tableExists(conn, 'manager_bank_accounts'))) return;
+  if (!(await columnExists(conn, 'manager_bank_accounts', 'purpose'))) return;
+
+  const [tenants] = await conn.query(`SELECT DISTINCT tenant_id FROM manager_bank_accounts`);
+  for (const { tenant_id: tenantId } of tenants) {
+    const [[already]] = await conn.query(
+      `SELECT id FROM wallet_transactions
+       WHERE tenant_id = ? AND ref_type = 'wallet_split_repair' LIMIT 1`,
+      [tenantId]
+    );
+    if (already) continue;
+
+    const [[prin]] = await conn.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM provider_transactions WHERE tenant_id = ?`,
+      [tenantId]
+    );
+    const [[stillOut]] = await conn.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM ipo_applications
+       WHERE tenant_id = ? AND (trns_received IS NULL OR trns_received <> 'Received')`,
+      [tenantId]
+    );
+    const [[provSum]] = await conn.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'PROVIDER' AND is_active = 1`,
+      [tenantId]
+    );
+    const [[mgrSum]] = await conn.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'MANAGER' AND is_active = 1`,
+      [tenantId]
+    );
+
+    const undeployedPrincipal = Math.round(
+      (Number(prin.total) - Number(stillOut.total)) * 100
+    ) / 100;
+    const shortfall = Math.round((undeployedPrincipal - Number(provSum.total)) * 100) / 100;
+    if (shortfall <= 0.01) continue;
+
+    const repair = Math.min(shortfall, Number(mgrSum.total));
+    if (repair <= 0.01) {
+      console.log(
+        `Tenant ${tenantId}: provider short ₹${shortfall} vs undeployed principal, but manager wallet empty`
+      );
+      continue;
+    }
+
+    const [[mgrAcc]] = await conn.query(
+      `SELECT id, label, balance FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'MANAGER' AND is_active = 1 AND balance > 0
+       ORDER BY id LIMIT 1`,
+      [tenantId]
+    );
+    const [[provAcc]] = await conn.query(
+      `SELECT id, label, balance FROM manager_bank_accounts
+       WHERE tenant_id = ? AND purpose = 'PROVIDER' AND is_active = 1
+       ORDER BY is_default DESC, id LIMIT 1`,
+      [tenantId]
+    );
+    if (!mgrAcc || !provAcc) continue;
+
+    const take = Math.min(repair, Number(mgrAcc.balance));
+    const newMgrBal = Math.round((Number(mgrAcc.balance) - take) * 100) / 100;
+    const newProvBal = Math.round((Number(provAcc.balance) + take) * 100) / 100;
+    const now = new Date();
+
+    await conn.query(`UPDATE manager_bank_accounts SET balance = ? WHERE id = ?`, [
+      newMgrBal,
+      mgrAcc.id,
+    ]);
+    await conn.query(`UPDATE manager_bank_accounts SET balance = ? WHERE id = ?`, [
+      newProvBal,
+      provAcc.id,
+    ]);
+
+    await conn.query(
+      `INSERT INTO wallet_transactions
+       (tenant_id, bank_account_id, type, amount, balance_after, ref_type, ref_id, txn_date, notes, created_by)
+       VALUES (?, ?, 'TRANSFER_OUT', ?, ?, 'wallet_split_repair', NULL, ?, ?, NULL)`,
+      [
+        tenantId,
+        mgrAcc.id,
+        -take,
+        newMgrBal,
+        now,
+        `Repair over-split — return principal to provider (from ${mgrAcc.label})`,
+      ]
+    );
+    await conn.query(
+      `INSERT INTO wallet_transactions
+       (tenant_id, bank_account_id, type, amount, balance_after, ref_type, ref_id, txn_date, notes, created_by)
+       VALUES (?, ?, 'TRANSFER_IN', ?, ?, 'wallet_split_repair', NULL, ?, ?, NULL)`,
+      [
+        tenantId,
+        provAcc.id,
+        take,
+        newProvBal,
+        now,
+        `Repair over-split — restore undeployed principal ← ${mgrAcc.label}`,
+      ]
+    );
+
+    const [[sum]] = await conn.query(
+      `SELECT COALESCE(SUM(balance), 0) AS total FROM manager_bank_accounts
+       WHERE tenant_id = ? AND is_active = 1`,
+      [tenantId]
+    );
+    await conn.query(`UPDATE owner_wallets SET balance = ? WHERE tenant_id = ?`, [
+      Number(sum.total),
+      tenantId,
+    ]);
+
+    console.log(
+      `Tenant ${tenantId}: repaired ₹${take} principal back to provider ` +
+        `(undeployed ₹${undeployedPrincipal}; ${provAcc.label} now ₹${newProvBal})`
+    );
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1530,6 +1862,8 @@ async function migrate() {
   await applyMemberShareRuleActiveV49(conn);
   await applyIpoLastApplyDateV50(conn);
   await applyGroupExternalOwnerV51(conn);
+  await applyWalletPurposeSplitV52(conn);
+  await applyWalletSplitOverpeelRepairV53(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

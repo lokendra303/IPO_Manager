@@ -741,7 +741,8 @@ export default function FundProvidersScreen() {
           </View>
           <View style={ui.modalBody}>
             <Text style={ui.hint}>
-              Accrued profit available: {formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}
+              Accrued profit available: {formatCurrency(selected?.accruedProfit ?? selected?.totalProfit ?? 0)}.
+              Moves accrued P&L into principal only — cash is already in your wallet from IPO returns.
             </Text>
             <TextInput
               label="Amount to add to principal"

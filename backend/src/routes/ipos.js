@@ -4,7 +4,7 @@ import { pool, withTransaction } from '../db/pool.js';
 
 import { AppError } from '../middleware/errorHandler.js';
 
-import { distributeIpo } from '../services/distributeService.js';
+import { distributeIpo, undistributeIpoApplication } from '../services/distributeService.js';
 
 import { receiveIpoApplication, receiveIpoApplicationsBulk, undoReceiveIpoApplication } from '../services/receiveApplicationService.js';
 import { dedupeIds } from '../utils/validate.js';
@@ -676,6 +676,23 @@ router.post('/applications/:appId/undo-receive', async (req, res, next) => {
       })
     );
 
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/applications/:appId/undistribute', async (req, res, next) => {
+  try {
+    const appId = parsePositiveInt(req.params.appId, 'application id');
+    const result = await withTransaction(async (conn) =>
+      undistributeIpoApplication(conn, {
+        tenantId: req.tenantId,
+        appId,
+        userId: req.user.userId,
+        bankAccountId: req.body.bankAccountId,
+      })
+    );
     res.json(result);
   } catch (err) {
     next(err);

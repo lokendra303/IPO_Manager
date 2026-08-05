@@ -109,6 +109,7 @@ export default function IpoDetailPage() {
   const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
   const [receivingAppId, setReceivingAppId] = useState(null);
   const [undoingAppId, setUndoingAppId] = useState(null);
+  const [undistributingAppId, setUndistributingAppId] = useState(null);
   const [revokingProfitAppId, setRevokingProfitAppId] = useState(null);
   const [receivingBulk, setReceivingBulk] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -133,8 +134,8 @@ export default function IpoDetailPage() {
       const uniqueActive = [...new Map(activeMembers.map((m) => [m.id, m])).values()];
       setMembers(uniqueActive);
       setMemberGroups(groupsRes.data);
-      const accts = walletRes.data.accounts || [];
-      setWallet(Number(walletRes.data.balance));
+      const accts = (walletRes.data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
+      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
     } catch (err) {
       setLoadError(getErrorMessage(err));
@@ -154,8 +155,8 @@ export default function IpoDetailPage() {
       ]);
       setApplications(appsRes.data);
       setIpoSummary(summaryRes.data);
-      const accts = walletRes.data.accounts || [];
-      setWallet(Number(walletRes.data.balance));
+      const accts = (walletRes.data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
+      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to refresh'));
@@ -344,9 +345,9 @@ export default function IpoDetailPage() {
     setPaySplits({});
     try {
       const { data } = await client.get('/wallet');
-      const accts = data.accounts || [];
+      const accts = (data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
       setBankAccounts(accts);
-      setWallet(Number(data.balance));
+      setWallet(Number(data.providerBalance ?? data.balance));
       if (accts.length === 0) {
         setPayAccountId(null);
       } else if (accts.length === 1) {
@@ -688,6 +689,26 @@ export default function IpoDetailPage() {
       });
     } finally {
       setUndoingAppId(null);
+    }
+  };
+
+  const onUndistribute = async (appId) => {
+    if (isFrozen) {
+      message.warning('IPO is closed or invalid — reopen or restore the IPO to undistribute');
+      return;
+    }
+    setUndistributingAppId(appId);
+    try {
+      const { data } = await client.post(`/ipos/applications/${appId}/undistribute`);
+      message.success(
+        `Undistributed ${data.memberName} — ${formatCurrency(data.amount)} returned to wallet`
+      );
+      setSelectedReceiveIds((prev) => prev.filter((id) => id !== appId));
+      await refreshReceiveData();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to undistribute'));
+    } finally {
+      setUndistributingAppId(null);
     }
   };
 
@@ -1088,6 +1109,22 @@ export default function IpoDetailPage() {
             <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
               <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
                 Receive
+              </Button>
+            </Popconfirm>
+            <Popconfirm
+              title={`Undistribute ${r.display_name || 'this member'}?`}
+              description={`${formatCurrency(r.amount)} will return to wallet and this application will be removed.`}
+              onConfirm={() => onUndistribute(r.id)}
+              okText="Undistribute"
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                size="small"
+                danger
+                ghost
+                loading={undistributingAppId === r.id}
+              >
+                Undistribute
               </Button>
             </Popconfirm>
             {hasProfitSplit && (

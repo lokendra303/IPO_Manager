@@ -21,6 +21,7 @@ const typeColors = {
   PROVIDER_IN: 'success',
   DISTRIBUTE_OUT: 'warning',
   RETURN_IN: 'processing',
+  MANAGER_PROFIT_IN: 'purple',
   PROVIDER_OUT: 'error',
   ADJUSTMENT: 'default',
   TRANSFER_OUT: 'orange',
@@ -30,6 +31,8 @@ const typeColors = {
 
 export default function WalletPage() {
   const [balance, setBalance] = useState(0);
+  const [providerBalance, setProviderBalance] = useState(0);
+  const [managerBalance, setManagerBalance] = useState(0);
   const [managerProfit, setManagerProfit] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [txns, setTxns] = useState([]);
@@ -46,6 +49,8 @@ export default function WalletPage() {
   const [personalForm] = Form.useForm();
 
   const activeAccounts = accounts.filter((a) => a.is_active);
+  const providerAccounts = activeAccounts.filter((a) => a.purpose !== 'MANAGER');
+  const managerAccounts = activeAccounts.filter((a) => a.purpose === 'MANAGER');
   const maxWithdraw = Number(managerProfit?.maxWithdraw ?? 0);
 
   const load = () => {
@@ -57,8 +62,10 @@ export default function WalletPage() {
     ])
       .then(([w, accts, t]) => {
         setBalance(w.data.balance);
+        setProviderBalance(w.data.providerBalance ?? w.data.managerProfit?.providerBalance ?? 0);
+        setManagerBalance(w.data.managerBalance ?? w.data.managerProfit?.managerBalance ?? 0);
         setManagerProfit(w.data.managerProfit || null);
-        setAccounts(accts.data.accounts || []);
+        setAccounts(accts.data.accounts || w.data.accounts || []);
         setTxns(t.data);
       })
       .finally(() => setLoading(false));
@@ -69,6 +76,7 @@ export default function WalletPage() {
   const openAddAccount = () => {
     setEditingAccount(null);
     form.resetFields();
+    form.setFieldsValue({ purpose: 'PROVIDER' });
     setAccountModal(true);
   };
 
@@ -81,6 +89,7 @@ export default function WalletPage() {
       accountNumber: record.account_number || undefined,
       isActive: record.is_active,
       isDefault: record.is_default,
+      purpose: record.purpose || 'PROVIDER',
     });
     setAccountModal(true);
   };
@@ -92,10 +101,11 @@ export default function WalletPage() {
         label: values.label,
         bankName: values.bankName,
         accountNumber: values.accountNumber,
+        purpose: values.purpose || 'PROVIDER',
       };
       if (editingAccount) {
         body.isActive = values.isActive;
-        if (activeAccounts.length > 1) {
+        if (providerAccounts.length > 1 && (editingAccount.purpose || 'PROVIDER') === 'PROVIDER') {
           body.isDefault = values.isDefault;
         }
         await client.patch(`/bank-accounts/${editingAccount.id}`, body);
@@ -113,6 +123,15 @@ export default function WalletPage() {
     } finally {
       setSavingAccount(false);
     }
+  };
+
+  const openPersonalWithdraw = () => {
+    personalForm.resetFields();
+    personalForm.setFieldsValue({
+      bankAccountId: managerAccounts[0]?.id,
+      txnDate: dayjs(),
+    });
+    setPersonalModal(true);
   };
 
   const openTransfer = () => {
@@ -146,16 +165,6 @@ export default function WalletPage() {
     }
   };
 
-  const openPersonalWithdraw = () => {
-    personalForm.resetFields();
-    const defaultAccount = activeAccounts.find((a) => a.is_default) || activeAccounts[0];
-    personalForm.setFieldsValue({
-      bankAccountId: defaultAccount?.id,
-      txnDate: dayjs(),
-    });
-    setPersonalModal(true);
-  };
-
   const onPersonalWithdraw = async (values) => {
     setWithdrawing(true);
     try {
@@ -165,7 +174,7 @@ export default function WalletPage() {
         notes: values.notes,
         txnDate: values.txnDate?.toISOString(),
       });
-      message.success('Personal withdrawal recorded from manager profit');
+      message.success('Personal withdrawal recorded from manager profit wallet');
       setPersonalModal(false);
       personalForm.resetFields();
       load();
@@ -177,6 +186,10 @@ export default function WalletPage() {
   };
 
   const accountOptions = activeAccounts.map((a) => ({
+    value: a.id,
+    label: `${a.label}${a.purpose === 'MANAGER' ? ' (Manager)' : ''} — ${formatCurrency(a.balance)}`,
+  }));
+  const managerAccountOptions = managerAccounts.map((a) => ({
     value: a.id,
     label: `${a.label} — ${formatCurrency(a.balance)}`,
   }));
@@ -190,7 +203,15 @@ export default function WalletPage() {
       dataIndex: 'type',
       render: (t) => <Tag color={typeColors[t] || 'default'}>{t.replace(/_/g, ' ')}</Tag>,
     },
-    { title: 'Bank Account', dataIndex: 'bank_account_label', render: (v) => v || '—' },
+    {
+      title: 'Bank Account',
+      render: (_, r) => (
+        <Space size={4}>
+          <span>{r.bank_account_label || '—'}</span>
+          {r.bank_account_purpose === 'MANAGER' && <Tag color="purple">Manager</Tag>}
+        </Space>
+      ),
+    },
     {
       title: 'Amount',
       dataIndex: 'amount',
@@ -213,7 +234,12 @@ export default function WalletPage() {
         <Space direction="vertical" size={0}>
           <Space>
             <span style={{ fontWeight: 500 }}>{r.label}</span>
-            {r.is_default && r.is_active && <Tag color="blue">Default</Tag>}
+            {r.purpose === 'MANAGER' ? (
+              <Tag color="purple">Manager profit</Tag>
+            ) : (
+              <Tag color="blue">Provider</Tag>
+            )}
+            {r.is_default && r.is_active && r.purpose !== 'MANAGER' && <Tag>Default</Tag>}
             {!r.is_active && <Tag>Inactive</Tag>}
           </Space>
           {(r.bank_name || r.account_number) && (
@@ -244,13 +270,13 @@ export default function WalletPage() {
     <div>
       <PageHeader
         title="Owner Wallet"
-        subtitle="Total across all accounts — personal withdrawals use manager profit only"
+        subtitle="Provider wallet holds principal for IPO distribute. Manager profit wallet is separate for personal withdrawals."
         extra={(
           <Space wrap>
             <Button
               icon={<UserOutlined />}
               onClick={openPersonalWithdraw}
-              disabled={maxWithdraw <= 0 || activeAccounts.length === 0}
+              disabled={maxWithdraw <= 0 || managerAccounts.length === 0}
             >
               Personal withdrawal
             </Button>
@@ -270,33 +296,33 @@ export default function WalletPage() {
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            title="Total Available"
-            value={formatCurrency(balance)}
-            icon={<WalletOutlined />}
+            title="Provider wallet"
+            value={formatCurrency(providerBalance)}
+            icon={<BankOutlined />}
             variant="primary"
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            title="Available manager profit"
-            value={formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
+            title="Manager profit wallet"
+            value={formatCurrency(managerBalance)}
             icon={<UserOutlined />}
             variant="success"
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
-            title="Personal withdrawn"
-            value={formatCurrency(managerProfit?.personalWithdrawn ?? 0)}
-            variant="warning"
+            title="Total cash"
+            value={formatCurrency(balance)}
+            icon={<WalletOutlined />}
+            variant="info"
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <StatCard
             title="Max personal withdraw"
             value={formatCurrency(maxWithdraw)}
-            icon={<BankOutlined />}
-            variant="info"
+            variant="warning"
           />
         </Col>
       </Row>
@@ -304,10 +330,10 @@ export default function WalletPage() {
         type="info"
         showIcon
         style={{ marginBottom: 24 }}
-        message="Personal withdrawal uses manager IPO profit only. Provider profit is reserved in the wallet and must be handled under Fund Providers."
+        message="Provider wallet is used for IPO distribute / provider repay. Manager profit wallet receives your P&L share on IPO return — withdraw personally from there only."
         description={
           managerProfit?.providerAccruedProfit > 0
-            ? `Provider profit reserved: ${formatCurrency(managerProfit.providerAccruedProfit)} (not withdrawable here).`
+            ? `Provider accrued P&L (ledger): ${formatCurrency(managerProfit.providerAccruedProfit)} — track under Fund Providers.`
             : undefined
         }
       />
@@ -336,8 +362,22 @@ export default function WalletPage() {
         destroyOnClose
       >
         <Form form={form} layout="vertical" onFinish={onSaveAccount}>
+          <Form.Item
+            name="purpose"
+            label="Wallet type"
+            rules={[{ required: true }]}
+            extra="Provider = IPO distribute / fund provider money. Manager = your profit share only."
+          >
+            <Select
+              disabled={Boolean(editingAccount)}
+              options={[
+                { value: 'PROVIDER', label: 'Provider wallet' },
+                { value: 'MANAGER', label: 'Manager profit wallet' },
+              ]}
+            />
+          </Form.Item>
           <Form.Item name="label" label="Label" rules={[{ required: true }]}>
-            <Input placeholder="HDFC Main, SBI Team, KVB" />
+            <Input placeholder="HDFC Main, Manager Profit, SBI Team" />
           </Form.Item>
           <Form.Item name="bankName" label="Bank name">
             <Input placeholder="HDFC Bank" allowClear />
@@ -350,11 +390,7 @@ export default function WalletPage() {
               <Form.Item label="Current balance">
                 <Input value={formatCurrency(editingAccount.balance)} disabled />
               </Form.Item>
-              <Form.Item
-                name="isActive"
-                label="Status"
-                extra="Inactive accounts are hidden from IPO pay/distribute but keep their balance and history."
-              >
+              <Form.Item name="isActive" label="Status">
                 <Select
                   options={[
                     { value: true, label: 'Active' },
@@ -362,15 +398,11 @@ export default function WalletPage() {
                   ]}
                 />
               </Form.Item>
-              {activeAccounts.length > 1 && (
-                <Form.Item
-                  name="isDefault"
-                  label="Default account"
-                  extra="Used for automatic wallet entries (e.g. profit share) when no account is selected."
-                >
+              {providerAccounts.length > 1 && (editingAccount.purpose || 'PROVIDER') === 'PROVIDER' && (
+                <Form.Item name="isDefault" label="Default provider account">
                   <Select
                     options={[
-                      { value: true, label: 'Yes — use for automatic entries' },
+                      { value: true, label: 'Yes' },
                       { value: false, label: 'No' },
                     ]}
                   />
@@ -389,20 +421,15 @@ export default function WalletPage() {
         confirmLoading={transferring}
         destroyOnClose
       >
+        <Typography.Paragraph type="secondary">
+          Transfers must stay within the same wallet type (provider ↔ provider, or manager ↔ manager).
+        </Typography.Paragraph>
         <Form form={transferForm} layout="vertical" onFinish={onTransfer}>
-          <Form.Item
-            name="fromBankAccountId"
-            label="From account"
-            rules={[{ required: true, message: 'Select source account' }]}
-          >
-            <Select placeholder="Debit from" options={accountOptions} showSearch optionFilterProp="label" />
+          <Form.Item name="fromBankAccountId" label="From account" rules={[{ required: true }]}>
+            <Select options={accountOptions} showSearch optionFilterProp="label" />
           </Form.Item>
-          <Form.Item
-            name="toBankAccountId"
-            label="To account"
-            rules={[{ required: true, message: 'Select destination account' }]}
-          >
-            <Select placeholder="Credit to" options={accountOptions} showSearch optionFilterProp="label" />
+          <Form.Item name="toBankAccountId" label="To account" rules={[{ required: true }]}>
+            <Select options={accountOptions} showSearch optionFilterProp="label" />
           </Form.Item>
           <Form.Item name="amount" label="Amount" rules={[{ required: true }]}>
             <InputNumber min={0.01} style={{ width: '100%' }} prefix="₹" />
@@ -411,13 +438,13 @@ export default function WalletPage() {
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="notes" label="Notes (optional)">
-            <Input.TextArea rows={2} placeholder="e.g. Moved to SBI for IPO payout" />
+            <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title="Personal withdrawal (manager profit)"
+        title="Personal withdrawal (manager profit wallet)"
         open={personalModal}
         onCancel={() => setPersonalModal(false)}
         onOk={() => personalForm.submit()}
@@ -426,26 +453,18 @@ export default function WalletPage() {
         destroyOnClose
       >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          Max withdraw: {formatCurrency(maxWithdraw)} (manager profit{' '}
-          {formatCurrency(managerProfit?.availableManagerProfit ?? 0)}
-          {managerProfit?.providerAccruedProfit > 0
-            ? `, provider profit reserved ${formatCurrency(managerProfit.providerAccruedProfit)}`
-            : ''}
-          , wallet {formatCurrency(balance)}). Provider profit cannot be withdrawn here.
+          Max withdraw: {formatCurrency(maxWithdraw)} from manager profit wallet ({formatCurrency(managerBalance)}).
+          Provider wallet ({formatCurrency(providerBalance)}) is not used here.
         </Typography.Paragraph>
         <Form form={personalForm} layout="vertical" onFinish={onPersonalWithdraw}>
-          <Form.Item
-            name="bankAccountId"
-            label="From account"
-            rules={[{ required: true, message: 'Select account' }]}
-          >
-            <Select options={accountOptions} showSearch optionFilterProp="label" />
+          <Form.Item name="bankAccountId" label="From manager profit account" rules={[{ required: true }]}>
+            <Select options={managerAccountOptions} showSearch optionFilterProp="label" />
           </Form.Item>
           <Form.Item
             name="amount"
             label="Amount"
             rules={[
-              { required: true, message: 'Enter amount' },
+              { required: true },
               {
                 validator: (_, value) => {
                   if (value == null) return Promise.resolve();
@@ -463,7 +482,7 @@ export default function WalletPage() {
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="notes" label="Notes (optional)">
-            <Input.TextArea rows={2} placeholder="e.g. Personal expense" />
+            <Input.TextArea rows={2} placeholder="Personal expense" />
           </Form.Item>
         </Form>
       </Modal>
