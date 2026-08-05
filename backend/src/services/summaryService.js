@@ -31,6 +31,7 @@ const IPO_SUMMARY_SELECT = `
     i.status,
     i.ipo_segment,
     i.created_at,
+    i.open_date,
     COUNT(a.id) AS application_count,
     COALESCE(SUM(a.amount), 0) AS total_distributed,
     COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
@@ -48,7 +49,7 @@ export async function getIpoSummaryById(pool, tenantId, ipoId) {
   const [ipoRows] = await pool.query(
     `${IPO_SUMMARY_SELECT}
      WHERE i.tenant_id = ? AND i.id = ?
-     GROUP BY i.id, i.name, i.status, i.ipo_segment, i.created_at`,
+     GROUP BY i.id, i.name, i.status, i.ipo_segment, i.created_at, i.open_date`,
     [tenantId, ipoId]
   );
   if (!ipoRows.length) return null;
@@ -76,8 +77,8 @@ async function getIpoWiseSummary(pool, tenantId) {
   const [ipoRows] = await pool.query(
     `${IPO_SUMMARY_SELECT}
      WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0
-     GROUP BY i.id, i.name, i.status, i.ipo_segment, i.created_at
-     ORDER BY i.created_at DESC, i.id DESC`,
+     GROUP BY i.id, i.name, i.status, i.ipo_segment, i.created_at, i.open_date
+     ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
     [tenantId]
   );
 

@@ -48,7 +48,8 @@ router.get('/', async (req, res, next) => {
             AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
             AND a.allotment_status <> 'PENDING') as pending_return_count
 
-       FROM ipos i WHERE i.tenant_id = ? ${invalidFilter} ORDER BY i.created_at DESC`,
+       FROM ipos i WHERE i.tenant_id = ? ${invalidFilter}
+       ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
 
       [req.tenantId]
 

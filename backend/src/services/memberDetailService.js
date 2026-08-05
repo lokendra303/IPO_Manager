@@ -78,6 +78,7 @@ export async function getMemberDetail(pool, tenantId, memberId) {
             a.allotment_status, a.investor_category, a.profit_loss, a.remarks, a.created_at,
             i.id as ipo_id, i.name as ipo_name, i.lot_amount_rii, i.lot_amount_hni, i.lot_amount,
             i.status as ipo_status,
+            i.open_date AS ipo_open_date, i.created_at AS ipo_created_at,
             psd.id AS profit_share_distribution_id,
             psd.member_amount AS distributed_member_amount,
             psd.provider_amount AS distributed_provider_amount,
@@ -86,7 +87,7 @@ export async function getMemberDetail(pool, tenantId, memberId) {
      JOIN ipos i ON i.id = a.ipo_id
      LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
      WHERE a.member_id = ? AND a.tenant_id = ?
-     ORDER BY a.created_at DESC`,
+     ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC, a.id DESC`,
     [id, tenantId]
   );
 

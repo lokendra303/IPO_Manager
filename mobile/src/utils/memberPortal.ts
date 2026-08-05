@@ -12,6 +12,23 @@ export function formatAllotmentLabel(status: string): string {
   return status.replace(/_/g, ' ');
 }
 
+/** Newest IPO open date first (falls back to created / id). */
+export function compareIpoByDateDesc(a: any = {}, b: any = {}): number {
+  const dateMs = (row: any) => {
+    const raw = row.openDate || row.open_date || row.ipoOpenDate || row.ipo_open_date || null;
+    if (raw) {
+      const t = new Date(raw).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    return 0;
+  };
+  const diff = dateMs(b) - dateMs(a);
+  if (diff !== 0) return diff;
+  const idDiff = Number(b.ipoId || b.ipo_id || 0) - Number(a.ipoId || a.ipo_id || 0);
+  if (idDiff !== 0) return idDiff;
+  return String(a.ipoName || a.name || '').localeCompare(String(b.ipoName || b.name || ''));
+}
+
 export function groupApplicationsByIpo(apps: GroupApplication[]) {
   const map = new Map<string, GroupApplication[]>();
   for (const app of apps) {
@@ -21,12 +38,13 @@ export function groupApplicationsByIpo(apps: GroupApplication[]) {
     map.set(key, list);
   }
   return [...map.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
     .map(([ipoName, rows]) => ({
       ipoName,
       ipoId: rows[0]?.ipoId ?? null,
+      openDate: (rows[0] as any)?.openDate || null,
       rows: rows.sort((x, y) => (x.memberName || '').localeCompare(y.memberName || '')),
-    }));
+    }))
+    .sort((a, b) => compareIpoByDateDesc(a, b));
 }
 
 export function summarizeIpoGroupRows(rows: Array<{ allotmentStatus: string }>): string {

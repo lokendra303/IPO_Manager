@@ -35,8 +35,9 @@ export default function MemberAllotmentScreen() {
   const ipoGroups = useMemo(() => {
     const source = isGroupLeader && groupApps.length ? groupApps : personalApps.map((app) => ({
       id: app.id,
-      ipoId: 0,
+      ipoId: app.ipoId ?? 0,
       ipoName: app.ipoName,
+      openDate: app.openDate ?? null,
       memberId: 0,
       memberName: dashboard?.member?.displayName || 'You',
       memberPan: memberPan,

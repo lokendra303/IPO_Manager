@@ -222,6 +222,8 @@ function buildIpoProfitSummary(apps) {
     const key = app.ipoName || 'Unknown IPO';
     const row = map.get(key) ?? {
       ipoName: key,
+      openDate: app.openDate || app.open_date || null,
+      ipoId: app.ipoId || app.ipo_id || 0,
       applications: 0,
       allotted: 0,
       notAllotted: 0,
@@ -230,6 +232,12 @@ function buildIpoProfitSummary(apps) {
       grossPnL: 0,
       memberProfit: 0,
     };
+    if (!row.openDate && (app.openDate || app.open_date)) {
+      row.openDate = app.openDate || app.open_date;
+    }
+    if (!row.ipoId && (app.ipoId || app.ipo_id)) {
+      row.ipoId = app.ipoId || app.ipo_id;
+    }
     row.applications += 1;
     row.fundGiven = round2(row.fundGiven + Number(app.amount || 0));
     const status = app.allotmentStatus;
@@ -244,7 +252,16 @@ function buildIpoProfitSummary(apps) {
     }
     map.set(key, row);
   }
-  return [...map.values()].sort((a, b) => a.ipoName.localeCompare(b.ipoName));
+  return [...map.values()].sort((a, b) => {
+    const dateMs = (row) => {
+      if (!row.openDate) return 0;
+      const t = new Date(row.openDate).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    const diff = dateMs(b) - dateMs(a);
+    if (diff !== 0) return diff;
+    return Number(b.ipoId || 0) - Number(a.ipoId || 0);
+  });
 }
 
 function countAllotments(apps) {
@@ -264,7 +281,17 @@ function countAllotments(apps) {
 
 function addPersonalSections(doc, statement, meta) {
   const memberName = statement.member?.displayName || 'Member';
-  const apps = statement.ipoApplications || [];
+  const apps = [...(statement.ipoApplications || [])].sort((a, b) => {
+    const dateMs = (row) => {
+      const raw = row.openDate || row.open_date || null;
+      if (!raw) return 0;
+      const t = new Date(raw).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    const diff = dateMs(b) - dateMs(a);
+    if (diff !== 0) return diff;
+    return Number(b.ipoId || 0) - Number(a.ipoId || 0);
+  });
   const s = statement.summary || {};
   const fromApps = countAllotments(apps);
   const counts = {
@@ -376,9 +403,19 @@ function addGroupSections(doc, group, meta) {
     groupName,
     leaderName,
     groupStats = {},
-    groupApplications = [],
     members = [],
   } = group;
+  const groupApplications = [...(group.groupApplications || [])].sort((a, b) => {
+    const dateMs = (row) => {
+      const raw = row.openDate || row.open_date || null;
+      if (!raw) return 0;
+      const t = new Date(raw).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    const diff = dateMs(b) - dateMs(a);
+    if (diff !== 0) return diff;
+    return Number(b.ipoId || 0) - Number(a.ipoId || 0);
+  });
 
   const counts = countAllotments(groupApplications);
   const ipoSummary = buildIpoProfitSummary(groupApplications);

@@ -128,8 +128,8 @@ export default function IpoDetailScreen() {
       const activeMembers = membersRes.data.filter((m: any) => m.status === 'ACTIVE');
       setMembers([...new Map(activeMembers.map((m: any) => [m.id, m])).values()]);
       setMemberGroups(groupsRes.data);
-      const accts = walletRes.data.accounts || [];
-      setWallet(Number(walletRes.data.balance));
+      const accts = (walletRes.data.accounts || []).filter((a: any) => a.purpose !== 'MANAGER');
+      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
       setReceiveAccountId(accts.find((a: any) => a.is_default)?.id ?? accts[0]?.id ?? null);
     } catch (err) {
@@ -151,8 +151,8 @@ export default function IpoDetailScreen() {
       ]);
       setApplications(appsRes.data);
       setIpoSummary(summaryRes.data);
-      const accts = walletRes.data.accounts || [];
-      setWallet(Number(walletRes.data.balance));
+      const accts = (walletRes.data.accounts || []).filter((a: any) => a.purpose !== 'MANAGER');
+      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed to refresh'));
@@ -463,9 +463,11 @@ export default function IpoDetailScreen() {
     setPaySplits({});
     try {
       const { data } = await client.get('/wallet');
-      const accts = (data.accounts || []).filter((a: any) => a.is_active);
-      setBankAccounts(data.accounts || []);
-      setWallet(Number(data.balance));
+      const accts = (data.accounts || []).filter(
+        (a: any) => a.is_active && a.purpose !== 'MANAGER'
+      );
+      setBankAccounts((data.accounts || []).filter((a: any) => a.purpose !== 'MANAGER'));
+      setWallet(Number(data.providerBalance ?? data.balance));
       if (!accts.length) setPayAccountId(null);
       else {
         setPayMode('single');

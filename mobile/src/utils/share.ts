@@ -35,6 +35,8 @@ export function statementToText(statement: {
   ledger?: Array<{ type: string; amount: number; ipoName?: string | null; notes?: string | null }>;
   ipoApplications: Array<{
     ipoName: string;
+    ipoId?: number;
+    openDate?: string | null;
     amount: number;
     allotmentStatus: string;
     fundReturned?: boolean;
@@ -69,7 +71,18 @@ export function statementToText(statement: {
     `IPO Applications (full ledger)`,
   ].filter(Boolean);
 
-  for (const app of statement.ipoApplications) {
+  const apps = [...(statement.ipoApplications || [])].sort((a, b) => {
+    const dateMs = (row: { openDate?: string | null }) => {
+      if (!row.openDate) return 0;
+      const t = new Date(row.openDate).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    const diff = dateMs(b) - dateMs(a);
+    if (diff !== 0) return diff;
+    return Number(b.ipoId || 0) - Number(a.ipoId || 0);
+  });
+
+  for (const app of apps) {
     lines.push(
       `- ${app.ipoName}: ${app.allotmentStatus}, fund ${formatCurrency(app.amount)}` +
         (app.fundReturned ? ', returned' : ', pending return') +

@@ -11,6 +11,7 @@ export type GroupApplication = {
   ipoId: number;
   ipoName: string;
   ipoStatus?: string;
+  openDate?: string | null;
   memberId: number;
   memberName: string;
   memberPan: string;
@@ -87,6 +88,7 @@ export type MemberDashboard = {
     id: number;
     ipoId?: number;
     ipoName: string;
+    openDate?: string | null;
     allotmentStatus: string;
     amount: number;
     grossProfitLoss?: number | null;

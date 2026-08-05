@@ -86,7 +86,8 @@ export async function getTenantFullDetails(pool, tenantId) {
 
   const [ipos] = await pool.query(
     `SELECT id, name, status, lot_amount_rii, open_date, ipo_segment, created_at
-     FROM ipos WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 50`,
+     FROM ipos WHERE tenant_id = ?
+     ORDER BY COALESCE(open_date, DATE(created_at)) DESC, id DESC LIMIT 50`,
     [tenantId]
   );
 

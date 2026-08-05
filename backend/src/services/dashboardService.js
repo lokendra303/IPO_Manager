@@ -56,8 +56,8 @@ export async function getManagerDashboard(pool, tenantId) {
        WHERE i.tenant_id = ?
          AND i.status = 'OPEN'
          AND COALESCE(i.is_invalid, 0) = 0
-       GROUP BY i.id, i.name
-       ORDER BY i.created_at DESC, i.id DESC`,
+       GROUP BY i.id, i.name, i.open_date, i.created_at
+       ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
       [tenantId]
     );
 

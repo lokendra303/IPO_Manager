@@ -364,25 +364,32 @@ export default function MemberGroupsScreen() {
         {groups.length === 0 ? (
           <Text style={styles.muted}>No sub-groups yet.</Text>
         ) : (
-          groups.map((g) => (
-            <View key={g.id} style={styles.compactRow}>
-              <View style={styles.compactRowMain}>
-                <ListRow
-                  title={g.name}
-                  subtitle={`${g.memberCount ?? 0} members`}
-                  onPress={() => openViewInfo(g)}
-                />
+          groups.map((g) => {
+            const owner = getOwnerLabel(g);
+            const count = g.memberCount ?? g.members?.length ?? 0;
+            const subtitle = owner
+              ? `${count} member${count !== 1 ? 's' : ''} · Owner ${owner}`
+              : `${count} member${count !== 1 ? 's' : ''} · No owner set`;
+            return (
+              <View key={g.id} style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={g.name}
+                    subtitle={subtitle}
+                    onPress={() => openViewInfo(g)}
+                  />
+                </View>
+                <Pressable
+                  hitSlop={12}
+                  onPress={() => openGroupMore(g)}
+                  style={styles.moreBtn}
+                  accessibilityLabel={`More actions for ${g.name}`}
+                >
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
               </View>
-              <Pressable
-                hitSlop={12}
-                onPress={() => openGroupMore(g)}
-                style={styles.moreBtn}
-                accessibilityLabel={`More actions for ${g.name}`}
-              >
-                <Text style={styles.moreText}>···</Text>
-              </Pressable>
-            </View>
-          ))
+            );
+          })
         )}
       </ContentCard>
 

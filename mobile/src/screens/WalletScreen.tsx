@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
-import { Button, TextInput } from 'react-native-paper';
+import { Button, SegmentedButtons, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
@@ -75,7 +75,12 @@ export default function WalletScreen() {
 
   const onSaveAccount = async () => {
     try {
-      const body: Record<string, unknown> = { label: form.label, bankName: form.bankName, accountNumber: form.accountNumber };
+      const body: Record<string, unknown> = {
+        label: form.label,
+        bankName: form.bankName,
+        accountNumber: form.accountNumber,
+        purpose: form.purpose || 'PROVIDER',
+      };
       if (editingAccount) {
         body.isActive = form.isActive ?? editingAccount.is_active;
         await client.patch(`/bank-accounts/${editingAccount.id}`, body);
@@ -169,7 +174,7 @@ export default function WalletScreen() {
 
   const openAddAccount = () => {
     setEditingAccount(null);
-    setForm({});
+    setForm({ purpose: 'PROVIDER' });
     setAccountModal(true);
   };
 
@@ -201,6 +206,7 @@ export default function WalletScreen() {
             bankName: account.bank_name,
             accountNumber: account.account_number,
             isActive: account.is_active,
+            purpose: account.purpose || 'PROVIDER',
           });
           setAccountModal(true);
         },
@@ -285,6 +291,17 @@ export default function WalletScreen() {
         <TextInput label="Label" value={form.label || ''} onChangeText={(v) => setForm({ ...form, label: v })} mode="outlined" style={ui.input} />
         <TextInput label="Bank name" value={form.bankName || ''} onChangeText={(v) => setForm({ ...form, bankName: v })} mode="outlined" style={ui.input} />
         <TextInput label="Account number" value={form.accountNumber || ''} onChangeText={(v) => setForm({ ...form, accountNumber: v })} mode="outlined" style={ui.input} />
+        {!editingAccount ? (
+          <SegmentedButtons
+            style={{ marginBottom: 12 }}
+            value={form.purpose || 'PROVIDER'}
+            onValueChange={(v) => setForm({ ...form, purpose: v })}
+            buttons={[
+              { value: 'PROVIDER', label: 'Provider' },
+              { value: 'MANAGER', label: 'Manager' },
+            ]}
+          />
+        ) : null}
         <Button mode="contained" onPress={onSaveAccount}>Save</Button>
       </SlideModal>
 

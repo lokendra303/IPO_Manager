@@ -143,6 +143,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
     `SELECT a.id, a.amount, a.allotment_status, a.profit_loss, a.investor_category,
             a.trns_received, m.id AS member_id, m.display_name, m.pan,
             i.id AS ipo_id, i.name AS ipo_name, i.status AS ipo_status,
+            i.open_date AS ipo_open_date, i.created_at AS ipo_created_at,
             psd.id AS profit_share_distribution_id,
             psd.member_amount AS distributed_member_amount,
             psd.manager_amount AS distributed_manager_amount,
@@ -152,7 +153,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
      JOIN ipos i ON i.id = a.ipo_id
      LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
      WHERE a.tenant_id = ? AND m.member_group_id = ?
-     ORDER BY i.name, m.display_name, a.id`,
+     ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC, m.display_name, a.id`,
     [tenantId, memberGroupId]
   );
 
@@ -253,6 +254,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
         ipoId: row.ipo_id,
         ipoName: row.ipo_name,
         ipoStatus: row.ipo_status,
+        openDate: row.ipo_open_date || row.ipo_created_at || null,
         memberId: row.member_id,
         memberName: row.display_name,
         memberPan: formatPan(row.pan),
@@ -326,6 +328,7 @@ export async function getMemberPortalDashboard(pool, tenantId, memberId) {
       ipoId: app.ipo_id,
       ipoName: app.ipo_name,
       ipoStatus: app.ipo_status,
+      openDate: app.ipo_open_date || app.ipo_created_at || null,
       amount: Number(app.amount),
       allotmentStatus: app.allotment_status,
       investorCategory: app.investor_category,

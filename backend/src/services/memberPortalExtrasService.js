@@ -631,6 +631,7 @@ export async function getMemberStatement(pool, tenantId, memberId) {
       ipoId: app.ipo_id,
       ipoName: app.ipo_name,
       ipoStatus: app.ipo_status,
+      openDate: app.ipo_open_date || app.ipo_created_at || null,
       amount: Number(app.amount),
       allotmentStatus: app.allotment_status,
       investorCategory: app.investor_category,

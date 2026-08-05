@@ -40,16 +40,21 @@ function esc(v: unknown): string {
 
 type AppRow = {
   ipoName?: string;
+  ipoId?: number;
+  openDate?: string | null;
   allotmentStatus?: string;
   amount?: number;
   fundReturned?: boolean;
   grossProfitLoss?: number | null;
   memberShare?: number | null;
   memberName?: string;
+  memberPan?: string;
 };
 
 type IpoSummaryRow = {
   ipoName: string;
+  openDate?: string | null;
+  ipoId?: number;
   applications: number;
   allotted: number;
   notAllotted: number;
@@ -59,12 +64,25 @@ type IpoSummaryRow = {
   memberProfit: number;
 };
 
+function compareAppByIpoDateDesc(a: AppRow, b: AppRow): number {
+  const dateMs = (row: AppRow) => {
+    if (!row.openDate) return 0;
+    const t = new Date(row.openDate).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const diff = dateMs(b) - dateMs(a);
+  if (diff !== 0) return diff;
+  return Number(b.ipoId || 0) - Number(a.ipoId || 0);
+}
+
 function buildIpoProfitSummary(apps: AppRow[]): IpoSummaryRow[] {
   const map = new Map<string, IpoSummaryRow>();
   for (const app of apps) {
     const key = app.ipoName || 'Unknown IPO';
     const row = map.get(key) ?? {
       ipoName: key,
+      openDate: app.openDate || null,
+      ipoId: app.ipoId || 0,
       applications: 0,
       allotted: 0,
       notAllotted: 0,
@@ -73,6 +91,8 @@ function buildIpoProfitSummary(apps: AppRow[]): IpoSummaryRow[] {
       grossPnL: 0,
       memberProfit: 0,
     };
+    if (!row.openDate && app.openDate) row.openDate = app.openDate;
+    if (!row.ipoId && app.ipoId) row.ipoId = app.ipoId;
     row.applications += 1;
     row.fundGiven = round2(row.fundGiven + Number(app.amount || 0));
     const status = app.allotmentStatus;
@@ -87,7 +107,7 @@ function buildIpoProfitSummary(apps: AppRow[]): IpoSummaryRow[] {
     }
     map.set(key, row);
   }
-  return [...map.values()].sort((a, b) => a.ipoName.localeCompare(b.ipoName));
+  return [...map.values()].sort(compareAppByIpoDateDesc);
 }
 
 function countAllotments(apps: AppRow[]) {
@@ -170,7 +190,7 @@ export type StatementPdfPayload = {
 
 function buildPersonalHtml(statement: StatementPdfPayload) {
   const memberName = statement.member?.displayName || 'Member';
-  const apps = statement.ipoApplications || [];
+  const apps = [...(statement.ipoApplications || [])].sort(compareAppByIpoDateDesc);
   const s = statement.summary || {};
   const fromApps = countAllotments(apps);
   const counts = {
@@ -285,7 +305,7 @@ function buildPersonalHtml(statement: StatementPdfPayload) {
 }
 
 function buildGroupHtml(group: GroupPdfPayload) {
-  const groupApplications = group.groupApplications || [];
+  const groupApplications = [...(group.groupApplications || [])].sort(compareAppByIpoDateDesc);
   const members = group.members || [];
   const groupStats = group.groupStats || {};
   const counts = countAllotments(groupApplications);
