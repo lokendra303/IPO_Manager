@@ -11,6 +11,9 @@ export default ({ config }) => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: 'com.ipoteam.manager',
+    config: {
+      usesNonExemptEncryption: false,
+    },
   },
   android: {
     package: 'com.ipoteam.manager',
@@ -33,7 +36,7 @@ export default ({ config }) => ({
     favicon: './assets/favicon.png',
     bundler: 'metro',
   },
-  plugins: ['expo-router', 'expo-sharing'],
+  plugins: ['expo-router', 'expo-sharing', 'expo-secure-store'],
   experiments: {
     typedRoutes: true,
   },

@@ -700,12 +700,15 @@ router.post('/:id/reinvest-profit', async (req, res, next) => {
         ]
       );
 
-      const walletBalance = await syncOwnerWalletTotal(conn, req.tenantId);
+      const [walletRows] = await conn.query(
+        'SELECT balance FROM owner_wallets WHERE tenant_id = ?',
+        [req.tenantId]
+      );
 
       return {
         transactionId: txnResult.insertId,
         accruedAfter: accrued - reinvestAmt,
-        walletBalance,
+        walletBalance: Number(walletRows[0]?.balance ?? 0),
       };
     });
 

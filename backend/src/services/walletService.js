@@ -8,7 +8,7 @@ import {
 } from './bankAccountService.js';
 
 export async function getWallet(conn, tenantId) {
-  const total = await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
+  const total = await syncOwnerWalletTotal(conn, tenantId);
   return { balance: total };
 }
 
@@ -22,7 +22,7 @@ export async function ensureWallet(conn, tenantId) {
       'INSERT INTO owner_wallets (tenant_id, balance) VALUES (?, 0)',
       [tenantId]
     );
-    const total = await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
+    const total = await syncOwnerWalletTotal(conn, tenantId);
     return { id: null, balance: total };
   }
   return { id: rows[0].id, balance: Number(rows[0].balance) };
@@ -184,6 +184,7 @@ export async function debitWalletFromAccounts(conn, {
       txnDate,
       notes: partNotes,
       userId,
+      skipSync: true,
     });
   }
 
@@ -221,6 +222,7 @@ export async function creditWalletFromAccounts(conn, {
       txnDate,
       notes: partNotes,
       userId,
+      skipSync: true,
     });
   }
 

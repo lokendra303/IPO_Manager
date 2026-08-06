@@ -18,7 +18,7 @@ router.get('/', async (req, res, next) => {
     const conn = await pool.getConnection();
     try {
       await ensureWallet(conn, req.tenantId);
-      const balance = await syncOwnerWalletTotal(conn, req.tenantId, { fullVerify: true });
+      const balance = await syncOwnerWalletTotal(conn, req.tenantId);
       const accounts = await listBankAccounts(conn, req.tenantId);
       const balances = await getWalletBalancesByPurpose(conn, req.tenantId);
       const managerProfit = await getManagerProfitSummary(conn, req.tenantId, {

@@ -1,7 +1,6 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { parseAmount, parseDate } from '../utils/validate.js';
 import {
-  syncOwnerWalletTotal,
   getWalletBalancesByPurpose,
   requireBankAccountId,
 } from './bankAccountService.js';
@@ -75,7 +74,6 @@ export async function personalWithdraw(conn, {
   txnDate,
 }) {
   await ensureWallet(conn, tenantId);
-  await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true });
 
   const summary = await getManagerProfitSummary(conn, tenantId, { skipEnsureWallet: true });
   const withdrawAmount = parseAmount(amount, {

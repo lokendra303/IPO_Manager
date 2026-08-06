@@ -74,11 +74,17 @@ async function hasProviderLinkDrift(conn, tenantId) {
 
 /** Compare stored bank balance vs sum(wallet_transactions) — optional account scope. */
 async function hasAccountBalanceDrift(conn, tenantId, bankAccountIds = null) {
-  const params = [tenantId, tenantId];
+  const params = [tenantId];
+  let ledgerFilter = '';
   let accountFilter = '';
   if (bankAccountIds?.length) {
     const placeholders = bankAccountIds.map(() => '?').join(',');
+    ledgerFilter = ` AND bank_account_id IN (${placeholders})`;
     accountFilter = ` AND mba.id IN (${placeholders})`;
+    params.push(...bankAccountIds);
+  }
+  params.push(tenantId);
+  if (bankAccountIds?.length) {
     params.push(...bankAccountIds);
   }
 
@@ -88,7 +94,7 @@ async function hasAccountBalanceDrift(conn, tenantId, bankAccountIds = null) {
      LEFT JOIN (
        SELECT bank_account_id, COALESCE(SUM(amount), 0) AS ledger_total
        FROM wallet_transactions
-       WHERE tenant_id = ?
+       WHERE tenant_id = ?${ledgerFilter}
        GROUP BY bank_account_id
      ) wt ON wt.bank_account_id = mba.id
      WHERE mba.tenant_id = ?${accountFilter}
@@ -221,19 +227,20 @@ export async function ensureManagerProfitAccount(conn, tenantId) {
 }
 
 /**
- * Sum bank balances into owner_wallets after ledger verification.
- * - fullVerify: scan all accounts + provider links (Wallet page, admin repair).
- * - bankAccountIds: scan only those accounts (+ provider links); use after RETURN_IN / credits.
+ * Sum bank balances into owner_wallets.
+ * - fullVerify: expensive drift repair (admin/manual repair only).
+ * - bankAccountIds: unused for sum (always totals all active accounts); kept for API compat.
+ * Hot paths (credit/debit/provider txn/personal withdraw) must NOT use fullVerify.
  */
 export async function syncOwnerWalletTotal(conn, tenantId, { bankAccountIds = null, fullVerify = false } = {}) {
-  const scope = fullVerify ? null : bankAccountIds;
-
-  if (await hasProviderLinkDrift(conn, tenantId)) {
-    await syncProviderLinkedWalletTransactions(conn, tenantId);
-  }
-
-  if (await hasAccountBalanceDrift(conn, tenantId, scope)) {
-    await reconcileBalancesFromLedger(conn, tenantId, scope);
+  if (fullVerify) {
+    if (await hasProviderLinkDrift(conn, tenantId)) {
+      await syncProviderLinkedWalletTransactions(conn, tenantId);
+    }
+    const scope = bankAccountIds?.length ? bankAccountIds : null;
+    if (await hasAccountBalanceDrift(conn, tenantId, scope)) {
+      await reconcileBalancesFromLedger(conn, tenantId, scope);
+    }
   }
 
   const [sumRows] = await conn.query(

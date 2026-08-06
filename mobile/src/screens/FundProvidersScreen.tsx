@@ -77,8 +77,24 @@ export default function FundProvidersScreen() {
   const providers = data?.providers ?? [];
   const bankAccounts = data?.bankAccounts ?? [];
 
-  const loadProviders = () => refresh();
-  const loadAccounts = () => refresh();
+  /** One parallel refresh after mutations — avoid stacked reload calls. */
+  const afterTxnMutation = useCallback(
+    async (provider?: any) => {
+      const providerId = provider?.id ?? selected?.id ?? viewProviderId;
+      const [cacheRes, txnRes] = await Promise.all([
+        refresh(),
+        providerId
+          ? client.get(`/fund-providers/${providerId}/transactions`)
+          : Promise.resolve(null),
+      ]);
+      if (txnRes) setTransactions(txnRes.data);
+      if (providerId && cacheRes?.providers) {
+        const updated = cacheRes.providers.find((p: any) => p.id === providerId);
+        if (updated) setSelected(updated);
+      }
+    },
+    [refresh, selected, viewProviderId]
+  );
 
   const totalPrincipal = useMemo(
     () => providers.reduce((s, p) => s + Number(p.principalBalance ?? p.ledgerBalance ?? 0), 0),
@@ -111,8 +127,7 @@ export default function FundProvidersScreen() {
       });
       setReinvestModal(false);
       setReinvestForm({ amount: '', notes: 'Profit reinvested into principal' });
-      loadProviders();
-      await refreshLedger();
+      await afterTxnMutation(selected);
       Alert.alert('Success', data.message || 'Profit reinvested into principal');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not reinvest profit'));
@@ -172,12 +187,7 @@ export default function FundProvidersScreen() {
 
   const refreshLedger = async (provider = selected) => {
     if (!provider) return;
-    const { data } = await client.get(`/fund-providers/${provider.id}/transactions`);
-    setTransactions(data);
-    const { data: refreshed } = await client.get('/fund-providers');
-    await refresh();
-    const updated = refreshed.find((p: any) => p.id === provider.id);
-    if (updated) setSelected(updated);
+    await afterTxnMutation(provider);
   };
 
   const closeLedger = () => {
@@ -216,7 +226,7 @@ export default function FundProvidersScreen() {
       await client.post('/fund-providers', { name: providerName.trim() });
       setProviderModal(false);
       setProviderName('');
-      loadProviders();
+      void refresh();
       Alert.alert('Success', 'Fund provider added');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed'));
@@ -242,7 +252,7 @@ export default function FundProvidersScreen() {
       setEditProviderModal(false);
       setEditingProvider(null);
       setEditProviderName('');
-      loadProviders();
+      void refresh();
       Alert.alert('Success', 'Fund provider updated');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed to update provider'));
@@ -317,9 +327,7 @@ export default function FundProvidersScreen() {
 
       await client.post(`/fund-providers/${selected.id}/transactions`, body);
       closeTxnModal();
-      loadProviders();
-      loadAccounts();
-      await refreshLedger();
+      await afterTxnMutation(selected);
       Alert.alert(
         'Success',
         isShareOnly
@@ -365,9 +373,7 @@ export default function FundProvidersScreen() {
       });
       setEditTxnModal(false);
       setEditingTxn(null);
-      loadProviders();
-      loadAccounts();
-      await refreshLedger();
+      await afterTxnMutation(selected);
       Alert.alert('Success', 'Transaction updated — wallet balance synced');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed to update transaction'));
@@ -381,9 +387,7 @@ export default function FundProvidersScreen() {
     setRollingBackId(txn.id);
     try {
       const { data } = await client.delete(`/fund-providers/${selected.id}/transactions/${txn.id}`);
-      loadProviders();
-      loadAccounts();
-      await refreshLedger();
+      await afterTxnMutation(selected);
       Alert.alert(
         'Rolled back',
         `${formatCurrency(data.amount)} removed from provider ledger${txn.account_label ? ' and wallet adjusted' : ''}`

@@ -71,7 +71,7 @@ export default function WalletScreen() {
   const [withdrawing, setWithdrawing] = useState(false);
 
   const fetcher = useCallback(() => fetchWallet(), []);
-  const { data, loading, refresh } = useQuery(fetcher, [], { cacheKey: 'wallet' });
+  const { data, setData, loading, refresh } = useQuery(fetcher, [], { cacheKey: 'wallet' });
 
   const onSaveAccount = async () => {
     try {
@@ -88,7 +88,7 @@ export default function WalletScreen() {
         await client.post('/bank-accounts', body);
       }
       setAccountModal(false);
-      await refresh();
+      void refresh();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed'));
     }
@@ -107,7 +107,7 @@ export default function WalletScreen() {
         notes: transfer.notes,
       });
       setTransferModal(false);
-      await refresh();
+      void refresh();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Transfer failed'));
     }
@@ -143,13 +143,46 @@ export default function WalletScreen() {
     }
     setWithdrawing(true);
     try {
-      await client.post('/wallet/personal-withdraw', {
+      const { data: result } = await client.post('/wallet/personal-withdraw', {
         amount,
         bankAccountId: Number(personal.bankAccountId),
         notes: personal.notes || undefined,
       });
       setPersonalModal(false);
-      await refresh();
+      // Apply server result immediately so the UI doesn't wait on a full reload
+      setData((prev) => {
+        const base = prev ?? {
+          balance: 0,
+          accounts: [],
+          txns: [],
+          managerProfit: null,
+        };
+        const accountId = Number(personal.bankAccountId);
+        return {
+          ...base,
+          balance: Number(result.newBalance ?? result.walletBalance ?? base.balance),
+          providerBalance: result.providerBalance ?? base.providerBalance,
+          managerBalance: result.managerBalance ?? base.managerBalance,
+          managerProfit: {
+            ...(base.managerProfit || {}),
+            totalManagerShare: result.totalManagerShare,
+            personalWithdrawn: result.personalWithdrawn,
+            availableManagerProfit: result.availableManagerProfit,
+            maxWithdraw: result.maxWithdraw,
+            providerAccruedProfit: result.providerAccruedProfit,
+            walletBalance: result.walletBalance ?? result.newBalance,
+          },
+          accounts: (base.accounts || []).map((a: any) =>
+            a.id === accountId
+              ? {
+                  ...a,
+                  balance: Math.round((Number(a.balance) - amount) * 100) / 100,
+                }
+              : a
+          ),
+        };
+      });
+      void refresh();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Withdrawal failed'));
     } finally {

@@ -280,9 +280,20 @@ export default function FundProvidersPage() {
             ? `Funds added successfully — ${formatCurrency(amount)}`
             : `Repayment recorded — ${formatCurrency(Math.abs(amount))}`
       );
-      load();
-      loadAccounts();
-      if (viewProviderId) refreshProviderView();
+      const [providersRes, accountsRes, txnsRes] = await Promise.all([
+        client.get('/fund-providers'),
+        client.get('/bank-accounts'),
+        viewProviderId
+          ? client.get(`/fund-providers/${viewProviderId}/transactions`)
+          : Promise.resolve(null),
+      ]);
+      setProviders(providersRes.data);
+      setBankAccounts(accountsRes.data.accounts || []);
+      if (txnsRes) setTransactions(txnsRes.data);
+      if (viewProviderId) {
+        const updated = providersRes.data.find((p) => p.id === viewProviderId);
+        if (updated) setSelected(updated);
+      }
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to record transaction'));
     } finally {

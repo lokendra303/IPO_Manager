@@ -437,7 +437,6 @@ export async function receiveIpoApplicationsBulk(conn, {
   if (returnToWallet && results.length) {
     walletBalance = await syncOwnerWalletTotal(conn, tenantId, {
       bankAccountIds: resolvedBankAccountId ? [resolvedBankAccountId] : null,
-      fullVerify: !resolvedBankAccountId,
     });
   }
 
@@ -577,7 +576,7 @@ export async function undoReceiveIpoApplication(conn, {
     walletRows.reduce((sum, wt) => sum + Math.max(0, Number(wt.amount || 0)), 0)
   );
   if (totalToReverse > 0) {
-    const walletBalance = round2(await syncOwnerWalletTotal(conn, tenantId, { fullVerify: true }));
+    const walletBalance = round2(await syncOwnerWalletTotal(conn, tenantId));
     if (walletBalance + 0.001 < totalToReverse) {
       const shortfall = round2(totalToReverse - walletBalance);
       throw new AppError(
