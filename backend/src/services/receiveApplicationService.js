@@ -26,18 +26,21 @@ async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
 }
 
 /**
- * Member ledger: distributed principal only (matches GIVEN). Member profit was already
- * kept by the member when P&L was split — it must not inflate RECEIVED or reduce pending return.
+ * Member ledger: remaining principal after any fund adjust-out (GIVEN − ADJUSTED_OUT).
+ * Member profit was already kept by the member when P&L was split — it must not inflate
+ * RECEIVED or reduce pending return.
  * Provider wallet: principal + provider share.
  * Manager profit wallet: manager share.
  * If manager share was already credited via old profit-share wallet entries, subtract that too.
  */
 function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWallet) {
-  const distributedAmount = parseAmount(app.amount, { fieldName: 'distributed amount' });
+  const originalAmount = parseAmount(app.amount, { fieldName: 'distributed amount' });
+  const adjustedOut = round2(Number(app.adjusted_out_amount) || 0);
+  const remaining = round2(Math.max(0, originalAmount - adjustedOut));
   const withdrawalAmount =
     app.withdrawal_money != null
       ? parseAmount(app.withdrawal_money, { fieldName: 'withdrawal amount' })
-      : distributedAmount;
+      : remaining;
 
   if (explicitAmount !== undefined) {
     const explicit = parseAmount(explicitAmount, { fieldName: 'receive amount' });
@@ -58,7 +61,7 @@ function finalizeReceiveAmounts(app, explicitAmount, split, managerAlreadyInWall
   const providerWalletAmount = round2(Math.max(0, walletAmount - Math.max(0, managerShare)));
 
   return {
-    ledgerAmount: distributedAmount,
+    ledgerAmount: remaining,
     walletAmount,
     providerWalletAmount,
     managerShare: Math.max(0, managerShare),
@@ -551,6 +554,12 @@ export async function undoReceiveIpoApplication(conn, {
 
   const app = apps[0];
   await assertIpoApplicationsEditable(conn, tenantId, app.ipo_id);
+
+  if (round2(Number(app.adjusted_out_amount) || 0) > 0.001) {
+    throw new AppError(
+      'This application has funds adjusted to another IPO. Undo settle is not allowed.'
+    );
+  }
 
   const [walletRows] = await conn.query(
     `SELECT * FROM wallet_transactions

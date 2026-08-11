@@ -1805,6 +1805,77 @@ async function applyWalletSplitOverpeelRepairV53(conn) {
   }
 }
 
+async function applyFundAdjustV54(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+
+  if (!(await columnExists(conn, 'ipo_applications', 'adjusted_out_amount'))) {
+    await conn.query(
+      `ALTER TABLE ipo_applications
+       ADD COLUMN adjusted_out_amount DECIMAL(15, 2) NOT NULL DEFAULT 0 AFTER amount`
+    );
+    console.log('Added ipo_applications.adjusted_out_amount');
+  }
+
+  if (!(await columnExists(conn, 'ipo_applications', 'adjusted_from_application_id'))) {
+    await conn.query(
+      `ALTER TABLE ipo_applications
+       ADD COLUMN adjusted_from_application_id INT DEFAULT NULL AFTER adjusted_out_amount`
+    );
+    console.log('Added ipo_applications.adjusted_from_application_id');
+  }
+
+  const [fkRows] = await conn.query(
+    `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'ipo_applications'
+       AND COLUMN_NAME = 'adjusted_from_application_id'
+       AND REFERENCED_TABLE_NAME = 'ipo_applications'`
+  );
+  if (!fkRows.length && (await columnExists(conn, 'ipo_applications', 'adjusted_from_application_id'))) {
+    await conn.query(
+      `ALTER TABLE ipo_applications
+       ADD CONSTRAINT fk_apps_adjusted_from
+         FOREIGN KEY (adjusted_from_application_id) REFERENCES ipo_applications(id) ON DELETE SET NULL`
+    );
+    console.log('Added fk_apps_adjusted_from');
+  }
+
+  if (await tableExists(conn, 'member_ledger_entries')) {
+    const [col] = await conn.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_ledger_entries' AND COLUMN_NAME = 'type'`
+    );
+    if (col[0] && !String(col[0].COLUMN_TYPE).includes('ADJUSTED_OUT')) {
+      await conn.query(
+        `ALTER TABLE member_ledger_entries
+         MODIFY type ENUM('GIVEN', 'RECEIVED', 'BONUS', 'ADJUSTED_OUT') NOT NULL`
+      );
+      console.log('Added ADJUSTED_OUT to member_ledger_entries.type');
+    }
+  }
+
+  if (!(await tableExists(conn, 'ipo_fund_adjustments'))) {
+    await conn.query(
+      `CREATE TABLE IF NOT EXISTS ipo_fund_adjustments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        from_application_id INT NOT NULL,
+        to_application_id INT NOT NULL,
+        amount DECIMAL(15, 2) NOT NULL,
+        created_by INT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (from_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
+        FOREIGN KEY (to_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
+        UNIQUE KEY uk_adjust_to_app (to_application_id),
+        INDEX idx_adjust_from (from_application_id),
+        INDEX idx_adjust_tenant (tenant_id)
+      )`
+    );
+    console.log('Created ipo_fund_adjustments');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1864,6 +1935,7 @@ async function migrate() {
   await applyGroupExternalOwnerV51(conn);
   await applyWalletPurposeSplitV52(conn);
   await applyWalletSplitOverpeelRepairV53(conn);
+  await applyFundAdjustV54(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

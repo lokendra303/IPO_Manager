@@ -7,6 +7,11 @@ import { AppError } from '../middleware/errorHandler.js';
 import { distributeIpo, undistributeIpoApplication } from '../services/distributeService.js';
 
 import { receiveIpoApplication, receiveIpoApplicationsBulk, receiveIpoApplicationsByGroups, undoReceiveIpoApplication } from '../services/receiveApplicationService.js';
+import {
+  listAdjustSourceIpos,
+  previewAdjustFunds,
+  adjustFundsToIpo,
+} from '../services/adjustFundService.js';
 import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
@@ -539,7 +544,66 @@ router.post('/:id/distribute', async (req, res, next) => {
 
 });
 
+router.get('/:id/adjust-sources', async (req, res, next) => {
+  try {
+    const targetIpoId = parsePositiveInt(req.params.id, 'IPO id');
+    const conn = await pool.getConnection();
+    try {
+      const sources = await listAdjustSourceIpos(conn, req.tenantId, targetIpoId);
+      res.json(sources);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
 
+router.get('/:id/adjust-preview', async (req, res, next) => {
+  try {
+    const targetIpoId = parsePositiveInt(req.params.id, 'IPO id');
+    const fromIpoId = parsePositiveInt(req.query.fromIpoId, 'source IPO id');
+    const applicationIds = req.query.applicationIds
+      ? String(req.query.applicationIds).split(',').filter(Boolean)
+      : undefined;
+    const conn = await pool.getConnection();
+    try {
+      const preview = await previewAdjustFunds(conn, {
+        tenantId: req.tenantId,
+        targetIpoId,
+        fromIpoId,
+        investorCategory: req.query.investorCategory,
+        applicationIds,
+      });
+      res.json(preview);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/adjust-from', async (req, res, next) => {
+  try {
+    const targetIpoId = parsePositiveInt(req.params.id, 'IPO id');
+    const fromIpoId = parsePositiveInt(req.body.fromIpoId, 'source IPO id');
+    const applicationIds = dedupeIds(req.body.applicationIds || []);
+    const result = await withTransaction((conn) =>
+      adjustFundsToIpo(conn, {
+        tenantId: req.tenantId,
+        targetIpoId,
+        fromIpoId,
+        applicationIds,
+        investorCategory: req.body.investorCategory,
+        userId: req.user.userId,
+      })
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post('/applications/receive-bulk', async (req, res, next) => {
 

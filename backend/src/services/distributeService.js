@@ -18,9 +18,10 @@ export async function getProviderDeployCapacity(conn, tenantId) {
      FROM provider_transactions WHERE tenant_id = ?`,
     [tenantId]
   );
-  // All unsettled apps (including PENDING allotment) still hold deployed cash
+  // All unsettled apps (including PENDING allotment) still hold deployed cash.
+  // adjusted_out_amount was rolled to another IPO app, so only the remainder counts here.
   const [[out]] = await conn.query(
-    `SELECT COALESCE(SUM(a.amount), 0) AS still_out
+    `SELECT COALESCE(SUM(GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)), 0) AS still_out
      FROM ipo_applications a
      WHERE a.tenant_id = ?
        AND (a.trns_received IS NULL OR a.trns_received <> 'Received')`,
@@ -390,6 +391,18 @@ export async function undistributeIpoApplication(conn, {
   if (app.trns_received === 'Received') {
     throw new AppError(
       'This application is already settled. Undo settle first, then undistribute.'
+    );
+  }
+
+  const adjustedOut = round2(Number(app.adjusted_out_amount) || 0);
+  if (adjustedOut > 0.001) {
+    throw new AppError(
+      'This application has funds adjusted to another IPO. Undistribute is not allowed.'
+    );
+  }
+  if (app.adjusted_from_application_id) {
+    throw new AppError(
+      'This application was created by fund adjust. Undistribute is not allowed.'
     );
   }
 

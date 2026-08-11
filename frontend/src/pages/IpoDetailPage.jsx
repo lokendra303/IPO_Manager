@@ -5,7 +5,7 @@ import {
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
   Row, Col,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import ModalDatePicker from '../components/ModalDatePicker';
@@ -47,6 +47,10 @@ function formatIpoDate(v) {
 
 function groupHasOwner(group) {
   return Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
+}
+
+function remainingAppPrincipal(app) {
+  return Math.max(0, Number(app?.amount || 0) - Number(app?.adjusted_out_amount || 0));
 }
 
 function ProfitShareAmounts({ record }) {
@@ -118,6 +122,14 @@ export default function IpoDetailPage() {
   const [receivingByGroup, setReceivingByGroup] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ipoSummary, setIpoSummary] = useState(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustSources, setAdjustSources] = useState([]);
+  const [adjustFromIpoId, setAdjustFromIpoId] = useState(null);
+  const [adjustPreview, setAdjustPreview] = useState(null);
+  const [adjustSelectedIds, setAdjustSelectedIds] = useState([]);
+  const [adjustCategory, setAdjustCategory] = useState('RII');
+  const [adjustLoading, setAdjustLoading] = useState(false);
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -240,7 +252,7 @@ export default function IpoDetailPage() {
       .map((g) => {
         const pending = pendingByGroupId.get(g.id);
         if (!pending?.apps?.length) return null;
-        const amount = pending.apps.reduce((s, a) => s + Number(a.amount || 0), 0);
+        const amount = pending.apps.reduce((s, a) => s + remainingAppPrincipal(a), 0);
         return {
           id: g.id,
           name: g.name,
@@ -543,6 +555,80 @@ export default function IpoDetailPage() {
       message.error(getErrorMessage(err, 'Distribution failed'));
     } finally {
       setDistributing(false);
+    }
+  };
+
+  const openAdjust = async () => {
+    setAdjustOpen(true);
+    setAdjustFromIpoId(null);
+    setAdjustPreview(null);
+    setAdjustSelectedIds([]);
+    setAdjustCategory('RII');
+    setAdjustLoading(true);
+    try {
+      const { data } = await client.get(`/ipos/${id}/adjust-sources`);
+      setAdjustSources(data || []);
+      if (!data?.length) {
+        message.info('No previous IPOs with unsettled not-allotted funds to adjust');
+      }
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to load adjust sources'));
+      setAdjustSources([]);
+    } finally {
+      setAdjustLoading(false);
+    }
+  };
+
+  const loadAdjustPreview = async (fromIpoId, category = adjustCategory) => {
+    if (!fromIpoId) {
+      setAdjustPreview(null);
+      setAdjustSelectedIds([]);
+      return;
+    }
+    setAdjustLoading(true);
+    try {
+      const { data } = await client.get(`/ipos/${id}/adjust-preview`, {
+        params: { fromIpoId, investorCategory: category },
+      });
+      setAdjustPreview(data);
+      setAdjustSelectedIds((data.rows || []).filter((r) => r.eligible).map((r) => r.applicationId));
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Failed to preview adjust'));
+      setAdjustPreview(null);
+      setAdjustSelectedIds([]);
+    } finally {
+      setAdjustLoading(false);
+    }
+  };
+
+  const onAdjustSubmit = async () => {
+    if (!adjustFromIpoId) {
+      message.warning('Select a source IPO');
+      return;
+    }
+    if (!adjustSelectedIds.length) {
+      message.warning('Select at least one member to adjust');
+      return;
+    }
+    setAdjustSubmitting(true);
+    try {
+      const { data } = await client.post(`/ipos/${id}/adjust-from`, {
+        fromIpoId: adjustFromIpoId,
+        applicationIds: adjustSelectedIds,
+        investorCategory: adjustCategory,
+      });
+      message.success(
+        `Adjusted ${data.count} member(s): ${formatCurrency(data.totalAdjusted)} to this IPO` +
+          (data.totalPendingCollect > 0
+            ? `; ${formatCurrency(data.totalPendingCollect)} left pending to collect`
+            : '')
+      );
+      setAdjustOpen(false);
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Adjust failed'));
+    } finally {
+      setAdjustSubmitting(false);
     }
   };
 
@@ -1092,17 +1178,32 @@ export default function IpoDetailPage() {
     {
       title: 'Amount',
       dataIndex: 'amount',
-      width: 112,
-      render: (v, r) => (
-        <InputNumber
-          size="small"
-          min={1}
-          disabled={isFrozen}
-          style={{ width: '100%' }}
-          value={getRowVal(r, 'amount', 'amount')}
-          onChange={(val) => updateAmount(r, val)}
-        />
-      ),
+      width: 140,
+      render: (v, r) => {
+        const adjustedOut = Number(r.adjusted_out_amount || 0);
+        const remaining = remainingAppPrincipal(r);
+        return (
+          <div>
+            <InputNumber
+              size="small"
+              min={1}
+              disabled={isFrozen || adjustedOut > 0 || r.adjusted_from_application_id}
+              style={{ width: '100%' }}
+              value={getRowVal(r, 'amount', 'amount')}
+              onChange={(val) => updateAmount(r, val)}
+            />
+            {adjustedOut > 0 && (
+              <Typography.Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+                Adjusted {formatCurrency(adjustedOut)}
+                {!isFundReturned(r) && ` · pending ${formatCurrency(remaining)}`}
+              </Typography.Text>
+            )}
+            {r.adjusted_from_application_id && !adjustedOut && (
+              <Tag color="cyan" style={{ marginTop: 2, marginInlineEnd: 0 }}>From adjust</Tag>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: 'Fund returned',
@@ -1110,12 +1211,23 @@ export default function IpoDetailPage() {
       width: 118,
       align: 'center',
       sorter: (a, b) => Number(isFundReturned(b)) - Number(isFundReturned(a)),
-      render: (v) =>
-        v === 'Received' ? (
-          <Tag color="success" style={{ marginInlineEnd: 0 }}>Returned</Tag>
-        ) : (
-          <Tag style={{ marginInlineEnd: 0 }}>Pending</Tag>
-        ),
+      render: (v, r) => {
+        if (v === 'Received') {
+          return <Tag color="success" style={{ marginInlineEnd: 0 }}>Returned</Tag>;
+        }
+        const remaining = remainingAppPrincipal(r);
+        const adjustedOut = Number(r.adjusted_out_amount || 0);
+        if (adjustedOut > 0) {
+          return (
+            <Tooltip title={`Original ${formatCurrency(r.amount)}; adjusted out ${formatCurrency(adjustedOut)}`}>
+              <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                Pending {formatCurrency(remaining)}
+              </Tag>
+            </Tooltip>
+          );
+        }
+        return <Tag style={{ marginInlineEnd: 0 }}>Pending</Tag>;
+      },
     },
     {
       title: 'Given',
@@ -1277,9 +1389,10 @@ export default function IpoDetailPage() {
           <Space size={4} wrap>
             <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
               <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
-                Receive
+                Receive{Number(r.adjusted_out_amount || 0) > 0 ? ` ${formatCurrency(remainingAppPrincipal(r))}` : ''}
               </Button>
             </Popconfirm>
+            {!Number(r.adjusted_out_amount || 0) && !r.adjusted_from_application_id && (
             <Popconfirm
               title={`Undistribute ${r.display_name || 'this member'}?`}
               description={`${formatCurrency(r.amount)} will return to wallet and this application will be removed.`}
@@ -1296,6 +1409,7 @@ export default function IpoDetailPage() {
                 Undistribute
               </Button>
             </Popconfirm>
+            )}
             {hasProfitSplit && (
               <Popconfirm
                 title="Revoke P&L profit split?"
@@ -1406,6 +1520,17 @@ export default function IpoDetailPage() {
                 disabled={!availableMembers.length || isFrozen}
               >
                 Distribute Funds
+              </Button>
+            </Tooltip>
+            <Tooltip
+              title={
+                isFrozen
+                  ? 'Reopen or restore this IPO to adjust funds'
+                  : 'Move unsettled not-allotted funds from a previous IPO (new lot must be ≤ old amount)'
+              }
+            >
+              <Button icon={<SwapOutlined />} onClick={openAdjust} disabled={isFrozen}>
+                Adjust from previous IPO
               </Button>
             </Tooltip>
             <Button icon={<UndoOutlined />} onClick={onUndoChanges} disabled={!unsavedRowCount || isFrozen}>
@@ -2419,6 +2544,148 @@ export default function IpoDetailPage() {
                 showIcon
               />
             )}
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        title="Adjust funds from previous IPO"
+        open={adjustOpen}
+        onCancel={() => setAdjustOpen(false)}
+        width={860}
+        destroyOnClose
+        okText={
+          adjustSelectedIds.length
+            ? `Adjust ${adjustSelectedIds.length} member(s)`
+            : 'Adjust'
+        }
+        onOk={onAdjustSubmit}
+        confirmLoading={adjustSubmitting}
+        okButtonProps={{ disabled: !adjustSelectedIds.length || adjustLoading }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Roll unsettled not-allotted funds onto this IPO without collecting cash first. New lot must be ≤ remaining old amount; the difference stays pending to collect on the old IPO."
+        />
+        <Space wrap style={{ marginBottom: 16 }} align="start">
+          <div>
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+              Source IPO
+            </Typography.Text>
+            <Select
+              style={{ minWidth: 280 }}
+              placeholder={adjustLoading && !adjustSources.length ? 'Loading…' : 'Select previous IPO'}
+              value={adjustFromIpoId}
+              loading={adjustLoading}
+              options={(adjustSources || []).map((s) => ({
+                value: s.id,
+                label: `${s.name} (${s.adjustable_count} · ${formatCurrency(s.adjustable_principal)})`,
+              }))}
+              onChange={(val) => {
+                setAdjustFromIpoId(val);
+                loadAdjustPreview(val, adjustCategory);
+              }}
+              allowClear
+              onClear={() => {
+                setAdjustFromIpoId(null);
+                setAdjustPreview(null);
+                setAdjustSelectedIds([]);
+              }}
+            />
+          </div>
+          <div>
+            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
+              Category on this IPO
+            </Typography.Text>
+            <Select
+              style={{ minWidth: 120 }}
+              value={adjustCategory}
+              options={categoryCompactOptionsForIpo(ipo)}
+              onChange={(val) => {
+                setAdjustCategory(val);
+                if (adjustFromIpoId) loadAdjustPreview(adjustFromIpoId, val);
+              }}
+            />
+          </div>
+        </Space>
+        {adjustPreview && (
+          <>
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={
+                <>
+                  Eligible {adjustPreview.eligibleCount}: adjust{' '}
+                  <strong>{formatCurrency(adjustPreview.totalAdjust)}</strong>
+                  {adjustPreview.totalPendingCollect > 0 && (
+                    <>
+                      {' '}· leave pending collect{' '}
+                      <strong>{formatCurrency(adjustPreview.totalPendingCollect)}</strong>
+                    </>
+                  )}
+                </>
+              }
+            />
+            <Table
+              size="small"
+              rowKey="applicationId"
+              loading={adjustLoading}
+              dataSource={adjustPreview.rows || []}
+              pagination={false}
+              scroll={{ y: 360 }}
+              rowSelection={{
+                selectedRowKeys: adjustSelectedIds,
+                onChange: (keys) => setAdjustSelectedIds(keys),
+                getCheckboxProps: (record) => ({ disabled: !record.eligible }),
+              }}
+              columns={[
+                {
+                  title: 'Member',
+                  dataIndex: 'memberName',
+                  render: (v, r) => (
+                    <span>
+                      {v}
+                      {!r.eligible && (
+                        <Typography.Text type="danger" style={{ display: 'block', fontSize: 12 }}>
+                          {r.blockedReason}
+                        </Typography.Text>
+                      )}
+                    </span>
+                  ),
+                },
+                {
+                  title: 'Old amount',
+                  dataIndex: 'oldAmount',
+                  align: 'right',
+                  width: 110,
+                  render: (v) => formatCurrency(v),
+                },
+                {
+                  title: 'New lot',
+                  dataIndex: 'newLot',
+                  align: 'right',
+                  width: 110,
+                  render: (v) => (v != null ? formatCurrency(v) : '—'),
+                },
+                {
+                  title: 'Adjust',
+                  dataIndex: 'adjustAmount',
+                  align: 'right',
+                  width: 110,
+                  render: (v) => (v != null ? formatCurrency(v) : '—'),
+                },
+                {
+                  title: 'Pending collect',
+                  dataIndex: 'pendingCollect',
+                  align: 'right',
+                  width: 120,
+                  render: (v) => (v != null ? formatCurrency(v) : '—'),
+                },
+              ]}
+            />
           </>
         )}
       </Modal>

@@ -174,6 +174,8 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   member_id INT NOT NULL,
   tenant_id INT NOT NULL,
   amount DECIMAL(15, 2) NOT NULL,
+  adjusted_out_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  adjusted_from_application_id INT DEFAULT NULL,
   date_received DATETIME DEFAULT NULL,
   trns_received VARCHAR(20) DEFAULT NULL,
   date_given DATETIME DEFAULT NULL,
@@ -190,6 +192,7 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
   FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
   FOREIGN KEY (paid_to_member_id) REFERENCES members(id) ON DELETE SET NULL,
+  FOREIGN KEY (adjusted_from_application_id) REFERENCES ipo_applications(id) ON DELETE SET NULL,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   UNIQUE KEY uk_ipo_member (ipo_id, member_id),
   INDEX idx_apps_ipo (ipo_id)
@@ -199,7 +202,7 @@ CREATE TABLE IF NOT EXISTS member_ledger_entries (
   id INT AUTO_INCREMENT PRIMARY KEY,
   member_id INT NOT NULL,
   tenant_id INT NOT NULL,
-  type ENUM('GIVEN', 'RECEIVED', 'BONUS') NOT NULL,
+  type ENUM('GIVEN', 'RECEIVED', 'BONUS', 'ADJUSTED_OUT') NOT NULL,
   amount DECIMAL(15, 2) NOT NULL,
   txn_date DATETIME NOT NULL,
   ipo_application_id INT DEFAULT NULL,
@@ -210,4 +213,20 @@ CREATE TABLE IF NOT EXISTS member_ledger_entries (
   FOREIGN KEY (ipo_application_id) REFERENCES ipo_applications(id) ON DELETE SET NULL,
   INDEX idx_ledger_member (member_id),
   INDEX idx_ledger_app_type (ipo_application_id, type)
+);
+
+CREATE TABLE IF NOT EXISTS ipo_fund_adjustments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  from_application_id INT NOT NULL,
+  to_application_id INT NOT NULL,
+  amount DECIMAL(15, 2) NOT NULL,
+  created_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (from_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
+  UNIQUE KEY uk_adjust_to_app (to_application_id),
+  INDEX idx_adjust_from (from_application_id),
+  INDEX idx_adjust_tenant (tenant_id)
 );

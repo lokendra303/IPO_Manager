@@ -1,5 +1,10 @@
 import { syncOwnerWalletTotal } from './bankAccountService.js';
-import { APPLICATION_RETURN_DUE_SQL, PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
+import {
+  APPLICATION_RETURN_DUE_SQL,
+  PENDING_AFTER_ADJUST_SQL,
+  PENDING_FUND_TOTAL_SQL,
+  PENDING_RETURN_PRINCIPAL_SQL,
+} from './pendingReturnUtils.js';
 
 function mapIpoSummaryRow(row, share = {}) {
   return {
@@ -11,6 +16,8 @@ function mapIpoSummaryRow(row, share = {}) {
     totalDistributed: Number(row.total_distributed),
     totalReturned: Number(row.total_returned),
     pendingReturn: Number(row.pending_return),
+    pendingFundTotal: Number(row.pending_fund_total),
+    pendingAfterAdjust: Number(row.pending_after_adjust),
     returnedCount: Number(row.returned_count),
     allottedCount: Number(row.allotted_count),
     notAllottedCount: Number(row.not_allotted_count),
@@ -36,6 +43,8 @@ const IPO_SUMMARY_SELECT = `
     COALESCE(SUM(a.amount), 0) AS total_distributed,
     COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
     COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return,
+    COALESCE(SUM(${PENDING_FUND_TOTAL_SQL}), 0) AS pending_fund_total,
+    COALESCE(SUM(${PENDING_AFTER_ADJUST_SQL}), 0) AS pending_after_adjust,
     SUM(CASE WHEN a.trns_received = 'Received' THEN 1 ELSE 0 END) AS returned_count,
     SUM(CASE WHEN a.allotment_status = 'ALLOTED' THEN 1 ELSE 0 END) AS allotted_count,
     SUM(CASE WHEN a.allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS not_allotted_count,
@@ -44,7 +53,6 @@ const IPO_SUMMARY_SELECT = `
     COALESCE(SUM(CASE WHEN a.allotment_status = 'ALLOTED' AND a.withdrawal_money IS NOT NULL THEN a.profit_loss ELSE 0 END), 0) AS total_profit_loss
   FROM ipos i
   LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id`;
-
 export async function getIpoSummaryById(pool, tenantId, ipoId) {
   const [ipoRows] = await pool.query(
     `${IPO_SUMMARY_SELECT}
@@ -113,6 +121,8 @@ async function getIpoWiseSummary(pool, tenantId) {
       totalDistributed: acc.totalDistributed + r.totalDistributed,
       totalReturned: acc.totalReturned + r.totalReturned,
       pendingReturn: acc.pendingReturn + r.pendingReturn,
+      pendingFundTotal: acc.pendingFundTotal + r.pendingFundTotal,
+      pendingAfterAdjust: acc.pendingAfterAdjust + r.pendingAfterAdjust,
       returnedCount: acc.returnedCount + r.returnedCount,
       allottedCount: acc.allottedCount + r.allottedCount,
       notAllottedCount: acc.notAllottedCount + r.notAllottedCount,
@@ -130,6 +140,8 @@ async function getIpoWiseSummary(pool, tenantId) {
       totalDistributed: 0,
       totalReturned: 0,
       pendingReturn: 0,
+      pendingFundTotal: 0,
+      pendingAfterAdjust: 0,
       returnedCount: 0,
       allottedCount: 0,
       notAllottedCount: 0,

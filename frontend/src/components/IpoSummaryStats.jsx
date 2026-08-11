@@ -57,8 +57,16 @@ export default function IpoSummaryStats({ summary, loading }) {
         </Col>
         <Col xs={12} sm={8} lg={8}>
           <StatCard
-            title="Pending return"
-            value={summary ? formatCurrency(summary.pendingReturn) : '—'}
+            title="Total pending fund"
+            value={summary ? formatCurrency(summary.pendingFundTotal ?? summary.pendingReturn) : '—'}
+            icon={<ClockCircleOutlined />}
+            variant="danger"
+          />
+        </Col>
+        <Col xs={12} sm={8} lg={8}>
+          <StatCard
+            title="Pending after adjust"
+            value={summary ? formatCurrency(summary.pendingAfterAdjust ?? 0) : '—'}
             icon={<ClockCircleOutlined />}
             variant="warning"
           />
@@ -100,6 +108,18 @@ export default function IpoSummaryStats({ summary, loading }) {
           Pending allotment {summary.pendingAllotmentCount}
           {' · '}
           Fund returns {summary.returnedCount}/{summary.applicationCount}
+          {Number(summary.pendingFundTotal) > 0 && (
+            <>
+              {' · '}
+              Total pending {formatCurrency(summary.pendingFundTotal)}
+            </>
+          )}
+          {Number(summary.pendingAfterAdjust) > 0 && (
+            <>
+              {' · '}
+              After adjust {formatCurrency(summary.pendingAfterAdjust)}
+            </>
+          )}
           {summary.profitSharedCount > 0 && (
             <>
               {' · '}
