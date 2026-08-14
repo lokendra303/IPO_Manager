@@ -24,6 +24,7 @@ import profitSharesRoutes from './routes/profitShares.js';
 import memberPortalRoutes from './routes/memberPortal.js';
 import memberIssuesRoutes from './routes/memberIssues.js';
 import memberGroupsRoutes from './routes/memberGroups.js';
+import groupLeaderWalletsRoutes from './routes/groupLeaderWallets.js';
 import auditLogsRoutes from './routes/auditLogs.js';
 import { warmPool } from './db/pool.js';
 
@@ -61,6 +62,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/profit-shares', profitSharesRoutes);
 app.use('/api/member-issues', memberIssuesRoutes);
 app.use('/api/member-groups', memberGroupsRoutes);
+app.use('/api/group-leader-wallets', groupLeaderWalletsRoutes);
 app.use('/api/audit-logs', auditLogsRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

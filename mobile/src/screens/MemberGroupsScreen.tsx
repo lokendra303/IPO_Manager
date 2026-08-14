@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Button, Checkbox, SegmentedButtons, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -52,6 +53,7 @@ function getOwnerLabel(group: any) {
 }
 
 export default function MemberGroupsScreen() {
+  const router = useRouter();
   const [saving, setSaving] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -357,7 +359,14 @@ export default function MemberGroupsScreen() {
       <PageHeader
         title="Sub-Groups"
         subtitle={`${groups.length} groups · bulk pay to owner`}
-        extra={<Button compact mode="contained" onPress={openCreate}>Add</Button>}
+        extra={
+          <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+            <Button compact mode="text" onPress={() => router.push('/(manager)/group-leader-wallets')}>
+              Wallets
+            </Button>
+            <Button compact mode="contained" onPress={openCreate}>Add</Button>
+          </View>
+        }
       />
 
       <ContentCard title={`Groups (${groups.length})`}>

@@ -1526,10 +1526,14 @@ export default function IpoDetailPage() {
               title={
                 isFrozen
                   ? 'Reopen or restore this IPO to adjust funds'
-                  : 'Move unsettled not-allotted funds from a previous IPO (new lot must be ≤ old amount)'
+                  : 'Open adjust page — to send / to collect by sub-group & individual (no wallet)'
               }
             >
-              <Button icon={<SwapOutlined />} onClick={openAdjust} disabled={isFrozen}>
+              <Button
+                icon={<SwapOutlined />}
+                onClick={() => navigate(`/ipos/${id}/adjust`)}
+                disabled={isFrozen}
+              >
                 Adjust from previous IPO
               </Button>
             </Tooltip>

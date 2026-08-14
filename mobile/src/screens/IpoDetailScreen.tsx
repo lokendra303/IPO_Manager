@@ -112,14 +112,6 @@ export default function IpoDetailScreen() {
   const [payMode, setPayMode] = useState<'single' | 'split'>('single');
   const [payAccountId, setPayAccountId] = useState<number | null>(null);
   const [paySplits, setPaySplits] = useState<Record<number, string>>({});
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustSources, setAdjustSources] = useState<any[]>([]);
-  const [adjustFromIpoId, setAdjustFromIpoId] = useState<number | null>(null);
-  const [adjustPreview, setAdjustPreview] = useState<any>(null);
-  const [adjustSelectedIds, setAdjustSelectedIds] = useState<number[]>([]);
-  const [adjustCategory, setAdjustCategory] = useState('RII');
-  const [adjustLoading, setAdjustLoading] = useState(false);
-  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const load = async () => {
     if (!id) return;
@@ -326,7 +318,8 @@ export default function IpoDetailScreen() {
   const unsavedRowCount = Object.keys(editedRows).length;
 
   const displaySummary = useMemo(() => {
-    if (!ipoSummary) return null;
+    if (!ipoSummary && !applications.length) return null;
+
     let hasPnL = false;
     const totalProfitLoss = applications.reduce((sum, app) => {
       const edited = editedRows[app.id];
@@ -340,7 +333,30 @@ export default function IpoDetailScreen() {
       hasPnL = true;
       return sum + pl;
     }, 0);
-    return { ...ipoSummary, totalProfitLoss: hasPnL ? totalProfitLoss : null };
+
+    let pendingFundTotal = 0;
+    let pendingAfterAdjust = 0;
+    for (const app of applications) {
+      if (isFundReturned(app)) continue;
+      const remaining = remainingAppPrincipal(app);
+      pendingFundTotal += remaining;
+      if (Number(app.adjusted_out_amount || 0) > 0) {
+        pendingAfterAdjust += remaining;
+      }
+    }
+    pendingFundTotal = Math.round(pendingFundTotal * 100) / 100;
+    pendingAfterAdjust = Math.round(pendingAfterAdjust * 100) / 100;
+
+    return {
+      ...(ipoSummary || {}),
+      applicationCount: ipoSummary?.applicationCount ?? applications.length,
+      returnedCount:
+        ipoSummary?.returnedCount ?? applications.filter((a) => isFundReturned(a)).length,
+      pendingFundTotal: ipoSummary?.pendingFundTotal ?? pendingFundTotal,
+      pendingAfterAdjust: ipoSummary?.pendingAfterAdjust ?? pendingAfterAdjust,
+      pendingReturn: ipoSummary?.pendingReturn ?? pendingAfterAdjust,
+      totalProfitLoss: hasPnL ? totalProfitLoss : ipoSummary?.totalProfitLoss ?? null,
+    };
   }, [ipoSummary, applications, editedRows]);
 
   const getRowVal = (record: any, field: string, dbField: string) => {
@@ -642,76 +658,6 @@ export default function IpoDetailScreen() {
       Alert.alert('Error', getErrorMessage(err, 'Distribution failed'));
     } finally {
       setDistributing(false);
-    }
-  };
-
-  const openAdjust = async () => {
-    setAdjustOpen(true);
-    setAdjustFromIpoId(null);
-    setAdjustPreview(null);
-    setAdjustSelectedIds([]);
-    setAdjustCategory('RII');
-    setAdjustLoading(true);
-    try {
-      const { data } = await client.get(`/ipos/${id}/adjust-sources`);
-      setAdjustSources(data || []);
-      if (!data?.length) {
-        Alert.alert('Info', 'No previous IPOs with unsettled not-allotted funds to adjust');
-      }
-    } catch (err) {
-      Alert.alert('Error', getErrorMessage(err, 'Failed to load adjust sources'));
-      setAdjustSources([]);
-    } finally {
-      setAdjustLoading(false);
-    }
-  };
-
-  const loadAdjustPreview = async (fromIpoId: number, category = adjustCategory) => {
-    setAdjustLoading(true);
-    try {
-      const { data } = await client.get(`/ipos/${id}/adjust-preview`, {
-        params: { fromIpoId, investorCategory: category },
-      });
-      setAdjustPreview(data);
-      setAdjustSelectedIds((data.rows || []).filter((r: any) => r.eligible).map((r: any) => r.applicationId));
-    } catch (err) {
-      Alert.alert('Error', getErrorMessage(err, 'Failed to preview adjust'));
-      setAdjustPreview(null);
-      setAdjustSelectedIds([]);
-    } finally {
-      setAdjustLoading(false);
-    }
-  };
-
-  const onAdjustSubmit = async () => {
-    if (!adjustFromIpoId) {
-      Alert.alert('Warning', 'Select a source IPO');
-      return;
-    }
-    if (!adjustSelectedIds.length) {
-      Alert.alert('Warning', 'Select at least one member to adjust');
-      return;
-    }
-    setAdjustSubmitting(true);
-    try {
-      const { data } = await client.post(`/ipos/${id}/adjust-from`, {
-        fromIpoId: adjustFromIpoId,
-        applicationIds: adjustSelectedIds,
-        investorCategory: adjustCategory,
-      });
-      Alert.alert(
-        'Adjusted',
-        `Adjusted ${data.count} member(s): ${formatCurrency(data.totalAdjusted)} to this IPO` +
-          (data.totalPendingCollect > 0
-            ? `\n${formatCurrency(data.totalPendingCollect)} left pending to collect on the old IPO`
-            : '')
-      );
-      setAdjustOpen(false);
-      load();
-    } catch (err) {
-      Alert.alert('Error', getErrorMessage(err, 'Adjust failed'));
-    } finally {
-      setAdjustSubmitting(false);
     }
   };
 
@@ -1093,20 +1039,16 @@ export default function IpoDetailScreen() {
       )}
 
       {displaySummary && (
-        <ContentCard title="Summary">
+        <ContentCard title="IPO Summary">
           <StatGrid>
-            <StatCard title="Apps" value={displaySummary.applicationCount} variant="info" />
+            <StatCard title="Members" value={displaySummary.applicationCount} variant="info" />
             <StatCard
-              title="Total pending"
-              value={formatCurrency(displaySummary.pendingFundTotal ?? displaySummary.pendingReturn)}
-              variant={
-                Number(displaySummary.pendingFundTotal ?? displaySummary.pendingReturn) > 0
-                  ? 'danger'
-                  : 'success'
-              }
+              title="Total pending fund"
+              value={formatCurrency(displaySummary.pendingFundTotal ?? 0)}
+              variant={Number(displaySummary.pendingFundTotal ?? 0) > 0 ? 'danger' : 'success'}
             />
             <StatCard
-              title="After adjust"
+              title="Pending after adjust"
               value={formatCurrency(displaySummary.pendingAfterAdjust ?? 0)}
               variant={Number(displaySummary.pendingAfterAdjust ?? 0) > 0 ? 'warning' : 'success'}
             />
@@ -1120,6 +1062,11 @@ export default function IpoDetailScreen() {
                     ? 'success'
                     : 'danger'
               }
+            />
+            <StatCard
+              title="Provider share"
+              value={formatCurrency(displaySummary.shareProviderTotal ?? 0)}
+              variant="primary"
             />
             <StatCard
               title="Returned"
@@ -1152,10 +1099,30 @@ export default function IpoDetailScreen() {
           </Button>
         </View>
         {!isFrozen && (
-          <Button mode="outlined" style={{ marginTop: 8 }} onPress={openAdjust}>
+          <Button
+            mode="contained-tonal"
+            style={{ marginTop: 8 }}
+            onPress={() => router.push(`/(manager)/ipos/${id}/adjust`)}
+          >
             Adjust from previous IPO
           </Button>
         )}
+        {!isFrozen && (
+          <Button
+            mode="outlined"
+            style={{ marginTop: 8 }}
+            onPress={() => router.push('/(manager)/adjust-combine')}
+          >
+            Combine adjust
+          </Button>
+        )}
+        <Button
+          mode="outlined"
+          style={{ marginTop: 8 }}
+          onPress={() => router.push('/(manager)/group-leader-wallets')}
+        >
+          Leader wallets
+        </Button>
         <Button
           mode="outlined"
           style={{ marginTop: 8 }}
@@ -1699,119 +1666,6 @@ export default function IpoDetailScreen() {
                 </View>
               </>
             )}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
-
-      <Modal visible={adjustOpen} animationType="slide" onRequestClose={() => setAdjustOpen(false)}>
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-            <Text style={ui.modalTitle}>Adjust from previous IPO</Text>
-            <Text style={[ui.muted, { marginBottom: 12 }]}>
-              New lot must be ≤ old remaining amount. Difference stays pending to collect on the old IPO.
-            </Text>
-
-            <Text style={styles.sectionTitle}>Source IPO</Text>
-            {adjustSources.map((s) => (
-              <Pressable
-                key={s.id}
-                style={[ui.accountOption, adjustFromIpoId === s.id && ui.accountOptionActive]}
-                onPress={() => {
-                  setAdjustFromIpoId(s.id);
-                  loadAdjustPreview(s.id, adjustCategory);
-                }}
-              >
-                <Text style={styles.bold}>{s.name}</Text>
-                <Text style={ui.muted}>
-                  {s.adjustable_count} members · {formatCurrency(s.adjustable_principal)}
-                </Text>
-              </Pressable>
-            ))}
-            {!adjustSources.length && !adjustLoading && (
-              <Text style={ui.muted}>No adjustable source IPOs</Text>
-            )}
-
-            <Text style={styles.sectionTitle}>Category on this IPO</Text>
-            <View style={ui.chipRow}>
-              {categoryCompactOptionsForIpo(ipo).map((opt) => (
-                <Pressable
-                  key={opt.value}
-                  style={[ui.chip, adjustCategory === opt.value && ui.chipActive]}
-                  onPress={() => {
-                    setAdjustCategory(opt.value);
-                    if (adjustFromIpoId) loadAdjustPreview(adjustFromIpoId, opt.value);
-                  }}
-                >
-                  <Text style={[ui.chipText, adjustCategory === opt.value && ui.chipTextActive]}>
-                    {opt.label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            {adjustPreview && (
-              <>
-                <Banner variant="info">
-                  {`Eligible ${adjustPreview.eligibleCount}: adjust ${formatCurrency(adjustPreview.totalAdjust)}` +
-                    (adjustPreview.totalPendingCollect > 0
-                      ? ` · pending collect ${formatCurrency(adjustPreview.totalPendingCollect)}`
-                      : '')}
-                </Banner>
-                {(adjustPreview.rows || []).map((row: any) => (
-                  <Pressable
-                    key={row.applicationId}
-                    style={[styles.profitRow, !row.eligible && { opacity: 0.55 }]}
-                    onPress={() => {
-                      if (!row.eligible) return;
-                      setAdjustSelectedIds((prev) =>
-                        prev.includes(row.applicationId)
-                          ? prev.filter((x) => x !== row.applicationId)
-                          : [...prev, row.applicationId]
-                      );
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Checkbox
-                        status={adjustSelectedIds.includes(row.applicationId) ? 'checked' : 'unchecked'}
-                        disabled={!row.eligible}
-                        onPress={() => {
-                          if (!row.eligible) return;
-                          setAdjustSelectedIds((prev) =>
-                            prev.includes(row.applicationId)
-                              ? prev.filter((x) => x !== row.applicationId)
-                              : [...prev, row.applicationId]
-                          );
-                        }}
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.bold}>{row.memberName}</Text>
-                        {row.eligible ? (
-                          <Text style={ui.muted}>
-                            Old {formatCurrency(row.oldAmount)} → adjust {formatCurrency(row.adjustAmount)}
-                            {' · '}pending {formatCurrency(row.pendingCollect)}
-                          </Text>
-                        ) : (
-                          <Text style={styles.warnText}>{row.blockedReason}</Text>
-                        )}
-                      </View>
-                    </View>
-                  </Pressable>
-                ))}
-              </>
-            )}
-
-            <Button
-              mode="contained"
-              loading={adjustSubmitting || adjustLoading}
-              disabled={!adjustSelectedIds.length || adjustSubmitting}
-              onPress={onAdjustSubmit}
-              style={{ marginTop: 12 }}
-            >
-              Adjust {adjustSelectedIds.length ? `(${adjustSelectedIds.length})` : ''}
-            </Button>
-            <Button mode="text" onPress={() => setAdjustOpen(false)} style={{ marginTop: 8 }}>
-              Cancel
-            </Button>
           </ScrollView>
         </SafeAreaView>
       </Modal>

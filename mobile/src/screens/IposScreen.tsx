@@ -195,16 +195,21 @@ export default function IposScreen() {
         title="IPOs"
         subtitle={`${list.length} active`}
         extra={
-          <Button
-            compact
-            mode="contained"
-            onPress={() => {
-              setForm({ ipoSegment: 'MAINBOARD', enableHni: false });
-              setModalOpen(true);
-            }}
-          >
-            New
-          </Button>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button compact mode="outlined" onPress={() => router.push('/(manager)/adjust-combine')}>
+              Combine
+            </Button>
+            <Button
+              compact
+              mode="contained"
+              onPress={() => {
+                setForm({ ipoSegment: 'MAINBOARD', enableHni: false });
+                setModalOpen(true);
+              }}
+            >
+              New
+            </Button>
+          </View>
         }
       />
 

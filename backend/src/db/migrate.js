@@ -1876,6 +1876,14 @@ async function applyFundAdjustV54(conn) {
   }
 }
 
+async function applyGroupLeaderWalletsV55(conn) {
+  if (!(await tableExists(conn, 'group_leader_transactions'))) {
+    const sql = fs.readFileSync(path.join(__dirname, 'schema-group-leader-wallets.sql'), 'utf8');
+    await conn.query(sql);
+    console.log('Created group_leader_transactions');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1936,6 +1944,7 @@ async function migrate() {
   await applyWalletPurposeSplitV52(conn);
   await applyWalletSplitOverpeelRepairV53(conn);
   await applyFundAdjustV54(conn);
+  await applyGroupLeaderWalletsV55(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

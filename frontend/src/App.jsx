@@ -18,9 +18,12 @@ import AdminAuditLogPage from './pages/AdminAuditLogPage';
 import DashboardPage from './pages/DashboardPage';
 import MembersPage from './pages/MembersPage';
 import FundProvidersPage from './pages/FundProvidersPage';
+import GroupLeaderWalletsPage from './pages/GroupLeaderWalletsPage';
 import WalletPage from './pages/WalletPage';
 import IposPage from './pages/IposPage';
 import IpoDetailPage from './pages/IpoDetailPage';
+import AdjustFundsPage from './pages/AdjustFundsPage';
+import CombineAdjustPage from './pages/CombineAdjustPage';
 import SummaryPage from './pages/SummaryPage';
 import SettingsPage from './pages/SettingsPage';
 import ProfitSharingPage from './pages/ProfitSharingPage';
@@ -72,9 +75,12 @@ function AppRoutes() {
       <Route path="/notifications" element={<ManagerRoute><NotificationsPage /></ManagerRoute>} />
       <Route path="/members" element={<ManagerRoute><MembersPage /></ManagerRoute>} />
       <Route path="/member-groups" element={<ManagerRoute><MemberGroupsPage /></ManagerRoute>} />
+      <Route path="/group-leader-wallets" element={<ManagerRoute><GroupLeaderWalletsPage /></ManagerRoute>} />
       <Route path="/fund-providers" element={<ManagerRoute><FundProvidersPage /></ManagerRoute>} />
       <Route path="/wallet" element={<ManagerRoute><WalletPage /></ManagerRoute>} />
       <Route path="/ipos" element={<ManagerRoute><IposPage /></ManagerRoute>} />
+      <Route path="/adjust-combine" element={<ManagerRoute><CombineAdjustPage /></ManagerRoute>} />
+      <Route path="/ipos/:id/adjust" element={<ManagerRoute><AdjustFundsPage /></ManagerRoute>} />
       <Route path="/ipos/:id" element={<ManagerRoute><IpoDetailPage /></ManagerRoute>} />
       <Route path="/summary" element={<ManagerRoute><SummaryPage /></ManagerRoute>} />
       <Route path="/settings" element={<ManagerRoute><SettingsPage /></ManagerRoute>} />

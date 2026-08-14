@@ -6,7 +6,7 @@ import {
   ipoHasHniLot,
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
-import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -294,6 +294,14 @@ export default function IposPage() {
         title="IPOs"
         subtitle="Create IPOs, distribute funds to members, and track allotments"
         extra={
+          <>
+          <Button
+            icon={<SwapOutlined />}
+            onClick={() => navigate('/adjust-combine')}
+            style={{ marginRight: 8 }}
+          >
+            Combine adjust
+          </Button>
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -308,6 +316,7 @@ export default function IposPage() {
           >
             New IPO
           </Button>
+          </>
         }
       />
       <ContentCard title={`IPO List (${ipos.length})`}>

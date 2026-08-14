@@ -18,8 +18,9 @@ import {
   Radio,
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined,
+  PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined, WalletOutlined,
 } from '@ant-design/icons';
+import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { formatCurrency, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
@@ -336,9 +337,14 @@ export default function MemberGroupsPage() {
         title="Member Sub-Groups"
         subtitle="Create teams with a group owner — IPO funds can be paid in one bulk transfer to the owner for all members"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Add group
-          </Button>
+          <Space>
+            <Link to="/group-leader-wallets">
+              <Button icon={<WalletOutlined />}>Leader wallets</Button>
+            </Link>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              Add group
+            </Button>
+          </Space>
         }
       />
 

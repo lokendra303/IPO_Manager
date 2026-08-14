@@ -11,6 +11,9 @@ import {
   listAdjustSourceIpos,
   previewAdjustFunds,
   adjustFundsToIpo,
+  getCombineAdjustMeta,
+  previewCombineAdjust,
+  executeCombineAdjust,
 } from '../services/adjustFundService.js';
 import { dedupeIds } from '../utils/validate.js';
 
@@ -134,7 +137,58 @@ router.post('/', async (req, res, next) => {
 
 });
 
+/** Combine adjust: multi old IPOs → multi new IPOs (must be before /:id). */
+router.get('/adjust-combine/meta', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const meta = await getCombineAdjustMeta(conn, req.tenantId);
+      res.json(meta);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
 
+router.post('/adjust-combine/preview', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const preview = await previewCombineAdjust(conn, {
+        tenantId: req.tenantId,
+        fromIpoIds: req.body.fromIpoIds || [],
+        targetIpoIds: req.body.targetIpoIds || [],
+        investorCategory: req.body.investorCategory,
+        assignments: req.body.assignments || [],
+      });
+      res.json(preview);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/adjust-combine', async (req, res, next) => {
+  try {
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const result = await withTransaction((conn) =>
+      executeCombineAdjust(conn, {
+        tenantId: req.tenantId,
+        items,
+        investorCategory: req.body.investorCategory,
+        userId: req.user.userId,
+        bankAccountId: req.body.bankAccountId,
+      })
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/:id', async (req, res, next) => {
 
@@ -597,6 +651,7 @@ router.post('/:id/adjust-from', async (req, res, next) => {
         applicationIds,
         investorCategory: req.body.investorCategory,
         userId: req.user.userId,
+        bankAccountId: req.body.bankAccountId,
       })
     );
     res.status(201).json(result);

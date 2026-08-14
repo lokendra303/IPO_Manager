@@ -17,9 +17,11 @@ const MENU = [
   { href: '/(manager)/notifications' as const, label: 'Notifications', icon: 'notifications-outline' as const, badgeKey: 'issues' as const },
   { href: '/(manager)/members' as const, label: 'Members', icon: 'people-outline' as const },
   { href: '/(manager)/member-groups' as const, label: 'Sub-Groups', icon: 'git-network-outline' as const },
+  { href: '/(manager)/group-leader-wallets' as const, label: 'Leader wallets', icon: 'people-circle-outline' as const },
   { href: '/(manager)/fund-providers' as const, label: 'Fund Providers', icon: 'business-outline' as const },
   { href: '/(manager)/wallet' as const, label: 'Wallet', icon: 'wallet-outline' as const },
   { href: '/(manager)/ipos' as const, label: 'IPOs', icon: 'trending-up-outline' as const },
+  { href: '/(manager)/adjust-combine' as const, label: 'Combine adjust', icon: 'swap-horizontal-outline' as const },
   { href: '/(manager)/summary' as const, label: 'Summary', icon: 'bar-chart-outline' as const },
   { href: '/(manager)/profit-analysis' as const, label: 'Profit Analysis', icon: 'analytics-outline' as const },
   { href: '/(manager)/profit-sharing' as const, label: 'Profit Sharing', icon: 'pie-chart-outline' as const },
@@ -139,10 +141,12 @@ export default function ManagerLayout() {
         <Drawer.Screen name="notifications" />
         <Drawer.Screen name="members" />
         <Drawer.Screen name="member-groups" />
+        <Drawer.Screen name="group-leader-wallets" />
         <Drawer.Screen name="fund-providers" />
         <Drawer.Screen name="wallet" />
         <Drawer.Screen name="ipos/index" />
         <Drawer.Screen name="ipos/[id]" options={{ drawerItemStyle: { display: 'none' } }} />
+        <Drawer.Screen name="adjust-combine" />
         <Drawer.Screen name="summary" />
         <Drawer.Screen name="profit-analysis" />
         <Drawer.Screen name="profit-sharing" />

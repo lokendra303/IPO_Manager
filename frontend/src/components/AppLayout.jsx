@@ -17,6 +17,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   RiseOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -28,6 +29,8 @@ const { Header, Sider, Content } = Layout;
 const MENU_PATH_KEYS = [
   '/notifications',
   '/member-groups',
+  '/group-leader-wallets',
+  '/adjust-combine',
   '/members',
   '/fund-providers',
   '/wallet',
@@ -80,9 +83,11 @@ export default function AppLayout({ children }) {
     },
     { key: '/members', icon: <TeamOutlined />, label: <Link to="/members">Members</Link> },
     { key: '/member-groups', icon: <ApartmentOutlined />, label: <Link to="/member-groups">Sub-Groups</Link> },
+    { key: '/group-leader-wallets', icon: <WalletOutlined />, label: <Link to="/group-leader-wallets">Leader wallets</Link> },
     { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
     { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
     { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
+    { key: '/adjust-combine', icon: <SwapOutlined />, label: <Link to="/adjust-combine">Combine adjust</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
     { key: '/profit-analysis', icon: <RiseOutlined />, label: <Link to="/profit-analysis">Profit Analysis</Link> },
     { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
