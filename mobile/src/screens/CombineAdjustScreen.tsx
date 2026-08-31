@@ -133,126 +133,17 @@ export default function CombineAdjustScreen() {
     return (preview.rows || []).filter((r: any) => r.eligible && set.has(r.applicationId));
   }, [preview, selectedIds]);
 
-  const selectedByMember = useMemo(() => {
-    if (!preview) return [];
-
-    const targetMetaById = new Map(
-      (preview.targetIpos || meta.targets || []).map((t: any) => [
-        t.id,
-        {
-          id: t.id,
-          name: t.name,
-          lot:
-            category === 'HNI'
-              ? Number(t.lotAmountHni ?? t.lot_amount_hni ?? 0)
-              : Number(t.lotAmountRii ?? t.lot_amount_rii ?? 0),
-        },
-      ])
-    );
-
-    const blockedByMember = new Map<number, any[]>();
-    const pushBlocked = (list: any[]) => {
-      for (const u of list || []) {
-        if (!blockedByMember.has(u.memberId)) blockedByMember.set(u.memberId, []);
-        blockedByMember.get(u.memberId)!.push(u);
-      }
-    };
-    pushBlocked(preview.unadjustedPending || []);
-    pushBlocked(preview.allottedExcluded || []);
-    for (const r of preview.rows || []) {
-      if (!r.eligible && r.remainder > 0) {
-        if (!blockedByMember.has(r.memberId)) blockedByMember.set(r.memberId, []);
-        blockedByMember.get(r.memberId)!.push({
-          sourceIpoName: r.sourceIpoName,
-          allotmentStatus: r.allotmentStatus,
-        });
-      }
-    }
-
-    const map = new Map<number, any>();
-    for (const r of selectedRows) {
-      const tid = assignments[r.applicationId] || r.targetIpoId;
-      const opt = r.targetOptions?.find((o: any) => o.targetIpoId === tid);
-      const targetName = opt?.targetIpoName || r.targetIpoName;
-      const newLot = opt?.newLot ?? r.newLot ?? null;
-      if (!map.has(r.memberId)) {
-        map.set(r.memberId, {
-          memberId: r.memberId,
-          memberName: r.memberName,
-          groupName: r.groupName || null,
-          count: 0,
-          adjustToSend: 0,
-          freshToSend: 0,
-          totalToSend: 0,
-          totalToCollect: 0,
-          targets: [] as any[],
-          freshTargets: [] as any[],
-        });
-      }
-      const m = map.get(r.memberId);
-      m.count += 1;
-      m.adjustToSend += Number(r.toSend || 0);
-      m.totalToCollect += Number(r.toCollect || 0);
-      m.targets.push({
-        targetIpoId: tid,
-        targetIpoName: targetName,
-        newLot: newLot != null ? Number(newLot) : null,
-        toSend: Number(r.toSend || 0),
-      });
-    }
-
-    for (const m of map.values()) {
-      const covered = new Set(m.targets.map((t: any) => t.targetIpoId).filter(Boolean));
-      const uncovered = (targetIpoIds || []).filter((id) => !covered.has(id));
-      const blocked = blockedByMember.get(m.memberId) || [];
-      const freshCount = Math.min(uncovered.length, blocked.length);
-      m.freshTargets = [];
-      m.freshToSend = 0;
-      for (let i = 0; i < freshCount; i += 1) {
-        const tid = uncovered[i];
-        const metaT = targetMetaById.get(tid);
-        const lot = metaT?.lot > 0 ? metaT.lot : null;
-        const blockedOld = blocked[i];
-        m.freshTargets.push({
-          targetIpoId: tid,
-          targetIpoName: metaT?.name || `#${tid}`,
-          newLot: lot,
-          reason:
-            blockedOld?.allotmentStatus === 'PENDING'
-              ? 'Old still pending — full lot'
-              : 'Old fund not unlocked — full lot',
-          blockedSourceIpoName: blockedOld?.sourceIpoName || null,
-        });
-        m.freshToSend += Number(lot || 0);
-      }
-      m.totalToSend = m.adjustToSend + m.freshToSend;
-    }
-
-    return [...map.values()].sort((a, b) =>
-      String(a.memberName || '').localeCompare(String(b.memberName || ''))
-    );
-  }, [preview, selectedRows, assignments, targetIpoIds, meta.targets, category]);
-
-  const memberTotalsById = useMemo(() => {
-    const map = new Map<number, any>();
-    for (const m of selectedByMember) map.set(m.memberId, m);
-    return map;
-  }, [selectedByMember]);
-
   const liveTotals = useMemo(() => {
     const adjustToSend = selectedRows.reduce((s: number, r: any) => s + Number(r.toSend || 0), 0);
     const totalToCollect = selectedRows.reduce((s: number, r: any) => s + Number(r.toCollect || 0), 0);
-    const freshToSend = selectedByMember.reduce((s: number, m: any) => s + Number(m.freshToSend || 0), 0);
     const unadjustedToCollect = Number(preview?.totals?.unadjustedToCollect || 0);
     return {
       adjustToSend,
-      freshToSend,
-      totalToSend: adjustToSend + freshToSend,
       totalToCollect,
       unadjustedToCollect,
-      grandToCollect: totalToCollect + unadjustedToCollect,
     };
-  }, [selectedRows, preview, selectedByMember]);
+  }, [selectedRows, preview]);
+
 
   const onSubmit = (rowsToAdjust?: any[]) => {
     const rows = Array.isArray(rowsToAdjust) ? rowsToAdjust : selectedRows;
@@ -261,17 +152,18 @@ export default function CombineAdjustScreen() {
       return;
     }
     const toSend = rows.reduce((s: number, r: any) => s + Number(r.toSend || 0), 0);
-    if (toSend > 0.001) {
+    const walletCredit = rows.reduce((s: number, r: any) => s + Number(r.walletCredit || 0), 0);
+    if (toSend > 0.001 || walletCredit > 0.001) {
       if (!bankAccounts.length) {
-        Alert.alert('Error', 'Add a provider wallet account before adjusting top-ups');
+        Alert.alert('Error', 'Add a provider wallet account before reusing leftover');
         return;
       }
       if (bankAccounts.length > 1 && !payAccountId) {
-        Alert.alert('Warning', 'Select provider wallet account for the top-up debit');
+        Alert.alert('Warning', 'Select provider wallet account');
         return;
       }
       const acc = bankAccounts.find((a) => a.id === (payAccountId || bankAccounts[0]?.id));
-      if (acc && Number(acc.balance) < toSend) {
+      if (toSend > 0.001 && acc && Number(acc.balance) < toSend) {
         Alert.alert(
           'Insufficient wallet',
           `Need ${formatCurrency(toSend)}, available ${formatCurrency(acc.balance)} in ${acc.label}`
@@ -281,14 +173,13 @@ export default function CombineAdjustScreen() {
     }
     const single = rows.length === 1;
     Alert.alert(
-      single ? `Adjust ${rows[0].memberName}?` : `Adjust ${rows.length} selected?`,
-      `Top-up debits provider wallet. Group leader wallets update from paid-to.\n` +
-        `Roll ${rows.length}` +
-        (toSend > 0 ? ` · provider debit ${formatCurrency(toSend)}` : ''),
+      single ? `Reuse leftover for ${rows[0].memberName}?` : `Reuse leftover for ${rows.length} members?`,
+      (toSend > 0 ? `Provider wallet extra ${formatCurrency(toSend)}.\n` : '') +
+        'Leftover from the old IPO moves onto the new one.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: single ? 'Adjust this one' : `Adjust (${rows.length})`,
+          text: single ? 'Reuse this one' : `Reuse (${rows.length})`,
           onPress: async () => {
             setSubmitting(true);
             if (single) setAdjustingId(rows[0].applicationId);
@@ -301,17 +192,21 @@ export default function CombineAdjustScreen() {
                 items,
                 investorCategory: category,
               };
-              if (toSend > 0.001) {
+              if (toSend > 0.001 || walletCredit > 0.001) {
                 body.bankAccountId = payAccountId || bankAccounts[0]?.id;
               }
               const { data } = await client.post('/ipos/adjust-combine', body);
               Alert.alert(
                 'Done',
-                `Adjusted ${data.count}: rolled ${formatCurrency(data.totalAdjusted)}` +
+                `Moved leftover for ${data.count}` +
+                  (data.totalAdjusted > 0 ? ` · ${formatCurrency(data.totalAdjusted)} onto new IPO` : '') +
                   (data.providerDebited > 0
-                    ? ` · provider debited ${formatCurrency(data.providerDebited)}`
+                    ? ` · wallet −${formatCurrency(data.providerDebited)}`
                     : '') +
-                  (data.totalToCollect > 0 ? ` · collect ${formatCurrency(data.totalToCollect)}` : '')
+                  (data.providerCredited > 0
+                    ? ` · wallet +${formatCurrency(data.providerCredited)}`
+                    : '') +
+                  (data.totalToCollect > 0 ? ` · leftover ${formatCurrency(data.totalToCollect)} on old IPO` : '')
               );
               const metaRes = await client.get('/ipos/adjust-combine/meta');
               setMeta(metaRes.data || { sources: [], targets: [] });
@@ -321,7 +216,7 @@ export default function CombineAdjustScreen() {
               setProviderBalance(Number(walletRes.data?.providerBalance ?? walletRes.data?.balance ?? 0));
               await loadPreview({});
             } catch (err) {
-              Alert.alert('Error', getErrorMessage(err, 'Combine adjust failed'));
+              Alert.alert('Error', getErrorMessage(err, 'Reuse leftover failed'));
             } finally {
               setSubmitting(false);
               setAdjustingId(null);
@@ -337,8 +232,8 @@ export default function CombineAdjustScreen() {
   return (
     <Screen>
       <PageHeader
-        title="Combine adjust"
-        subtitle="Multi old → multi new · top-up debits provider · leader wallets follow paid-to"
+        title="Reuse leftover funds"
+        subtitle="Old leftover onto new IPOs. Extra comes from the provider wallet."
         extra={
           <View style={{ flexDirection: 'row', gap: 4 }}>
             <Button compact mode="text" onPress={() => router.push('/(manager)/group-leader-wallets')}>
@@ -352,10 +247,10 @@ export default function CombineAdjustScreen() {
       />
 
       <Banner variant="info">
-        Top-up debits provider wallet. Group leader wallets update from paid-to on new apps (pending moves old → new). Adjust one-by-one or multi-select.
+        Leftover from old IPOs moves onto the new ones — including small leftovers like ₹180 and ₹48, which are added together for the same member. Extra comes from the provider wallet.
       </Banner>
 
-      <ContentCard title="Provider wallet (top-up)">
+      <ContentCard title="Provider wallet (if extra is needed)">
         <Text style={ui.muted}>Available {formatCurrency(providerBalance)}</Text>
         {liveTotals.adjustToSend > providerBalance + 0.001 ? (
           <Banner variant="warn">
@@ -375,7 +270,7 @@ export default function CombineAdjustScreen() {
         {!bankAccounts.length && <Text style={ui.muted}>No provider accounts</Text>}
       </ContentCard>
 
-      <ContentCard title="Old IPOs (sources)">
+      <ContentCard title="Old IPOs (leftover with members)">
         {(meta.sources || []).map((s) => {
           const active = fromIpoIds.includes(s.id);
           const disabled = targetIpoIds.includes(s.id);
@@ -402,7 +297,7 @@ export default function CombineAdjustScreen() {
         {!meta.sources?.length && <Text style={ui.muted}>No adjustable source IPOs</Text>}
       </ContentCard>
 
-      <ContentCard title="New IPOs (targets)">
+      <ContentCard title="New IPOs (where leftover goes)">
         {(meta.targets || []).map((t) => {
           const active = targetIpoIds.includes(t.id);
           const disabled = fromIpoIds.includes(t.id);
@@ -444,66 +339,15 @@ export default function CombineAdjustScreen() {
         <>
           <ContentCard title={previewLoading ? 'Totals (updating…)' : 'Totals'}>
             <StatGrid>
-              <StatCard title="To send" value={formatCurrency(liveTotals.totalToSend)} variant="danger" />
-              <StatCard title="To collect" value={formatCurrency(liveTotals.totalToCollect)} variant="warning" />
+              <StatCard title="From wallet" value={formatCurrency(liveTotals.adjustToSend)} variant="danger" />
+              <StatCard title="Leftover on old" value={formatCurrency(liveTotals.totalToCollect)} variant="warning" />
               <StatCard
-                title="Not adjusted"
+                title="Not reused"
                 value={formatCurrency(liveTotals.unadjustedToCollect)}
                 variant="warning"
               />
-              <StatCard
-                title="Total collect"
-                value={formatCurrency(liveTotals.grandToCollect)}
-                variant="primary"
-              />
             </StatGrid>
-            <Text style={[styles.bold, { marginTop: 8, color: colors.error }]}>
-              Total to send: {formatCurrency(liveTotals.totalToSend)}
-            </Text>
           </ContentCard>
-
-          {selectedByMember.length > 0 && (
-            <ContentCard title={`By member (${selectedByMember.length})`}>
-              {selectedByMember.map((m) => (
-                <View key={m.memberId} style={styles.row}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.bold}>{m.memberName}</Text>
-                    <Text style={ui.muted}>
-                      {m.count} adj
-                      {m.freshTargets?.length ? ` + ${m.freshTargets.length} full` : ''}
-                      {m.groupName ? ` · ${m.groupName}` : ''}
-                    </Text>
-                    {(m.targets || []).map((t: any, i: number) => (
-                      <Text key={`a-${t.targetIpoId}-${i}`} style={ui.muted}>
-                        Adjust → {t.targetIpoName} {t.newLot != null ? formatCurrency(t.newLot) : '—'}
-                        {t.toSend > 0 ? ` (+${formatCurrency(t.toSend)})` : ''}
-                      </Text>
-                    ))}
-                    {(m.freshTargets || []).map((t: any, i: number) => (
-                      <Text key={`f-${t.targetIpoId}-${i}`} style={{ color: colors.error, fontSize: 12 }}>
-                        Full send → {t.targetIpoName}{' '}
-                        {t.newLot != null ? formatCurrency(t.newLot) : '—'}
-                        {t.blockedSourceIpoName ? ` (${t.blockedSourceIpoName})` : ''}
-                      </Text>
-                    ))}
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={[styles.bold, { color: colors.error }]}>
-                      send {formatCurrency(m.totalToSend)}
-                    </Text>
-                    {m.freshToSend > 0 ? (
-                      <Text style={ui.muted}>
-                        {formatCurrency(m.adjustToSend)}+{formatCurrency(m.freshToSend)}
-                      </Text>
-                    ) : null}
-                    {m.totalToCollect > 0 ? (
-                      <Text style={ui.muted}>collect {formatCurrency(m.totalToCollect)}</Text>
-                    ) : null}
-                  </View>
-                </View>
-              ))}
-            </ContentCard>
-          )}
 
           <ContentCard title={`Members (${selectedIds.length})`}>
             {(preview.rows || []).map((row: any) => (
@@ -526,22 +370,12 @@ export default function CombineAdjustScreen() {
                     {row.sourceIpoName}
                     {row.groupName ? ` · ${row.groupName}` : ''}
                   </Text>
-                  {selectedIds.includes(row.applicationId) &&
-                  memberTotalsById.get(row.memberId)?.count > 1 ? (
-                    <Text style={{ color: colors.error, fontWeight: '700', fontSize: 12 }}>
-                      Member total send{' '}
-                      {formatCurrency(memberTotalsById.get(row.memberId).totalToSend)}
-                      {memberTotalsById.get(row.memberId).totalToCollect > 0
-                        ? ` · collect ${formatCurrency(memberTotalsById.get(row.memberId).totalToCollect)}`
-                        : ''}
-                    </Text>
-                  ) : null}
                   {row.eligible ? (
                     <>
                       <Text style={ui.muted}>
                         {formatCurrency(row.remainder)} → {formatCurrency(row.newLot)}
-                        {row.toSend > 0 ? ` · send ${formatCurrency(row.toSend)}` : ''}
-                        {row.toCollect > 0 ? ` · collect ${formatCurrency(row.toCollect)}` : ''}
+                        {row.toSend > 0 ? ` · wallet extra ${formatCurrency(row.toSend)}` : ''}
+                        {row.toCollect > 0 ? ` · leftover ${formatCurrency(row.toCollect)}` : ''}
                       </Text>
                       <View style={ui.chipRow}>
                         {(row.targetOptions || [])
@@ -578,7 +412,7 @@ export default function CombineAdjustScreen() {
                       disabled={submitting}
                       onPress={() => onSubmit([row])}
                     >
-                      Adjust this
+                      Reuse this
                     </Button>
                   ) : null}
                 </View>
@@ -587,9 +421,9 @@ export default function CombineAdjustScreen() {
           </ContentCard>
 
           {(preview.allottedExcluded || []).length > 0 && (
-            <ContentCard title={`Allotted — cannot adjust (${preview.allottedExcluded.length})`}>
+            <ContentCard title={`Allotted — cannot reuse (${preview.allottedExcluded.length})`}>
               <Banner variant="info">
-                Funds in shares — not rolled. Same member can still adjust not-allotted IPOs.
+                Funds in allotted shares stay there. The same member can still reuse leftover from other IPOs.
               </Banner>
               {(preview.allottedExcluded || []).map((u: any) => (
                 <View key={u.applicationId} style={styles.row}>
@@ -605,7 +439,7 @@ export default function CombineAdjustScreen() {
           )}
 
           {(preview.unadjustedPending || []).length > 0 && (
-            <ContentCard title="Not adjusted — full to collect">
+            <ContentCard title="Not reused — still with these members">
               {(preview.unadjustedPending || []).map((u: any) => (
                 <View key={u.applicationId} style={styles.row}>
                   <View style={{ flex: 1 }}>
@@ -620,7 +454,7 @@ export default function CombineAdjustScreen() {
           )}
 
           <Banner variant="warning">
-            Total to send: {formatCurrency(liveTotals.totalToSend)} · to collect:{' '}
+            Wallet extra: {formatCurrency(liveTotals.adjustToSend)} · leftover on old IPO:{' '}
             {formatCurrency(liveTotals.totalToCollect)}
           </Banner>
 
@@ -631,7 +465,7 @@ export default function CombineAdjustScreen() {
             onPress={() => onSubmit()}
             style={{ marginBottom: 24 }}
           >
-            Adjust selected ({selectedRows.length}) · send {formatCurrency(liveTotals.totalToSend)}
+            Reuse leftover ({selectedRows.length})
           </Button>
         </>
       )}

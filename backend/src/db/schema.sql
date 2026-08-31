@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS ipos (
   invalidated_at DATETIME DEFAULT NULL,
   open_date DATE DEFAULT NULL,
   last_apply_date DATE DEFAULT NULL,
+  listing_date DATE DEFAULT NULL,
   ipo_segment ENUM('SME', 'MAINBOARD') NOT NULL DEFAULT 'MAINBOARD',
   allowed_categories LONGTEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -226,7 +227,7 @@ CREATE TABLE IF NOT EXISTS ipo_fund_adjustments (
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   FOREIGN KEY (from_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
   FOREIGN KEY (to_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
-  UNIQUE KEY uk_adjust_to_app (to_application_id),
   INDEX idx_adjust_from (from_application_id),
+  INDEX idx_adjust_to (to_application_id),
   INDEX idx_adjust_tenant (tenant_id)
 );

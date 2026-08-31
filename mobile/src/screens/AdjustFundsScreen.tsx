@@ -169,17 +169,18 @@ export default function AdjustFundsScreen() {
       return;
     }
     const toSend = Number(selectedPreview?.totals?.totalToSend || 0);
-    if (toSend > 0.001) {
+    const walletCredit = Number(selectedPreview?.totals?.totalWalletCredit || 0);
+    if (toSend > 0.001 || walletCredit > 0.001) {
       if (!bankAccounts.length) {
-        Alert.alert('Error', 'Add a provider wallet account before adjusting top-ups');
+        Alert.alert('Error', 'Add a provider wallet account before reusing leftover');
         return;
       }
       if (bankAccounts.length > 1 && !payAccountId) {
-        Alert.alert('Warning', 'Select provider wallet account for the top-up debit');
+        Alert.alert('Warning', 'Select provider wallet account');
         return;
       }
       const acc = bankAccounts.find((a) => a.id === (payAccountId || bankAccounts[0]?.id));
-      if (acc && Number(acc.balance) < toSend) {
+      if (toSend > 0.001 && acc && Number(acc.balance) < toSend) {
         Alert.alert(
           'Insufficient wallet',
           `Need ${formatCurrency(toSend)}, available ${formatCurrency(acc.balance)}`
@@ -194,21 +195,23 @@ export default function AdjustFundsScreen() {
         applicationIds: selectedIds,
         investorCategory: category,
       };
-      if (toSend > 0.001) {
+      if (toSend > 0.001 || walletCredit > 0.001) {
         body.bankAccountId = payAccountId || bankAccounts[0]?.id;
       }
       const { data } = await client.post(`/ipos/${id}/adjust-from`, body);
-      const lines = [
-        `Adjusted ${data.count} member(s)`,
-        `Rolled ${formatCurrency(data.totalAdjusted)}`,
-      ];
-      if (data.providerDebited > 0) {
-        lines.push(`Provider debited: ${formatCurrency(data.providerDebited)}`);
-      } else if (data.totalToSend > 0) {
-        lines.push(`To send: ${formatCurrency(data.totalToSend)}`);
+      const lines = [`Moved leftover for ${data.count} member(s)`];
+      if (data.totalAdjusted > 0) {
+        lines.push(`${formatCurrency(data.totalAdjusted)} onto this IPO`);
       }
-      if ((data.totalToCollect ?? data.totalPendingCollect) > 0) {
-        lines.push(`To collect: ${formatCurrency(data.totalToCollect ?? data.totalPendingCollect)}`);
+      if (data.providerDebited > 0) {
+        lines.push(`Provider wallet −${formatCurrency(data.providerDebited)}`);
+      }
+      if (data.providerCredited > 0) {
+        lines.push(`Provider wallet +${formatCurrency(data.providerCredited)}`);
+      }
+      const leftover = Number(data.totalToCollect ?? data.totalPendingCollect ?? 0);
+      if (leftover > 0.001) {
+        lines.push(`Still collect ${formatCurrency(leftover)} on the old IPO`);
       }
       Alert.alert('Done', lines.join('\n'), [
         { text: 'OK', onPress: () => router.replace(`/(manager)/ipos/${id}`) },
@@ -227,15 +230,15 @@ export default function AdjustFundsScreen() {
   return (
     <Screen>
       <PageHeader
-        title="Adjust funds"
-        subtitle={targetIpo ? `→ ${targetIpo.name}` : ''}
+        title="Reuse leftover funds"
+        subtitle={targetIpo ? `Onto ${targetIpo.name}` : ''}
         right={
           <View style={{ flexDirection: 'row', gap: 4 }}>
             <Button compact mode="text" onPress={() => router.push('/(manager)/group-leader-wallets')}>
               Leaders
             </Button>
             <Button compact mode="text" onPress={() => router.push('/(manager)/adjust-combine')}>
-              Combine
+              Several IPOs
             </Button>
             <Button compact mode="text" onPress={() => router.back()}>
               Back
@@ -245,10 +248,10 @@ export default function AdjustFundsScreen() {
       />
 
       <Banner variant="info">
-        Top-up debits provider wallet. Group leader wallets update from paid-to on new apps (pending moves old → new).
+        Leftover from an old IPO moves onto this one — including small amounts like ₹180. Several leftovers for the same member can be added together. Extra for a new lot comes from the provider wallet.
       </Banner>
 
-      <ContentCard title="Provider wallet (top-up)">
+      <ContentCard title="Provider wallet (if extra is needed)">
         <Text style={ui.muted}>Available {formatCurrency(providerBalance)}</Text>
         {Number(selectedPreview?.totals?.totalToSend || 0) > providerBalance + 0.001 ? (
           <Text style={{ color: colors.error, marginVertical: 4 }}>
@@ -287,7 +290,7 @@ export default function AdjustFundsScreen() {
         </View>
       </ContentCard>
 
-      <ContentCard title="From (old IPO)">
+      <ContentCard title="Old IPO (money still with members)">
         {sources.map((s) => (
           <Pressable
             key={s.id}
@@ -308,29 +311,24 @@ export default function AdjustFundsScreen() {
           <ContentCard title="Totals">
             <StatGrid>
               <StatCard
-                title="To send"
+                title="From wallet"
                 value={formatCurrency(selectedPreview.totals.totalToSend)}
                 variant="danger"
               />
               <StatCard
-                title="To collect"
+                title="Leftover on old"
                 value={formatCurrency(selectedPreview.totals.totalToCollect)}
                 variant="warning"
               />
               <StatCard
-                title="Not adjusted"
+                title="Not reused"
                 value={formatCurrency(selectedPreview.totals.unadjustedToCollect)}
                 variant="warning"
-              />
-              <StatCard
-                title="Total collect"
-                value={formatCurrency(selectedPreview.totals.grandToCollect)}
-                variant="primary"
               />
             </StatGrid>
           </ContentCard>
 
-          <ContentCard title={`Adjust (${selectedIds.length})`}>
+          <ContentCard title={`Members (${selectedIds.length})`}>
             {(preview?.rows || []).map((row: any) => (
               <Pressable
                 key={row.applicationId}
@@ -362,9 +360,10 @@ export default function AdjustFundsScreen() {
                   {row.eligible ? (
                     <Text style={ui.muted}>
                       Old {formatCurrency(row.remainder)} → new {formatCurrency(row.newLot)}
-                      {row.toSend > 0 ? ` · send ${formatCurrency(row.toSend)}` : ''}
-                      {row.toCollect > 0 ? ` · collect ${formatCurrency(row.toCollect)}` : ''}
-                      {row.willMarkOldReceived ? ' · old → Received' : ''}
+                      {row.toSend > 0 ? ` · wallet extra ${formatCurrency(row.toSend)}` : ''}
+                      {row.toCollect > 0 ? ` · leftover ${formatCurrency(row.toCollect)}` : ''}
+                      {row.willMarkOldReceived ? ' · old IPO settled' : ''}
+                      {row.ontoExisting ? ' · adds to existing application' : ''}
                     </Text>
                   ) : (
                     <Text style={styles.warn}>{row.blockedReason}</Text>
@@ -375,45 +374,10 @@ export default function AdjustFundsScreen() {
             {previewLoading && <Text style={ui.muted}>Loading…</Text>}
           </ContentCard>
 
-          {selectedPreview.groups.map((g: any) => (
-            <ContentCard key={g.groupId} title={g.groupName}>
-              <Text style={ui.muted}>
-                Send {formatCurrency(g.totalToSend)} · Collect {formatCurrency(g.totalToCollect)}
-              </Text>
-              {g.members.map((m: any) => (
-                <View key={m.applicationId} style={styles.memberLine}>
-                  <Text>{m.memberName}</Text>
-                  <Text style={ui.muted}>
-                    {m.toSend > 0 ? `send ${formatCurrency(m.toSend)}` : ''}
-                    {m.toSend > 0 && m.toCollect > 0 ? ' · ' : ''}
-                    {m.toCollect > 0 ? `collect ${formatCurrency(m.toCollect)}` : ''}
-                    {m.toSend <= 0 && m.toCollect <= 0 ? 'even' : ''}
-                  </Text>
-                </View>
-              ))}
-            </ContentCard>
-          ))}
-
-          {selectedPreview.individuals.length > 0 && (
-            <ContentCard title="Individuals">
-              {selectedPreview.individuals.map((m: any) => (
-                <View key={m.applicationId} style={styles.memberLine}>
-                  <Text>{m.memberName}</Text>
-                  <Text style={ui.muted}>
-                    {m.toSend > 0 ? `send ${formatCurrency(m.toSend)}` : ''}
-                    {m.toSend > 0 && m.toCollect > 0 ? ' · ' : ''}
-                    {m.toCollect > 0 ? `collect ${formatCurrency(m.toCollect)}` : ''}
-                    {m.toSend <= 0 && m.toCollect <= 0 ? 'even' : ''}
-                  </Text>
-                </View>
-              ))}
-            </ContentCard>
-          )}
-
           {selectedPreview.unadjusted.length > 0 && (
-            <ContentCard title="Not adjusted — full to collect">
+            <ContentCard title="Not reused — still with these members">
               <Banner variant="warn">
-                {`${formatCurrency(selectedPreview.totals.unadjustedToCollect)} still with members`}
+                {`${formatCurrency(selectedPreview.totals.unadjustedToCollect)} stays on the old IPO`}
               </Banner>
               {selectedPreview.unadjusted.map((u: any) => (
                 <View key={u.applicationId} style={styles.memberLine}>
@@ -434,7 +398,7 @@ export default function AdjustFundsScreen() {
             onPress={onSubmit}
             style={{ marginVertical: 16 }}
           >
-            Confirm adjust ({selectedIds.length})
+            Reuse leftover ({selectedIds.length})
           </Button>
         </>
       )}

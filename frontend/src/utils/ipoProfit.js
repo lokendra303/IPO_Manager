@@ -18,6 +18,23 @@ export function getApplicationProfit(app) {
   return null;
 }
 
+export function ipoListingDate(ipo) {
+  const raw = ipo?.listing_date ?? ipo?.listingDate;
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime())) return null;
+    return raw.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  if (!s || s.startsWith('0000-00-00')) return null;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+export function ipoIsListed(ipo) {
+  return Boolean(ipoListingDate(ipo));
+}
+
 /** Resolve withdrawal display: stored value, or inferred from legacy profit_loss. */
 export function getApplicationWithdrawal(app) {
   const withdrawal = app.withdrawalMoney ?? app.withdrawal_money;

@@ -1,5 +1,5 @@
 import { ensureWallet } from './walletService.js';
-import { PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
+import { PENDING_FUND_TOTAL_SQL, PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
 
 /**
  * Lightweight dashboard payload — one round-trip instead of heavy /summary + 4 other calls.
@@ -31,7 +31,7 @@ export async function getManagerDashboard(pool, tenantId) {
        FROM members m
        INNER JOIN (
          SELECT a.member_id,
-                SUM(${PENDING_RETURN_PRINCIPAL_SQL}) AS pending_return
+                SUM(${PENDING_FUND_TOTAL_SQL}) AS pending_return
          FROM ipo_applications a
          WHERE a.tenant_id = ?
          GROUP BY a.member_id

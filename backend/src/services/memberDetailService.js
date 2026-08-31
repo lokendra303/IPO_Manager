@@ -1,7 +1,7 @@
 import { parsePositiveInt } from '../utils/validate.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
-import { pendingReturnPrincipal } from './pendingReturnUtils.js';
+import { outstandingPrincipal, remainingPrincipal } from './pendingReturnUtils.js';
 
 export async function getMemberDetail(pool, tenantId, memberId) {
   const id = parsePositiveInt(memberId, 'member id');
@@ -74,7 +74,8 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   );
 
   const [applications] = await pool.query(
-    `SELECT a.id, a.amount, a.date_received, a.trns_received, a.date_given, a.trns_given,
+    `SELECT a.id, a.amount, a.adjusted_out_amount, a.adjusted_from_application_id,
+            a.date_received, a.trns_received, a.date_given, a.trns_given,
             a.allotment_status, a.investor_category, a.profit_loss, a.remarks, a.created_at,
             i.id as ipo_id, i.name as ipo_name, i.lot_amount_rii, i.lot_amount_hni, i.lot_amount,
             i.status as ipo_status,
@@ -153,6 +154,8 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     const { distributed_member_amount, distributed_provider_amount, distributed_manager_amount, ...rest } = app;
     return {
       ...rest,
+      remaining_principal: remainingPrincipal(app),
+      pending_return: outstandingPrincipal(app),
       member_share: memberShare,
       provider_share: providerShare,
       manager_share: managerShare,
@@ -161,7 +164,7 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   });
 
   const willReceiveFromTeam = applications.reduce(
-    (sum, app) => sum + pendingReturnPrincipal(app),
+    (sum, app) => sum + outstandingPrincipal(app),
     0
   );
 

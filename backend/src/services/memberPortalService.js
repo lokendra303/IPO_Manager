@@ -8,7 +8,7 @@ import {
   listFundReturnClaims,
 } from './memberPortalExtrasService.js';
 import { formatPan } from '../utils/validate.js';
-import { PENDING_RETURN_PRINCIPAL_SQL } from './pendingReturnUtils.js';
+import { PENDING_FUND_TOTAL_SQL } from './pendingReturnUtils.js';
 
 function mapMemberRuleRow(row) {
   return {
@@ -127,7 +127,7 @@ async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGroupId) {
               SUM(allotment_status = 'PENDING') AS ipos_pending,
               SUM(allotment_status = 'ALLOTED') AS ipos_alloted,
               SUM(allotment_status = 'NOT_ALLOTED') AS ipos_not_alloted,
-              COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return_due
+              COALESCE(SUM(${PENDING_FUND_TOTAL_SQL}), 0) AS pending_return_due
        FROM ipo_applications a
        WHERE tenant_id = ?
        GROUP BY member_id

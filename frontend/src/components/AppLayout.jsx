@@ -87,7 +87,7 @@ export default function AppLayout({ children }) {
     { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
     { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
     { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
-    { key: '/adjust-combine', icon: <SwapOutlined />, label: <Link to="/adjust-combine">Combine adjust</Link> },
+    { key: '/adjust-combine', icon: <SwapOutlined />, label: <Link to="/adjust-combine">Reuse leftover</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
     { key: '/profit-analysis', icon: <RiseOutlined />, label: <Link to="/profit-analysis">Profit Analysis</Link> },
     { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },

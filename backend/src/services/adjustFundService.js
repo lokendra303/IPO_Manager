@@ -8,7 +8,7 @@ import {
 import { dedupeIds, parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { assertIpoApplicationsEditable } from './profitShareService.js';
 import { remainingPrincipal } from './pendingReturnUtils.js';
-import { debitWallet, ensureWallet } from './walletService.js';
+import { debitWallet, creditWallet, ensureWallet } from './walletService.js';
 import { requireBankAccountId } from './bankAccountService.js';
 import { getProviderDeployCapacity } from './distributeService.js';
 
@@ -29,6 +29,59 @@ function lotAmountForCategory(ipo, category) {
 }
 
 const ADJUSTABLE_STATUSES = new Set(['NOT_ALLOTED', 'NOT_APPLIED']);
+
+/** Split leftover(s) across a new lot, or onto an application that already exists. */
+function allocateLeftovers(remainders, newLot, ontoExisting) {
+  const rems = remainders.map((n) => round2(n));
+  if (ontoExisting) {
+    return {
+      rolled: rems,
+      toCollect: rems.map(() => 0),
+      toSend: 0,
+      walletCredit: round2(rems.reduce((s, n) => s + n, 0)),
+    };
+  }
+  let need = round2(newLot);
+  const rolled = [];
+  const toCollect = [];
+  for (const rem of rems) {
+    const take = round2(Math.min(rem, need));
+    need = round2(need - take);
+    rolled.push(take);
+    toCollect.push(round2(rem - take));
+  }
+  return { rolled, toCollect, toSend: need, walletCredit: 0 };
+}
+
+/** Recalculate wallet extra when several old leftovers target the same new IPO. */
+function applyLeftoverPoolToPreviewRows(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    if (!r.eligible || !r.targetIpoId) continue;
+    const key = `${r.memberId}:${r.targetIpoId}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  for (const group of groups.values()) {
+    const ontoExisting = group.some((r) => r.ontoExisting);
+    const lot = Number(group[0].newLot);
+    const alloc = allocateLeftovers(
+      group.map((r) => r.remainder),
+      lot,
+      ontoExisting
+    );
+    group.forEach((r, i) => {
+      r.ontoExisting = ontoExisting;
+      r.adjustAmount = alloc.rolled[i];
+      r.toCollect = alloc.toCollect[i];
+      r.toSend = i === 0 ? alloc.toSend : 0;
+      r.walletCredit = i === 0 ? alloc.walletCredit : 0;
+      r.willMarkOldReceived = alloc.toCollect[i] <= 0.001;
+      r.newAppAmount = lot;
+      r.pooledWithCount = group.length;
+    });
+  }
+}
 
 async function loadTargetIpo(conn, tenantId, targetIpoId) {
   const id = parsePositiveInt(targetIpoId, 'IPO id');
@@ -150,18 +203,6 @@ function buildPreviewRow({ app, targetIpo, investorCategory, existingOnTarget })
       toSend: 0,
     };
   }
-  if (existingOnTarget) {
-    return {
-      ...base,
-      eligible: false,
-      blockedReason: 'Member already has an application on the target IPO',
-      newLot: null,
-      adjustAmount: null,
-      newAppAmount: null,
-      toCollect: remainder,
-      toSend: 0,
-    };
-  }
 
   let newLot;
   try {
@@ -179,6 +220,24 @@ function buildPreviewRow({ app, targetIpo, investorCategory, existingOnTarget })
     };
   }
 
+  if (existingOnTarget) {
+    return {
+      ...base,
+      eligible: true,
+      blockedReason: null,
+      ontoExisting: true,
+      newLot,
+      adjustAmount: remainder,
+      newAppAmount: newLot,
+      toCollect: 0,
+      toSend: 0,
+      walletCredit: remainder,
+      pendingCollect: 0,
+      investorCategory,
+      willMarkOldReceived: true,
+    };
+  }
+
   const rolledFromOld = round2(Math.min(remainder, newLot));
   const toCollect = round2(Math.max(0, remainder - newLot));
   const toSend = round2(Math.max(0, newLot - remainder));
@@ -188,6 +247,7 @@ function buildPreviewRow({ app, targetIpo, investorCategory, existingOnTarget })
     ...base,
     eligible: true,
     blockedReason: null,
+    ontoExisting: false,
     newLot,
     adjustAmount: rolledFromOld,
     newAppAmount,
@@ -309,6 +369,11 @@ export async function previewAdjustFunds(conn, {
       existingOnTarget: existingSet.has(app.member_id),
     })
   );
+  for (const r of rows) {
+    r.targetIpoId = targetIpo.id;
+    r.targetIpoName = targetIpo.name;
+  }
+  applyLeftoverPoolToPreviewRows(rows);
 
   const selectedIds = filterIds?.length ? new Set(filterIds) : null;
   const eligible = rows.filter((r) => r.eligible);
@@ -398,6 +463,7 @@ export async function previewAdjustFunds(conn, {
       totalAdjust: round2(selectedEligible.reduce((s, r) => s + (r.adjustAmount || 0), 0)),
       totalNewApps: round2(selectedEligible.reduce((s, r) => s + (r.newAppAmount || 0), 0)),
       totalToSend: round2(selectedEligible.reduce((s, r) => s + (r.toSend || 0), 0)),
+      totalWalletCredit: round2(selectedEligible.reduce((s, r) => s + (r.walletCredit || 0), 0)),
       totalToCollect: round2(selectedEligible.reduce((s, r) => s + (r.toCollect || 0), 0)),
       unadjustedToCollect,
       grandToCollect: round2(
@@ -407,6 +473,208 @@ export async function previewAdjustFunds(conn, {
     // backward-compatible aliases
     totalAdjust: round2(selectedEligible.reduce((s, r) => s + (r.adjustAmount || 0), 0)),
     totalPendingCollect: round2(selectedEligible.reduce((s, r) => s + (r.toCollect || 0), 0)),
+  };
+}
+
+async function applyLeftoversForMember(conn, {
+  tenantId,
+  targetIpo,
+  sourceApps,
+  investorCategory,
+  userId,
+  now,
+}) {
+  if (!sourceApps.length) {
+    return { results: [], toSend: 0, walletCredit: 0, ontoExisting: false, memberRow: null };
+  }
+
+  const memberId = sourceApps[0].member_id;
+  const memberName = sourceApps[0].display_name;
+  const newLot = lotAmountForCategory(targetIpo, investorCategory);
+
+  const [[memberRow]] = await conn.query(
+    `SELECT m.display_name, m.member_group_id,
+            g.owner_member_id, g.owner_external_name, g.name AS group_name
+     FROM members m
+     LEFT JOIN member_groups g ON g.id = m.member_group_id AND g.tenant_id = m.tenant_id
+     WHERE m.id = ? AND m.tenant_id = ?`,
+    [memberId, tenantId]
+  );
+
+  const [dup] = await conn.query(
+    `SELECT * FROM ipo_applications
+     WHERE ipo_id = ? AND member_id = ? AND tenant_id = ?
+     LIMIT 1 FOR UPDATE`,
+    [targetIpo.id, memberId, tenantId]
+  );
+  const existing = dup[0] || null;
+  const ontoExisting = Boolean(existing);
+
+  const remainders = sourceApps.map((a) => remainingPrincipal(a));
+  if (remainders.every((r) => r <= 0)) {
+    throw new AppError(`${memberName}: nothing left to adjust`);
+  }
+  const alloc = allocateLeftovers(remainders, newLot, ontoExisting);
+
+  const firstSource = sourceApps[0];
+  const paidToExternal = firstSource.paid_to_external_name || null;
+  let paidToMemberId = firstSource.paid_to_member_id || null;
+  if (memberRow?.owner_member_id) {
+    paidToMemberId = memberRow.owner_member_id;
+  } else if (memberRow?.owner_external_name) {
+    paidToMemberId = null;
+  } else if (!paidToMemberId && !paidToExternal) {
+    paidToMemberId = memberId;
+  }
+  const resolvedPaidToExternal = memberRow?.owner_member_id
+    ? null
+    : (memberRow?.owner_external_name || paidToExternal || null);
+
+  const rolledParts = sourceApps
+    .map((a, i) => `${a.sourceIpoName || 'old IPO'} ₹${alloc.rolled[i]}`)
+    .filter((_, i) => alloc.rolled[i] > 0.001)
+    .join(' + ');
+  const topUpNote = alloc.toSend > 0.001 ? ` — provider top-up ₹${alloc.toSend}` : '';
+  const creditNote = alloc.walletCredit > 0.001 ? ` — provider wallet +₹${alloc.walletCredit}` : '';
+
+  let targetAppId;
+  let newAppAmount = newLot;
+
+  if (ontoExisting) {
+    targetAppId = existing.id;
+    newAppAmount = round2(existing.amount);
+    await conn.query(
+      `UPDATE ipo_applications
+       SET remarks = CONCAT(COALESCE(remarks, ''), IF(COALESCE(remarks, '') = '', '', '\n'), ?),
+           adjusted_from_application_id = COALESCE(adjusted_from_application_id, ?),
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        `Added leftover ${rolledParts}${creditNote}`,
+        firstSource.id,
+        now,
+        existing.id,
+        tenantId,
+      ]
+    );
+  } else {
+    const [insertResult] = await conn.query(
+      `INSERT INTO ipo_applications
+       (ipo_id, member_id, tenant_id, amount, adjusted_from_application_id,
+        date_given, trns_given, allotment_status, investor_category,
+        paid_to_member_id, paid_to_external_name, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, 'Given', 'PENDING', ?, ?, ?, ?)`,
+      [
+        targetIpo.id,
+        memberId,
+        tenantId,
+        newLot,
+        firstSource.id,
+        now,
+        investorCategory,
+        paidToMemberId,
+        resolvedPaidToExternal,
+        `Adjusted from ${rolledParts}${topUpNote}`,
+      ]
+    );
+    targetAppId = insertResult.insertId;
+    await conn.query(
+      `INSERT INTO member_ledger_entries
+       (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
+       VALUES (?, ?, 'GIVEN', ?, ?, ?, ?)`,
+      [
+        memberId,
+        tenantId,
+        newLot,
+        now,
+        targetAppId,
+        `Adjusted from ${rolledParts}${topUpNote}`,
+      ]
+    );
+  }
+
+  const results = [];
+  for (let i = 0; i < sourceApps.length; i += 1) {
+    const sourceApp = sourceApps[i];
+    const rolledFromOld = alloc.rolled[i];
+    const toCollect = alloc.toCollect[i];
+    if (rolledFromOld <= 0) continue;
+
+    const newAdjustedOut = round2((Number(sourceApp.adjusted_out_amount) || 0) + rolledFromOld);
+    const pendingLeft = round2(Number(sourceApp.amount) - newAdjustedOut);
+    const fullyAdjusted = pendingLeft <= 0.001;
+
+    await conn.query(
+      `UPDATE ipo_applications
+       SET adjusted_out_amount = ?,
+           remarks = CONCAT(COALESCE(remarks, ''), IF(COALESCE(remarks, '') = '', '', '\n'), ?),
+           date_received = IF(?, COALESCE(date_received, ?), date_received),
+           trns_received = IF(?, 'Received', trns_received),
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        newAdjustedOut,
+        `Adjusted ₹${rolledFromOld} → ${targetIpo.name} (app #${targetAppId})` +
+          (toCollect > 0.001 ? ` · leftover to collect ₹${toCollect}` : '') +
+          (alloc.toSend > 0.001 && i === 0 ? ` · provider top-up ₹${alloc.toSend}` : '') +
+          (alloc.walletCredit > 0.001 && i === 0 ? ` · provider wallet +₹${alloc.walletCredit}` : ''),
+        fullyAdjusted ? 1 : 0,
+        now,
+        fullyAdjusted ? 1 : 0,
+        now,
+        sourceApp.id,
+        tenantId,
+      ]
+    );
+
+    await conn.query(
+      `INSERT INTO member_ledger_entries
+       (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
+       VALUES (?, ?, 'ADJUSTED_OUT', ?, ?, ?, ?)`,
+      [
+        memberId,
+        tenantId,
+        rolledFromOld,
+        now,
+        sourceApp.id,
+        `Adjusted to ${targetIpo.name}`,
+      ]
+    );
+
+    await conn.query(
+      `INSERT INTO ipo_fund_adjustments
+       (tenant_id, from_application_id, to_application_id, amount, created_by)
+       VALUES (?, ?, ?, ?, ?)`,
+      [tenantId, sourceApp.id, targetAppId, rolledFromOld, userId || null]
+    );
+
+    results.push({
+      fromApplicationId: sourceApp.id,
+      toApplicationId: targetAppId,
+      memberId,
+      memberName,
+      adjustAmount: rolledFromOld,
+      newAppAmount,
+      toCollect,
+      toSend: i === 0 ? alloc.toSend : 0,
+      walletCredit: i === 0 ? alloc.walletCredit : 0,
+      pendingCollect: toCollect,
+      fullyAdjusted,
+      ontoExisting,
+      groupId: memberRow?.member_group_id ?? null,
+      sourceIpoId: sourceApp.ipo_id,
+      sourceIpoName: sourceApp.sourceIpoName || null,
+    });
+  }
+
+  return {
+    results,
+    toSend: alloc.toSend,
+    walletCredit: alloc.walletCredit,
+    ontoExisting,
+    memberRow,
+    paidToMemberId,
+    resolvedPaidToExternal,
   };
 }
 
@@ -446,36 +714,39 @@ export async function adjustFundsToIpo(conn, {
   const results = [];
 
   const totalToSendNeeded = round2(selected.reduce((s, r) => s + Number(r.toSend || 0), 0));
+  const totalWalletCredit = round2(selected.reduce((s, r) => s + Number(r.walletCredit || 0), 0));
   let resolvedAccountId = null;
 
-  if (totalToSendNeeded > 0.001) {
+  if (totalToSendNeeded > 0.001 || totalWalletCredit > 0.001) {
     await ensureWallet(conn, tenantId);
-    const capacity = await getProviderDeployCapacity(conn, tenantId);
-    if (totalToSendNeeded > capacity.available + 0.001) {
-      throw new AppError(
-        `Cannot adjust: need ₹${totalToSendNeeded.toFixed(2)} top-up but provider deploy available is ₹${Math.max(0, capacity.available).toFixed(2)} ` +
-          `(principal ₹${capacity.principal.toFixed(2)} − already with members ₹${capacity.stillOut.toFixed(2)}). ` +
-          `Add provider funds or settle returns first.`
-      );
+    if (totalToSendNeeded > 0.001) {
+      const capacity = await getProviderDeployCapacity(conn, tenantId);
+      if (totalToSendNeeded > capacity.available + 0.001) {
+        throw new AppError(
+          `Cannot adjust: need ₹${totalToSendNeeded.toFixed(2)} top-up but provider deploy available is ₹${Math.max(0, capacity.available).toFixed(2)} ` +
+            `(principal ₹${capacity.principal.toFixed(2)} − already with members ₹${capacity.stillOut.toFixed(2)}). ` +
+            `Add provider funds or settle returns first.`
+        );
+      }
     }
     resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
       purpose: 'PROVIDER',
     });
-    const [accRows] = await conn.query(
-      'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
-      [resolvedAccountId, tenantId]
-    );
-    if (!accRows.length) throw new AppError('Provider bank account not found', 404);
-    if (Number(accRows[0].balance) < totalToSendNeeded) {
-      throw new AppError(
-        `Insufficient provider wallet in ${accRows[0].label}. Need ₹${totalToSendNeeded.toFixed(2)} top-up, available ₹${Number(accRows[0].balance).toFixed(2)}`
+    if (totalToSendNeeded > 0.001) {
+      const [accRows] = await conn.query(
+        'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
+        [resolvedAccountId, tenantId]
       );
+      if (!accRows.length) throw new AppError('Provider bank account not found', 404);
+      if (Number(accRows[0].balance) < totalToSendNeeded) {
+        throw new AppError(
+          `Insufficient provider wallet in ${accRows[0].label}. Need ₹${totalToSendNeeded.toFixed(2)} top-up, available ₹${Number(accRows[0].balance).toFixed(2)}`
+        );
+      }
     }
   }
 
-  // groupId -> { ownerMemberId, ownerExternalName, totalToSend, memberCount }
-  const leaderTopUps = new Map();
-
+  const byMember = new Map();
   for (const row of selected) {
     const [appRows] = await conn.query(
       `SELECT a.* FROM ipo_applications a
@@ -484,145 +755,37 @@ export async function adjustFundsToIpo(conn, {
     );
     if (!appRows.length) throw new AppError(`Application ${row.applicationId} not found`, 404);
     const sourceApp = appRows[0];
-    const [[memberRow]] = await conn.query(
-      `SELECT m.display_name, m.member_group_id,
-              g.owner_member_id, g.owner_external_name, g.name AS group_name
-       FROM members m
-       LEFT JOIN member_groups g ON g.id = m.member_group_id AND g.tenant_id = m.tenant_id
-       WHERE m.id = ? AND m.tenant_id = ?`,
-      [sourceApp.member_id, tenantId]
-    );
-    sourceApp.display_name = memberRow?.display_name || row.memberName;
+    sourceApp.display_name = row.memberName;
+    sourceApp.sourceIpoName = sourceIpo.name;
+    const mid = sourceApp.member_id;
+    if (!byMember.has(mid)) byMember.set(mid, []);
+    byMember.get(mid).push(sourceApp);
+  }
 
-    const remainder = remainingPrincipal(sourceApp);
-    const newAppAmount = row.newAppAmount;
-    const rolledFromOld = round2(Math.min(remainder, newAppAmount));
-    const toSend = round2(Math.max(0, newAppAmount - remainder));
-    const toCollect = round2(Math.max(0, remainder - newAppAmount));
+  const leaderTopUps = new Map();
+  let appliedToSend = 0;
+  let appliedCredit = 0;
 
-    if (rolledFromOld <= 0) {
-      throw new AppError(`${sourceApp.display_name}: nothing left to adjust`);
-    }
+  for (const sourceApps of byMember.values()) {
+    const applied = await applyLeftoversForMember(conn, {
+      tenantId,
+      targetIpo,
+      sourceApps,
+      investorCategory: investorCategory || DEFAULT_INVESTOR_CATEGORY,
+      userId,
+      now,
+    });
+    results.push(...applied.results);
+    appliedToSend = round2(appliedToSend + applied.toSend);
+    appliedCredit = round2(appliedCredit + applied.walletCredit);
 
-    const [dup] = await conn.query(
-      `SELECT id FROM ipo_applications WHERE ipo_id = ? AND member_id = ? LIMIT 1`,
-      [targetIpo.id, sourceApp.member_id]
-    );
-    if (dup.length) {
-      throw new AppError(
-        `${sourceApp.display_name} already has an application on ${targetIpo.name}`
-      );
-    }
-
-    const paidToExternal = sourceApp.paid_to_external_name || null;
-    let paidToMemberId = sourceApp.paid_to_member_id || null;
-
-    // Keep leader-wallet attribution: if member belongs to a sub-group with a leader,
-    // new (adjusted) app is paid to that leader so pending moves old IPO → new IPO.
-    if (memberRow?.owner_member_id) {
-      paidToMemberId = memberRow.owner_member_id;
-    } else if (memberRow?.owner_external_name) {
-      paidToMemberId = null;
-    } else if (!paidToMemberId && !paidToExternal) {
-      paidToMemberId = sourceApp.member_id;
-    }
-
-    const resolvedPaidToExternal = memberRow?.owner_member_id
-      ? null
-      : (memberRow?.owner_external_name || paidToExternal || null);
-
-    const topUpNote =
-      toSend > 0.001 ? ` — provider top-up ₹${toSend}` : '';
-
-    const [insertResult] = await conn.query(
-      `INSERT INTO ipo_applications
-       (ipo_id, member_id, tenant_id, amount, adjusted_from_application_id,
-        date_given, trns_given, allotment_status, investor_category,
-        paid_to_member_id, paid_to_external_name, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, 'Given', 'PENDING', ?, ?, ?, ?)`,
-      [
-        targetIpo.id,
-        sourceApp.member_id,
-        tenantId,
-        newAppAmount,
-        sourceApp.id,
-        now,
-        row.investorCategory,
-        paidToMemberId,
-        resolvedPaidToExternal,
-        `Adjusted from ${sourceIpo.name} (₹${rolledFromOld} rolled)${topUpNote}`,
-      ]
-    );
-    const newAppId = insertResult.insertId;
-
-    await conn.query(
-      `INSERT INTO member_ledger_entries
-       (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
-       VALUES (?, ?, 'GIVEN', ?, ?, ?, ?)`,
-      [
-        sourceApp.member_id,
-        tenantId,
-        newAppAmount,
-        now,
-        newAppId,
-        `Adjusted from ${sourceIpo.name}${topUpNote}`,
-      ]
-    );
-
-    const newAdjustedOut = round2((Number(sourceApp.adjusted_out_amount) || 0) + rolledFromOld);
-    const pendingLeft = round2(Number(sourceApp.amount) - newAdjustedOut);
-    const fullyAdjusted = pendingLeft <= 0.001;
-
-    await conn.query(
-      `UPDATE ipo_applications
-       SET adjusted_out_amount = ?,
-           remarks = CONCAT(COALESCE(remarks, ''), IF(COALESCE(remarks, '') = '', '', '\n'), ?),
-           date_received = IF(?, COALESCE(date_received, ?), date_received),
-           trns_received = IF(?, 'Received', trns_received),
-           updated_at = ?
-       WHERE id = ? AND tenant_id = ?`,
-      [
-        newAdjustedOut,
-        `Adjusted ₹${rolledFromOld} → ${targetIpo.name} (app #${newAppId})` +
-          (toCollect > 0.001 ? ` · leftover to collect ₹${toCollect}` : '') +
-          (toSend > 0.001 ? ` · provider top-up ₹${toSend}` : ''),
-        fullyAdjusted ? 1 : 0,
-        now,
-        fullyAdjusted ? 1 : 0,
-        now,
-        sourceApp.id,
-        tenantId,
-      ]
-    );
-
-    await conn.query(
-      `INSERT INTO member_ledger_entries
-       (member_id, tenant_id, type, amount, txn_date, ipo_application_id, notes)
-       VALUES (?, ?, 'ADJUSTED_OUT', ?, ?, ?, ?)`,
-      [
-        sourceApp.member_id,
-        tenantId,
-        rolledFromOld,
-        now,
-        sourceApp.id,
-        `Adjusted to ${targetIpo.name}`,
-      ]
-    );
-
-    await conn.query(
-      `INSERT INTO ipo_fund_adjustments
-       (tenant_id, from_application_id, to_application_id, amount, created_by)
-       VALUES (?, ?, ?, ?, ?)`,
-      [tenantId, sourceApp.id, newAppId, rolledFromOld, userId || null]
-    );
-
-    // Track top-up for group leader activity (balances come from apps / paid_to)
-    if (toSend > 0.001 && memberRow?.member_group_id) {
+    if (applied.toSend > 0.001 && applied.memberRow?.member_group_id) {
+      const memberRow = applied.memberRow;
       const paidToLeader =
-        (memberRow.owner_member_id && paidToMemberId === memberRow.owner_member_id) ||
+        (memberRow.owner_member_id && applied.paidToMemberId === memberRow.owner_member_id) ||
         (memberRow.owner_external_name &&
-          resolvedPaidToExternal &&
-          String(resolvedPaidToExternal) === String(memberRow.owner_external_name));
+          applied.resolvedPaidToExternal &&
+          String(applied.resolvedPaidToExternal) === String(memberRow.owner_external_name));
       if (paidToLeader) {
         const gid = memberRow.member_group_id;
         if (!leaderTopUps.has(gid)) {
@@ -635,24 +798,10 @@ export async function adjustFundsToIpo(conn, {
           });
         }
         const g = leaderTopUps.get(gid);
-        g.totalToSend = round2(g.totalToSend + toSend);
+        g.totalToSend = round2(g.totalToSend + applied.toSend);
         g.memberCount += 1;
       }
     }
-
-    results.push({
-      fromApplicationId: sourceApp.id,
-      toApplicationId: newAppId,
-      memberId: sourceApp.member_id,
-      memberName: sourceApp.display_name,
-      adjustAmount: rolledFromOld,
-      newAppAmount,
-      toCollect,
-      toSend,
-      pendingCollect: toCollect,
-      fullyAdjusted,
-      groupId: memberRow?.member_group_id ?? null,
-    });
   }
 
   for (const g of leaderTopUps.values()) {
@@ -677,16 +826,30 @@ export async function adjustFundsToIpo(conn, {
     );
   }
 
-  if (totalToSendNeeded > 0.001 && resolvedAccountId) {
+  if (appliedToSend > 0.001 && resolvedAccountId) {
     await debitWallet(conn, {
       tenantId,
-      amount: totalToSendNeeded,
+      amount: appliedToSend,
       bankAccountId: resolvedAccountId,
       type: 'DISTRIBUTE_OUT',
       refType: 'ipo',
       refId: targetIpo.id,
       txnDate: now,
-      notes: `Adjust top-up ${sourceIpo.name} → ${targetIpo.name} (${results.length} members)`,
+      notes: `Adjust top-up ${sourceIpo.name} → ${targetIpo.name} (${results.length} leftover(s))`,
+      userId,
+    });
+  }
+
+  if (appliedCredit > 0.001 && resolvedAccountId) {
+    await creditWallet(conn, {
+      tenantId,
+      amount: appliedCredit,
+      bankAccountId: resolvedAccountId,
+      type: 'RETURN_IN',
+      refType: 'ipo',
+      refId: targetIpo.id,
+      txnDate: now,
+      notes: `Leftover reused onto ${targetIpo.name} from ${sourceIpo.name}`,
       userId,
     });
   }
@@ -697,10 +860,11 @@ export async function adjustFundsToIpo(conn, {
     count: results.length,
     totalAdjusted: round2(results.reduce((s, r) => s + r.adjustAmount, 0)),
     totalNewApps: round2(results.reduce((s, r) => s + r.newAppAmount, 0)),
-    totalToSend: round2(results.reduce((s, r) => s + r.toSend, 0)),
+    totalToSend: appliedToSend,
     totalPendingCollect: round2(results.reduce((s, r) => s + r.toCollect, 0)),
     totalToCollect: round2(results.reduce((s, r) => s + r.toCollect, 0)),
-    providerDebited: totalToSendNeeded,
+    providerDebited: appliedToSend,
+    providerCredited: appliedCredit,
     bankAccountId: resolvedAccountId,
     results,
   };
@@ -809,7 +973,7 @@ export async function previewCombineAdjust(conn, {
     [tenantId, ...sourceIds]
   );
 
-  // Existing apps on each target (member already applied)
+  // Existing apps on each target (member already applied) — leftover can still be added
   const existingByTarget = new Map();
   for (const tid of targetIds) {
     const [ex] = await conn.query(
@@ -818,9 +982,6 @@ export async function previewCombineAdjust(conn, {
     );
     existingByTarget.set(tid, new Set(ex.map((r) => r.member_id)));
   }
-
-  // Track members already assigned to a target in this preview (one new app per member per target)
-  const claimedOnTarget = new Map(targetIds.map((tid) => [tid, new Set()]));
 
   const rows = [];
   const unadjustedPending = [];
@@ -869,9 +1030,6 @@ export async function previewCombineAdjust(conn, {
     if (!chosenTargetId) {
       for (const tid of targetIds) {
         if (tid === app.source_ipo_id) continue;
-        const existing = existingByTarget.get(tid);
-        const claimed = claimedOnTarget.get(tid);
-        if (existing?.has(app.member_id) || claimed?.has(app.member_id)) continue;
         chosenTargetId = tid;
         break;
       }
@@ -895,7 +1053,6 @@ export async function previewCombineAdjust(conn, {
           lotError = err.message;
         }
         const existing = existingByTarget.get(tid)?.has(app.member_id);
-        const claimed = claimedOnTarget.get(tid)?.has(app.member_id);
         const toCollect = newLot != null ? round2(Math.max(0, rem - newLot)) : null;
         const toSend = newLot != null ? round2(Math.max(0, newLot - rem)) : null;
         return {
@@ -903,12 +1060,9 @@ export async function previewCombineAdjust(conn, {
           targetIpoName: tipo.name,
           newLot,
           lotError,
-          blocked: Boolean(existing || claimed || lotError),
-          blockedReason: existing
-            ? 'Already has app on this IPO'
-            : claimed
-              ? 'Another row already targets this IPO for this member'
-              : lotError,
+          blocked: Boolean(lotError),
+          blockedReason: lotError || (existing ? 'Adds leftover onto existing application' : null),
+          ontoExisting: Boolean(existing),
           toCollect,
           toSend,
           willMarkOldReceived: toCollect != null && toCollect <= 0.001,
@@ -946,10 +1100,6 @@ export async function previewCombineAdjust(conn, {
       existingOnTarget: existingByTarget.get(chosenTargetId)?.has(app.member_id),
     });
 
-    if (previewRow.eligible) {
-      claimedOnTarget.get(chosenTargetId).add(app.member_id);
-    }
-
     rows.push({
       ...previewRow,
       sourceIpoId: app.source_ipo_id,
@@ -961,6 +1111,8 @@ export async function previewCombineAdjust(conn, {
       groupName: app.member_group_name || null,
     });
   }
+
+  applyLeftoverPoolToPreviewRows(rows);
 
   const selected = rows.filter((r) => r.eligible && r.targetIpoId);
   const byTarget = new Map();
@@ -1027,6 +1179,7 @@ export async function previewCombineAdjust(conn, {
       eligibleCount: selected.length,
       totalAdjust: round2(selected.reduce((s, r) => s + (r.adjustAmount || 0), 0)),
       totalToSend: round2(selected.reduce((s, r) => s + (r.toSend || 0), 0)),
+      totalWalletCredit: round2(selected.reduce((s, r) => s + (r.walletCredit || 0), 0)),
       totalToCollect: round2(selected.reduce((s, r) => s + (r.toCollect || 0), 0)),
       unadjustedToCollect,
       allottedCount: allottedExcluded.length,
@@ -1052,69 +1205,135 @@ export async function executeCombineAdjust(conn, {
     throw new AppError('Select at least one member to adjust');
   }
 
-  const byTarget = new Map();
-  for (const item of items) {
-    const appId = parsePositiveInt(item.applicationId, 'application id');
-    const targetIpoId = parsePositiveInt(item.targetIpoId, 'target IPO id');
-    if (!byTarget.has(targetIpoId)) byTarget.set(targetIpoId, []);
-    byTarget.get(targetIpoId).push(appId);
-  }
-
-  // Resolve fromIpoId per application
   const allAppIds = [...new Set(items.map((i) => parsePositiveInt(i.applicationId, 'application id')))];
   const ph = allAppIds.map(() => '?').join(',');
   const [appRows] = await conn.query(
-    `SELECT id, ipo_id FROM ipo_applications WHERE tenant_id = ? AND id IN (${ph})`,
+    `SELECT a.* FROM ipo_applications a
+     WHERE a.tenant_id = ? AND a.id IN (${ph})
+     FOR UPDATE`,
     [tenantId, ...allAppIds]
   );
-  const appSource = new Map(appRows.map((r) => [r.id, r.ipo_id]));
+  const memberIds = [...new Set(appRows.map((r) => r.member_id))];
+  const ipoIds = [...new Set(appRows.map((r) => r.ipo_id))];
+  const namesByMember = new Map();
+  const namesByIpo = new Map();
+  if (memberIds.length) {
+    const mph = memberIds.map(() => '?').join(',');
+    const [members] = await conn.query(
+      `SELECT id, display_name FROM members WHERE tenant_id = ? AND id IN (${mph})`,
+      [tenantId, ...memberIds]
+    );
+    for (const m of members) namesByMember.set(m.id, m.display_name);
+  }
+  if (ipoIds.length) {
+    const iph = ipoIds.map(() => '?').join(',');
+    const [ipos] = await conn.query(
+      `SELECT id, name FROM ipos WHERE tenant_id = ? AND id IN (${iph})`,
+      [tenantId, ...ipoIds]
+    );
+    for (const i of ipos) namesByIpo.set(i.id, i.name);
+  }
+  for (const a of appRows) {
+    a.display_name = namesByMember.get(a.member_id) || `#${a.member_id}`;
+    a.sourceIpoName = namesByIpo.get(a.ipo_id) || 'old IPO';
+  }
+  const appById = new Map(appRows.map((r) => [r.id, r]));
 
+  const groups = new Map();
+  for (const item of items) {
+    const appId = parsePositiveInt(item.applicationId, 'application id');
+    const targetIpoId = parsePositiveInt(item.targetIpoId, 'target IPO id');
+    const app = appById.get(appId);
+    if (!app) throw new AppError(`Application ${appId} not found`, 404);
+    if (!ADJUSTABLE_STATUSES.has(app.allotment_status)) {
+      throw new AppError(`${app.display_name}: only not-allotted / not-applied leftovers can be reused`);
+    }
+    const key = `${app.member_id}:${targetIpoId}`;
+    if (!groups.has(key)) groups.set(key, { memberId: app.member_id, targetIpoId, apps: [] });
+    const g = groups.get(key);
+    if (!g.apps.some((a) => a.id === app.id)) g.apps.push(app);
+  }
+
+  const now = new Date();
+  const cat = investorCategory || DEFAULT_INVESTOR_CATEGORY;
   const allResults = [];
-  let totalAdjusted = 0;
   let totalToSend = 0;
-  let totalToCollect = 0;
-  let providerDebited = 0;
+  let totalCredit = 0;
+  const targetCache = new Map();
 
-  for (const [targetIpoId, applicationIds] of byTarget.entries()) {
-    // Group by source IPO because adjustFundsToIpo takes one fromIpoId
-    const bySource = new Map();
-    for (const appId of applicationIds) {
-      const fromIpoId = appSource.get(appId);
-      if (!fromIpoId) throw new AppError(`Application ${appId} not found`, 404);
-      if (!bySource.has(fromIpoId)) bySource.set(fromIpoId, []);
-      bySource.get(fromIpoId).push(appId);
+  for (const group of groups.values()) {
+    if (!targetCache.has(group.targetIpoId)) {
+      targetCache.set(group.targetIpoId, await loadTargetIpo(conn, tenantId, group.targetIpoId));
     }
+    const targetIpo = targetCache.get(group.targetIpoId);
+    const applied = await applyLeftoversForMember(conn, {
+      tenantId,
+      targetIpo,
+      sourceApps: group.apps,
+      investorCategory: cat,
+      userId,
+      now,
+    });
+    allResults.push(...applied.results.map((r) => ({
+      ...r,
+      targetIpoId: targetIpo.id,
+      targetIpoName: targetIpo.name,
+    })));
+    totalToSend = round2(totalToSend + applied.toSend);
+    totalCredit = round2(totalCredit + applied.walletCredit);
+  }
 
-    for (const [fromIpoId, ids] of bySource.entries()) {
-      const result = await adjustFundsToIpo(conn, {
-        tenantId,
-        targetIpoId,
-        fromIpoId,
-        applicationIds: ids,
-        investorCategory: investorCategory || DEFAULT_INVESTOR_CATEGORY,
-        userId,
-        bankAccountId,
-      });
-      allResults.push(...result.results.map((r) => ({
-        ...r,
-        targetIpoId,
-        targetIpoName: result.targetIpo.name,
-        sourceIpoId: fromIpoId,
-        sourceIpoName: result.sourceIpo.name,
-      })));
-      totalAdjusted = round2(totalAdjusted + result.totalAdjusted);
-      totalToSend = round2(totalToSend + (result.totalToSend || 0));
-      totalToCollect = round2(totalToCollect + (result.totalToCollect || result.totalPendingCollect || 0));
-      providerDebited = round2(providerDebited + (result.providerDebited || 0));
+  let resolvedAccountId = null;
+  if (totalToSend > 0.001 || totalCredit > 0.001) {
+    await ensureWallet(conn, tenantId);
+    if (totalToSend > 0.001) {
+      const capacity = await getProviderDeployCapacity(conn, tenantId);
+      if (totalToSend > capacity.available + 0.001) {
+        throw new AppError(
+          `Cannot adjust: need ₹${totalToSend.toFixed(2)} top-up but provider deploy available is ₹${Math.max(0, capacity.available).toFixed(2)}`
+        );
+      }
     }
+    resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
+      purpose: 'PROVIDER',
+    });
+  }
+
+  const targetNames = [...targetCache.values()].map((t) => t.name).join(', ');
+  if (totalToSend > 0.001 && resolvedAccountId) {
+    await debitWallet(conn, {
+      tenantId,
+      amount: totalToSend,
+      bankAccountId: resolvedAccountId,
+      type: 'DISTRIBUTE_OUT',
+      refType: 'ipo',
+      refId: [...targetCache.keys()][0],
+      txnDate: now,
+      notes: `Adjust top-up onto ${targetNames} (${allResults.length} leftover(s))`,
+      userId,
+    });
+  }
+  if (totalCredit > 0.001 && resolvedAccountId) {
+    await creditWallet(conn, {
+      tenantId,
+      amount: totalCredit,
+      bankAccountId: resolvedAccountId,
+      type: 'RETURN_IN',
+      refType: 'ipo',
+      refId: [...targetCache.keys()][0],
+      txnDate: now,
+      notes: `Leftover reused onto ${targetNames}`,
+      userId,
+    });
   }
 
   return {
     count: allResults.length,
-    totalAdjusted,
+    totalAdjusted: round2(allResults.reduce((s, r) => s + r.adjustAmount, 0)),
     totalToSend,
-    totalToCollect,
-    providerDebited,
+    totalToCollect: round2(allResults.reduce((s, r) => s + r.toCollect, 0)),
+    providerDebited: totalToSend,
+    providerCredited: totalCredit,
     results: allResults,
   };
 }

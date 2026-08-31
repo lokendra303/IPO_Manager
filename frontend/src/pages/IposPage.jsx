@@ -300,7 +300,7 @@ export default function IposPage() {
             onClick={() => navigate('/adjust-combine')}
             style={{ marginRight: 8 }}
           >
-            Combine adjust
+            Reuse leftover
           </Button>
           <Button
             type="primary"

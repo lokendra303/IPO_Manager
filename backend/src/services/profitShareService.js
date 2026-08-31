@@ -854,8 +854,10 @@ export async function assertIpoApplicationsEditable(conn, tenantId, ipoId) {
 /** Auto-apply member share rules when app is ALLOTED with non-zero P&L (skips if already distributed). */
 export async function tryAutoDistributeApplication(conn, { tenantId, applicationId, userId }) {
   const [app] = await conn.query(
-    `SELECT allotment_status, profit_loss, withdrawal_money, member_id, ipo_id
-     FROM ipo_applications WHERE id = ? AND tenant_id = ?`,
+    `SELECT a.allotment_status, a.profit_loss, a.withdrawal_money, a.member_id, a.ipo_id, i.listing_date
+     FROM ipo_applications a
+     JOIN ipos i ON i.id = a.ipo_id
+     WHERE a.id = ? AND a.tenant_id = ?`,
     [applicationId, tenantId]
   );
   if (!app.length) return { applicationId, skipped: true, reason: 'Application not found' };
@@ -875,6 +877,9 @@ export async function tryAutoDistributeApplication(conn, { tenantId, application
   }
   if (app[0].allotment_status !== 'ALLOTED') {
     return { applicationId, skipped: true, reason: 'Not allotted' };
+  }
+  if (!app[0].listing_date) {
+    return { applicationId, skipped: true, reason: 'IPO not listed yet' };
   }
   if (app[0].withdrawal_money == null || app[0].profit_loss == null || Number(app[0].profit_loss) === 0) {
     return { applicationId, skipped: true, reason: 'No P&L set' };

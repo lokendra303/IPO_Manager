@@ -26,7 +26,23 @@ import {
   validateAllowedCategories,
 } from '../constants/ipoCategories.js';
 
+function dateOnly(value) {
+  if (value == null || value === '') return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  if (!s || s.startsWith('0000-00-00')) return null;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
 
+function serializeIpo(row) {
+  if (!row) return row;
+  const listingDate = dateOnly(row.listing_date);
+  return { ...row, listing_date: listingDate, listingDate };
+}
 
 const router = Router();
 
@@ -63,7 +79,7 @@ router.get('/', async (req, res, next) => {
 
     );
 
-    res.json(rows);
+    res.json(rows.map(serializeIpo));
 
   } catch (err) {
 
@@ -127,7 +143,7 @@ router.post('/', async (req, res, next) => {
 
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [result.insertId]);
 
-    res.status(201).json(rows[0]);
+    res.status(201).json(serializeIpo(rows[0]));
 
   } catch (err) {
 
@@ -206,7 +222,7 @@ router.get('/:id', async (req, res, next) => {
 
     if (!rows.length) throw new AppError('IPO not found', 404);
 
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
 
   } catch (err) {
 
@@ -225,7 +241,7 @@ router.patch('/:id', async (req, res, next) => {
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
 
     const {
-      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, registrar, ipoSegment, allowedCategories,
+      name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, listingDate, registrar, ipoSegment, allowedCategories,
     } = req.body;
 
     const [existing] = await pool.query(
@@ -304,6 +320,14 @@ router.patch('/:id', async (req, res, next) => {
 
     }
 
+    if (listingDate !== undefined) {
+
+      fields.push('listing_date = ?');
+
+      values.push(listingDate || null);
+
+    }
+
     if (registrar !== undefined) {
       if (registrar && !VALID_REGISTRARS.includes(registrar)) {
         throw new AppError('Invalid registrar');
@@ -339,7 +363,7 @@ router.patch('/:id', async (req, res, next) => {
 
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
 
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
 
   } catch (err) {
 
@@ -366,7 +390,7 @@ router.post('/:id/close', async (req, res, next) => {
       ['CLOSED', ipoId, req.tenantId]
     );
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
   } catch (err) {
     next(err);
   }
@@ -389,7 +413,7 @@ router.post('/:id/reopen', async (req, res, next) => {
       ['OPEN', ipoId, req.tenantId]
     );
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
   } catch (err) {
     next(err);
   }
@@ -412,7 +436,7 @@ router.post('/:id/invalidate', async (req, res, next) => {
       [ipoId, req.tenantId]
     );
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
   } catch (err) {
     next(err);
   }
@@ -435,7 +459,7 @@ router.post('/:id/restore', async (req, res, next) => {
       [ipoId, req.tenantId]
     );
     const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(rows[0]);
+    res.json(serializeIpo(rows[0]));
   } catch (err) {
     next(err);
   }

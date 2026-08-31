@@ -180,7 +180,7 @@ export async function getSummary(pool, tenantId) {
             COUNT(*) as ipos_applied,
             SUM(CASE WHEN allotment_status = 'ALLOTED' THEN 1 ELSE 0 END) as ipos_alloted,
             SUM(CASE WHEN allotment_status = 'ALLOTED' AND withdrawal_money IS NOT NULL THEN COALESCE(profit_loss, 0) ELSE 0 END) as total_ipo_profit,
-            COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return_due
+            COALESCE(SUM(${PENDING_FUND_TOTAL_SQL}), 0) AS pending_return_due
      FROM ipo_applications a WHERE tenant_id = ?
      GROUP BY member_id`,
     [tenantId]

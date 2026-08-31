@@ -1867,12 +1867,61 @@ async function applyFundAdjustV54(conn) {
         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
         FOREIGN KEY (from_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
         FOREIGN KEY (to_application_id) REFERENCES ipo_applications(id) ON DELETE CASCADE,
-        UNIQUE KEY uk_adjust_to_app (to_application_id),
         INDEX idx_adjust_from (from_application_id),
+        INDEX idx_adjust_to (to_application_id),
         INDEX idx_adjust_tenant (tenant_id)
       )`
     );
     console.log('Created ipo_fund_adjustments');
+  }
+}
+
+async function applyFundAdjustPoolV56(conn) {
+  if (!(await tableExists(conn, 'ipo_fund_adjustments'))) return;
+  if (!(await indexExists(conn, 'ipo_fund_adjustments', 'idx_adjust_to'))) {
+    await conn.query('ALTER TABLE ipo_fund_adjustments ADD INDEX idx_adjust_to (to_application_id)');
+  }
+  if (await indexExists(conn, 'ipo_fund_adjustments', 'uk_adjust_to_app')) {
+    await conn.query('ALTER TABLE ipo_fund_adjustments DROP INDEX uk_adjust_to_app');
+    console.log('Dropped uk_adjust_to_app so several leftovers can fund one new IPO');
+  }
+}
+
+async function applyIpoListingDateV57(conn) {
+  if (!(await tableExists(conn, 'ipos'))) return;
+  if (!(await columnExists(conn, 'ipos', 'listing_date'))) {
+    await conn.query(
+      `ALTER TABLE ipos
+       ADD COLUMN listing_date DATE DEFAULT NULL AFTER last_apply_date`
+    );
+    console.log('Added ipos.listing_date');
+  }
+
+  // Preserve IPOs that already finished the old allotted + withdrawal / settle flow.
+  const [result] = await conn.query(
+    `UPDATE ipos i
+     SET listing_date = COALESCE(
+       (
+         SELECT DATE(MIN(a.date_received))
+         FROM ipo_applications a
+         WHERE a.ipo_id = i.id
+           AND a.allotment_status = 'ALLOTED'
+           AND (a.withdrawal_money IS NOT NULL OR a.trns_received = 'Received')
+       ),
+       i.last_apply_date,
+       i.open_date,
+       DATE(i.created_at)
+     )
+     WHERE i.listing_date IS NULL
+       AND EXISTS (
+         SELECT 1 FROM ipo_applications a
+         WHERE a.ipo_id = i.id
+           AND a.allotment_status = 'ALLOTED'
+           AND (a.withdrawal_money IS NOT NULL OR a.profit_loss IS NOT NULL OR a.trns_received = 'Received')
+       )`
+  );
+  if (result?.affectedRows) {
+    console.log(`Backfilled listing_date on ${result.affectedRows} IPO(s) already in P&L / settle`);
   }
 }
 
@@ -1945,6 +1994,8 @@ async function migrate() {
   await applyWalletSplitOverpeelRepairV53(conn);
   await applyFundAdjustV54(conn);
   await applyGroupLeaderWalletsV55(conn);
+  await applyFundAdjustPoolV56(conn);
+  await applyIpoListingDateV57(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

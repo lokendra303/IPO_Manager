@@ -16,6 +16,14 @@ function round2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
 
+function assertAllottedIpoIsListed(app) {
+  if (app?.allotment_status === 'ALLOTED' && !app.listing_date) {
+    throw new AppError(
+      'This IPO is allotted but not listed yet. Wait for listing before receiving funds.'
+    );
+  }
+}
+
 async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
   const [rows] = await conn.query(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM wallet_transactions
@@ -156,7 +164,7 @@ export async function receiveIpoApplication(conn, {
   userId,
 }) {
   const [apps] = await conn.query(
-    `SELECT a.*, i.name as ipo_name FROM ipo_applications a
+    `SELECT a.*, i.name as ipo_name, i.listing_date FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
      WHERE a.id = ? AND a.tenant_id = ?`,
     [appId, tenantId]
@@ -165,6 +173,7 @@ export async function receiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
+  assertAllottedIpoIsListed(app);
   await assertIpoApplicationsEditable(conn, tenantId, app.ipo_id);
   const amounts = await resolveReceiveAmounts(conn, tenantId, app, amount);
 
@@ -249,6 +258,7 @@ async function receiveOneFromCache(conn, {
   amounts,
 }) {
   if (!app) throw new AppError('Application not found', 404);
+  assertAllottedIpoIsListed(app);
 
   const resolvedAmounts = amounts ?? await resolveReceiveAmounts(conn, tenantId, app);
   const now = new Date();
@@ -370,7 +380,7 @@ export async function receiveIpoApplicationsBulk(conn, {
   const placeholders = ids.map(() => '?').join(',');
 
   const [apps] = await conn.query(
-    `SELECT a.*, i.name as ipo_name FROM ipo_applications a
+    `SELECT a.*, i.name as ipo_name, i.listing_date FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
      WHERE a.id IN (${placeholders}) AND a.tenant_id = ?`,
     [...ids, tenantId]
@@ -485,16 +495,21 @@ export async function receiveIpoApplicationsByGroups(conn, {
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      JOIN member_groups g ON g.id = m.member_group_id
+     JOIN ipos i ON i.id = a.ipo_id
      WHERE a.ipo_id = ? AND a.tenant_id = ?
        AND m.member_group_id IN (${placeholders})
        AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
+       AND (
+         a.allotment_status <> 'ALLOTED'
+         OR i.listing_date IS NOT NULL
+       )
      ORDER BY g.sort_order, g.name, m.sort_order, m.id`,
     [ipoIdNum, tenantId, ...ids]
   );
 
   if (!apps.length) {
     throw new AppError(
-      'No pending returns for the selected sub-group(s). Members may already be marked received.'
+      'No pending returns for the selected sub-group(s). Allotted members wait for listing; others may already be marked received.'
     );
   }
 

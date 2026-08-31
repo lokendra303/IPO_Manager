@@ -21,7 +21,7 @@ const MENU = [
   { href: '/(manager)/fund-providers' as const, label: 'Fund Providers', icon: 'business-outline' as const },
   { href: '/(manager)/wallet' as const, label: 'Wallet', icon: 'wallet-outline' as const },
   { href: '/(manager)/ipos' as const, label: 'IPOs', icon: 'trending-up-outline' as const },
-  { href: '/(manager)/adjust-combine' as const, label: 'Combine adjust', icon: 'swap-horizontal-outline' as const },
+  { href: '/(manager)/adjust-combine' as const, label: 'Reuse leftover', icon: 'swap-horizontal-outline' as const },
   { href: '/(manager)/summary' as const, label: 'Summary', icon: 'bar-chart-outline' as const },
   { href: '/(manager)/profit-analysis' as const, label: 'Profit Analysis', icon: 'analytics-outline' as const },
   { href: '/(manager)/profit-sharing' as const, label: 'Profit Sharing', icon: 'pie-chart-outline' as const },

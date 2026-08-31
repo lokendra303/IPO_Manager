@@ -40,3 +40,20 @@ export function getApplicationWithdrawal(app: {
   }
   return null;
 }
+
+export function ipoListingDate(ipo?: { listing_date?: string | Date | null; listingDate?: string | Date | null } | null) {
+  const raw = ipo?.listing_date ?? ipo?.listingDate;
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime())) return null;
+    return raw.toISOString().slice(0, 10);
+  }
+  const s = String(raw).trim();
+  if (!s || s.startsWith('0000-00-00')) return null;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
+export function ipoIsListed(ipo?: { listing_date?: string | Date | null; listingDate?: string | Date | null } | null) {
+  return Boolean(ipoListingDate(ipo));
+}

@@ -37,7 +37,7 @@ router.patch('/bulk', async (req, res, next) => {
         const appId = parsePositiveInt(u.id, 'application id');
 
         const [existing] = await conn.query(
-          `SELECT a.*, i.allowed_categories
+          `SELECT a.*, i.allowed_categories, i.listing_date
            FROM ipo_applications a
            JOIN ipos i ON i.id = a.ipo_id
            WHERE a.id = ? AND a.tenant_id = ?`,
@@ -73,11 +73,15 @@ router.patch('/bulk', async (req, res, next) => {
           if (effectiveWithdrawal != null && Number.isNaN(effectiveWithdrawal)) {
             throw new AppError(`Invalid withdrawal amount for app #${appId}`);
           }
+          if (effectiveWithdrawal != null && !row.listing_date) {
+            throw new AppError('IPO is not listed yet. Wait for listing before entering withdrawal money.');
+          }
           fields.push('withdrawal_money = ?');
           values.push(effectiveWithdrawal);
         }
 
         const nextAllotment = u.allotmentStatus ?? row.allotment_status;
+        const ipoListed = Boolean(row.listing_date);
 
         if (u.allotmentStatus !== undefined) {
           fields.push('allotment_status = ?');
@@ -91,7 +95,7 @@ router.patch('/bulk', async (req, res, next) => {
           }
         }
 
-        if (nextAllotment === 'ALLOTED') {
+        if (nextAllotment === 'ALLOTED' && ipoListed) {
           const withdrawalForCalc =
             u.withdrawalMoney !== undefined ? effectiveWithdrawal : row.withdrawal_money;
           if (withdrawalForCalc != null && withdrawalForCalc !== '') {
@@ -105,6 +109,9 @@ router.patch('/bulk', async (req, res, next) => {
         } else if (u.profitLoss !== undefined && u.allotmentStatus === undefined) {
           if (row.allotment_status !== 'ALLOTED') {
             throw new AppError(`Cannot set P&L unless allotment is ALLOTED (app #${appId})`);
+          }
+          if (!ipoListed) {
+            throw new AppError('IPO is not listed yet. Wait for listing before entering P&L.');
           }
           fields.push('profit_loss = ?');
           values.push(u.profitLoss === null ? null : Number(u.profitLoss));

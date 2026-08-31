@@ -5,7 +5,7 @@ import {
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
   Row, Col,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined, SwapOutlined, CalendarOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import ModalDatePicker from '../components/ModalDatePicker';
@@ -27,7 +27,7 @@ import ContentCard from '../components/ContentCard';
 import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
-import { computeProfitFromWithdrawal, getApplicationProfit } from '../utils/ipoProfit';
+import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, ipoListingDate } from '../utils/ipoProfit';
 
 function toDateParam(v) {
   if (!v) return null;
@@ -51,6 +51,12 @@ function groupHasOwner(group) {
 
 function remainingAppPrincipal(app) {
   return Math.max(0, Number(app?.amount || 0) - Number(app?.adjusted_out_amount || 0));
+}
+
+function normalizeIpo(row) {
+  if (!row) return row;
+  const listing = ipoListingDate(row);
+  return { ...row, listing_date: listing, listingDate: listing };
 }
 
 function ProfitShareAmounts({ record }) {
@@ -108,6 +114,7 @@ export default function IpoDetailPage() {
   const [hniForm] = Form.useForm();
   const [editIpoModalOpen, setEditIpoModalOpen] = useState(false);
   const [editIpoSaving, setEditIpoSaving] = useState(false);
+  const [listingSaving, setListingSaving] = useState(false);
   const [editIpoForm] = Form.useForm();
   const [returnFilter, setReturnFilter] = useState('all');
   const [selectedReceiveIds, setSelectedReceiveIds] = useState([]);
@@ -122,14 +129,6 @@ export default function IpoDetailPage() {
   const [receivingByGroup, setReceivingByGroup] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ipoSummary, setIpoSummary] = useState(null);
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustSources, setAdjustSources] = useState([]);
-  const [adjustFromIpoId, setAdjustFromIpoId] = useState(null);
-  const [adjustPreview, setAdjustPreview] = useState(null);
-  const [adjustSelectedIds, setAdjustSelectedIds] = useState([]);
-  const [adjustCategory, setAdjustCategory] = useState('RII');
-  const [adjustLoading, setAdjustLoading] = useState(false);
-  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -143,7 +142,7 @@ export default function IpoDetailPage() {
         client.get('/member-groups'),
         client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
       ]);
-      setIpo(ipoRes.data);
+      setIpo(normalizeIpo(ipoRes.data));
       setApplications(appsRes.data);
       setIpoSummary(summaryRes.data);
       const activeMembers = membersRes.data.filter((m) => m.status === 'ACTIVE');
@@ -210,6 +209,9 @@ export default function IpoDetailPage() {
   const isNotApplied = (app) => getAllotmentStatus(app) === 'NOT_APPLIED';
   const isAllotted = (app) => getAllotmentStatus(app) === 'ALLOTED';
   const isNotAllotted = (app) => getAllotmentStatus(app) === 'NOT_ALLOTED';
+  const ipoListed = ipoIsListed(ipo);
+  const isWaitingListing = (app) => isAllotted(app) && !ipoListed;
+  const canReceiveApp = (app) => app && !isFundReturned(app) && !isWaitingListing(app);
   const returnedCount = applications.filter(isFundReturned).length;
   const pendingReturnCount = applications.length - returnedCount;
   const notAppliedCount = applications.filter(isNotApplied).length;
@@ -230,13 +232,13 @@ export default function IpoDetailPage() {
   });
   const receivableSelectedIds = selectedReceiveIds.filter((appId) => {
     const app = applications.find((a) => a.id === appId);
-    return app && !isFundReturned(app);
+    return canReceiveApp(app);
   });
 
   const pendingByGroupId = useMemo(() => {
     const map = new Map();
     for (const app of applications) {
-      if (isFundReturned(app)) continue;
+      if (!canReceiveApp(app)) continue;
       const gid = app.member_group_id;
       if (gid == null) continue;
       if (!map.has(gid)) {
@@ -245,7 +247,7 @@ export default function IpoDetailPage() {
       map.get(gid).apps.push(app);
     }
     return map;
-  }, [applications]);
+  }, [applications, editedRows, ipoListed]);
 
   const receivableGroups = useMemo(() => {
     return memberGroups
@@ -343,6 +345,7 @@ export default function IpoDetailPage() {
       name: ipo?.name || '',
       openDate: toDayjsOrNull(ipo?.open_date),
       lastApplyDate: toDayjsOrNull(ipo?.last_apply_date),
+      listingDate: toDayjsOrNull(ipo?.listing_date),
     });
     setEditIpoModalOpen(true);
   };
@@ -354,14 +357,43 @@ export default function IpoDetailPage() {
         name: values.name?.trim(),
         openDate: toDateParam(values.openDate),
         lastApplyDate: toDateParam(values.lastApplyDate),
+        listingDate: toDateParam(values.listingDate),
       });
-      setIpo(data);
+      setIpo(normalizeIpo(data));
       message.success('IPO updated');
       setEditIpoModalOpen(false);
     } catch (err) {
       message.error(getErrorMessage(err, 'Could not update IPO'));
     } finally {
       setEditIpoSaving(false);
+    }
+  };
+
+  const onMarkListed = async () => {
+    setListingSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, {
+        listingDate: dayjs().format('YYYY-MM-DD'),
+      });
+      setIpo(normalizeIpo(data));
+      message.success('IPO marked as listed — enter withdrawal money for allotted members, then Save Changes for P&L');
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not mark IPO as listed'));
+    } finally {
+      setListingSaving(false);
+    }
+  };
+
+  const onUndoMarkListed = async () => {
+    setListingSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, { listingDate: null });
+      setIpo(normalizeIpo(data));
+      message.success('Listing undone — allotted members wait for listing again. Withdrawal and P&L are hidden until you mark listed.');
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Could not undo listing'));
+    } finally {
+      setListingSaving(false);
     }
   };
 
@@ -374,7 +406,7 @@ export default function IpoDetailPage() {
         body.lotAmountHni = values.lotAmountHni;
       }
       const { data } = await client.patch(`/ipos/${id}`, body);
-      setIpo(data);
+      setIpo(normalizeIpo(data));
       message.success(values.enableHni ? 'HNI settings updated' : 'HNI disabled for this IPO');
       setHniModalOpen(false);
       if (distributeInvestorCategory === 'HNI' && !ipoHasHniLot(data)) {
@@ -450,7 +482,7 @@ export default function IpoDetailPage() {
     setStatusLoading(true);
     try {
       const { data } = await client.post(`/ipos/${id}/close`);
-      setIpo(data);
+      setIpo(normalizeIpo(data));
       message.success('IPO closed — no wallet or provider transactions will run until you reopen');
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to close IPO'));
@@ -463,7 +495,7 @@ export default function IpoDetailPage() {
     setStatusLoading(true);
     try {
       const { data } = await client.post(`/ipos/${id}/reopen`);
-      setIpo(data);
+      setIpo(normalizeIpo(data));
       message.success('IPO reopened — you can distribute funds again');
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to reopen IPO'));
@@ -555,80 +587,6 @@ export default function IpoDetailPage() {
       message.error(getErrorMessage(err, 'Distribution failed'));
     } finally {
       setDistributing(false);
-    }
-  };
-
-  const openAdjust = async () => {
-    setAdjustOpen(true);
-    setAdjustFromIpoId(null);
-    setAdjustPreview(null);
-    setAdjustSelectedIds([]);
-    setAdjustCategory('RII');
-    setAdjustLoading(true);
-    try {
-      const { data } = await client.get(`/ipos/${id}/adjust-sources`);
-      setAdjustSources(data || []);
-      if (!data?.length) {
-        message.info('No previous IPOs with unsettled not-allotted funds to adjust');
-      }
-    } catch (err) {
-      message.error(getErrorMessage(err, 'Failed to load adjust sources'));
-      setAdjustSources([]);
-    } finally {
-      setAdjustLoading(false);
-    }
-  };
-
-  const loadAdjustPreview = async (fromIpoId, category = adjustCategory) => {
-    if (!fromIpoId) {
-      setAdjustPreview(null);
-      setAdjustSelectedIds([]);
-      return;
-    }
-    setAdjustLoading(true);
-    try {
-      const { data } = await client.get(`/ipos/${id}/adjust-preview`, {
-        params: { fromIpoId, investorCategory: category },
-      });
-      setAdjustPreview(data);
-      setAdjustSelectedIds((data.rows || []).filter((r) => r.eligible).map((r) => r.applicationId));
-    } catch (err) {
-      message.error(getErrorMessage(err, 'Failed to preview adjust'));
-      setAdjustPreview(null);
-      setAdjustSelectedIds([]);
-    } finally {
-      setAdjustLoading(false);
-    }
-  };
-
-  const onAdjustSubmit = async () => {
-    if (!adjustFromIpoId) {
-      message.warning('Select a source IPO');
-      return;
-    }
-    if (!adjustSelectedIds.length) {
-      message.warning('Select at least one member to adjust');
-      return;
-    }
-    setAdjustSubmitting(true);
-    try {
-      const { data } = await client.post(`/ipos/${id}/adjust-from`, {
-        fromIpoId: adjustFromIpoId,
-        applicationIds: adjustSelectedIds,
-        investorCategory: adjustCategory,
-      });
-      message.success(
-        `Adjusted ${data.count} member(s): ${formatCurrency(data.totalAdjusted)} to this IPO` +
-          (data.totalPendingCollect > 0
-            ? `; ${formatCurrency(data.totalPendingCollect)} left pending to collect`
-            : '')
-      );
-      setAdjustOpen(false);
-      load();
-    } catch (err) {
-      message.error(getErrorMessage(err, 'Adjust failed'));
-    } finally {
-      setAdjustSubmitting(false);
     }
   };
 
@@ -752,8 +710,8 @@ export default function IpoDetailPage() {
       if (applied.length) {
         message.success(`P&L share applied for ${applied.length} member(s)`);
       }
-      if (status === 'ALLOTED') {
-        message.info('Enter withdrawal money for allotted members, then Save Changes for P&L', 5);
+      if (status === 'ALLOTED' && !ipoListed) {
+        message.info('Allotted members wait for listing. Mark the IPO as listed before withdrawal and P&L.', 5);
       }
       setSelectedReceiveIds([]);
       void refreshReceiveData();
@@ -767,6 +725,11 @@ export default function IpoDetailPage() {
   const onReceive = async (appId) => {
     if (isFrozen) {
       message.warning('IPO is closed or invalid — reopen or restore the IPO to mark returns');
+      return;
+    }
+    const app = applications.find((a) => a.id === appId);
+    if (app && isWaitingListing(app)) {
+      message.warning('Allotted members wait for listing before you can receive funds');
       return;
     }
     if (missingReceiveAccount) {
@@ -1268,16 +1231,25 @@ export default function IpoDetailPage() {
       render: (v, r) => {
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         if (status !== 'ALLOTED') return '—';
+        if (ipoListed) {
+          return (
+            <InputNumber
+              size="small"
+              min={0}
+              disabled={isFrozen}
+              style={{ width: '100%' }}
+              placeholder="Received"
+              value={getRowVal(r, 'withdrawalMoney', 'withdrawal_money')}
+              onChange={(val) => updateWithdrawal(r, val)}
+            />
+          );
+        }
         return (
-          <InputNumber
-            size="small"
-            min={0}
-            disabled={isFrozen}
-            style={{ width: '100%' }}
-            placeholder="Received"
-            value={getRowVal(r, 'withdrawalMoney', 'withdrawal_money')}
-            onChange={(val) => updateWithdrawal(r, val)}
-          />
+          <Tooltip title="Mark this IPO as listed to enter withdrawal money and P&L">
+            <Button type="link" size="small" loading={listingSaving} onClick={onMarkListed} style={{ padding: 0 }}>
+              Waiting — mark listed
+            </Button>
+          </Tooltip>
         );
       },
     },
@@ -1288,6 +1260,7 @@ export default function IpoDetailPage() {
       render: (v, r) => {
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         if (status !== 'ALLOTED') return '—';
+        if (!ipoListed) return <Typography.Text type="secondary">—</Typography.Text>;
         const pl = getComputedProfit(r);
         if (pl == null) return <Typography.Text type="secondary">—</Typography.Text>;
         return (
@@ -1310,7 +1283,7 @@ export default function IpoDetailPage() {
         }
         const status = getRowVal(r, 'allotmentStatus', 'allotment_status');
         const pl = getComputedProfit(r);
-        if (status === 'ALLOTED' && pl != null && Number(pl) !== 0) {
+        if (status === 'ALLOTED' && ipoListed && pl != null && Number(pl) !== 0) {
           return <Tag color="gold" style={{ marginInlineEnd: 0 }}>On save</Tag>;
         }
         return '—';
@@ -1387,11 +1360,19 @@ export default function IpoDetailPage() {
         }
         return (
           <Space size={4} wrap>
-            <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
-              <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
-                Receive{Number(r.adjusted_out_amount || 0) > 0 ? ` ${formatCurrency(remainingAppPrincipal(r))}` : ''}
-              </Button>
-            </Popconfirm>
+            {isWaitingListing(r) ? (
+              <Tooltip title="IPO is not listed yet. After listing you can enter withdrawal and receive funds.">
+                <Button type="link" size="small" loading={listingSaving} onClick={onMarkListed}>
+                  Mark listed
+                </Button>
+              </Tooltip>
+            ) : (
+              <Popconfirm title="Mark received and return to wallet?" onConfirm={() => onReceive(r.id)}>
+                <Button size="small" type="primary" ghost loading={receivingAppId === r.id}>
+                  Receive{Number(r.adjusted_out_amount || 0) > 0 ? ` ${formatCurrency(remainingAppPrincipal(r))}` : ''}
+                </Button>
+              </Popconfirm>
+            )}
             {!Number(r.adjusted_out_amount || 0) && !r.adjusted_from_application_id && (
             <Popconfirm
               title={`Undistribute ${r.display_name || 'this member'}?`}
@@ -1464,9 +1445,43 @@ export default function IpoDetailPage() {
             {ipo?.name}
             <Tag color={isClosed ? 'error' : 'success'}>{isClosed ? 'CLOSED' : 'OPEN'}</Tag>
             {isInvalid && <Tag color="default">INVALID</Tag>}
+            {ipoListed ? (
+              <Tag color="blue">Listed {formatIpoDate(ipo?.listing_date)}</Tag>
+            ) : (
+              <Tag>Not listed yet</Tag>
+            )}
             <Button size="small" type="text" icon={<EditOutlined />} onClick={openEditIpo} disabled={isInvalid}>
               Edit
             </Button>
+            {!ipoListed && !isInvalid && (
+              <Button
+                size="small"
+                type="link"
+                icon={<CalendarOutlined />}
+                loading={listingSaving}
+                onClick={onMarkListed}
+              >
+                Mark listed
+              </Button>
+            )}
+            {ipoListed && !isInvalid && (
+              <Popconfirm
+                title="Undo mark listed?"
+                description="Allotted members go back to waiting for listing. Withdrawal and P&L stay saved but stay hidden until you mark listed again."
+                okText="Undo listed"
+                onConfirm={onUndoMarkListed}
+              >
+                <Button
+                  size="small"
+                  type="link"
+                  danger
+                  icon={<UndoOutlined />}
+                  loading={listingSaving}
+                >
+                  Undo listed
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
         }
         subtitle={
@@ -1474,6 +1489,8 @@ export default function IpoDetailPage() {
             Open {formatIpoDate(ipo?.open_date)}
             {' '}
             · Close {formatIpoDate(ipo?.last_apply_date)}
+            {' '}
+            · Listing {ipoListed ? formatIpoDate(ipo?.listing_date) : 'waiting'}
             {' '}
             · RII lot {formatCurrency(getLotAmountForCategory(ipo, 'RII'))}
             {ipoAllowsHni(ipo) && (
@@ -1525,8 +1542,8 @@ export default function IpoDetailPage() {
             <Tooltip
               title={
                 isFrozen
-                  ? 'Reopen or restore this IPO to adjust funds'
-                  : 'Open adjust page — to send / to collect by sub-group & individual (no wallet)'
+                  ? 'Reopen or restore this IPO to reuse leftover funds'
+                  : 'Move leftover not-allotted money from an old IPO onto this one. Extra comes from the provider wallet.'
               }
             >
               <Button
@@ -1534,7 +1551,7 @@ export default function IpoDetailPage() {
                 onClick={() => navigate(`/ipos/${id}/adjust`)}
                 disabled={isFrozen}
               >
-                Adjust from previous IPO
+                Reuse leftover funds
               </Button>
             </Tooltip>
             <Button icon={<UndoOutlined />} onClick={onUndoChanges} disabled={!unsavedRowCount || isFrozen}>
@@ -1570,7 +1587,7 @@ export default function IpoDetailPage() {
                     setStatusLoading(true);
                     try {
                       const { data } = await client.post(`/ipos/${id}/restore`);
-                      setIpo(data);
+                      setIpo(normalizeIpo(data));
                       message.success('IPO restored to main list');
                     } catch (err) {
                       message.error(getErrorMessage(err));
@@ -1634,7 +1651,7 @@ export default function IpoDetailPage() {
                     setStatusLoading(true);
                     try {
                       const { data } = await client.post(`/ipos/${id}/invalidate`);
-                      setIpo(data);
+                      setIpo(normalizeIpo(data));
                       message.success('IPO marked invalid');
                     } catch (err) {
                       message.error(getErrorMessage(err));
@@ -1806,7 +1823,11 @@ export default function IpoDetailPage() {
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message="Allotted members: enter Withdrawal money (total received back). P&L = withdrawal − distributed amount. On save, profit is shared using share rules for this IPO. For sub-groups paid to an owner, use Receive by group after you collect from the owner."
+            message={
+              ipoListed
+                ? 'Allotted members: enter Withdrawal money (total received back). P&L = withdrawal − distributed amount. On save, profit is shared using share rules for this IPO. For sub-groups paid to an owner, use Receive by group after you collect from the owner.'
+                : 'Allotment: keep Pending while money is still blocked. Use Not allotted only after it unblocks (then Receive, or Reuse leftover instead of paying a new IPO from wallet). Allotted waits for listing before withdrawal and P&L.'
+            }
           />
         )}
         {applications.length > 0 && (
@@ -1835,7 +1856,7 @@ export default function IpoDetailPage() {
                 </Button>
                 <Popconfirm
                   title={`Set ${selectedReceiveIds.length} member${selectedReceiveIds.length !== 1 ? 's' : ''} to Not Alloted?`}
-                  description="Clears withdrawal money and P&L on those rows."
+                  description="Only if money is unblocked / ready to collect or reuse leftover. If still blocked, keep Pending. Clears withdrawal and P&L."
                   onConfirm={() => onBulkSetAllotment('NOT_ALLOTED')}
                   okText="Set Not Alloted"
                 >
@@ -1858,7 +1879,7 @@ export default function IpoDetailPage() {
           </Space>
         )}
         <Table
-          key={returnFilter}
+          key={`${returnFilter}-${ipoListed ? 'listed' : 'unlisted'}`}
           rowKey="id"
           loading={loading || refreshing}
           className="pro-table ipo-applications-table"
@@ -2553,148 +2574,6 @@ export default function IpoDetailPage() {
       </Modal>
 
       <Modal
-        title="Adjust funds from previous IPO"
-        open={adjustOpen}
-        onCancel={() => setAdjustOpen(false)}
-        width={860}
-        destroyOnClose
-        okText={
-          adjustSelectedIds.length
-            ? `Adjust ${adjustSelectedIds.length} member(s)`
-            : 'Adjust'
-        }
-        onOk={onAdjustSubmit}
-        confirmLoading={adjustSubmitting}
-        okButtonProps={{ disabled: !adjustSelectedIds.length || adjustLoading }}
-      >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="Roll unsettled not-allotted funds onto this IPO without collecting cash first. New lot must be ≤ remaining old amount; the difference stays pending to collect on the old IPO."
-        />
-        <Space wrap style={{ marginBottom: 16 }} align="start">
-          <div>
-            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              Source IPO
-            </Typography.Text>
-            <Select
-              style={{ minWidth: 280 }}
-              placeholder={adjustLoading && !adjustSources.length ? 'Loading…' : 'Select previous IPO'}
-              value={adjustFromIpoId}
-              loading={adjustLoading}
-              options={(adjustSources || []).map((s) => ({
-                value: s.id,
-                label: `${s.name} (${s.adjustable_count} · ${formatCurrency(s.adjustable_principal)})`,
-              }))}
-              onChange={(val) => {
-                setAdjustFromIpoId(val);
-                loadAdjustPreview(val, adjustCategory);
-              }}
-              allowClear
-              onClear={() => {
-                setAdjustFromIpoId(null);
-                setAdjustPreview(null);
-                setAdjustSelectedIds([]);
-              }}
-            />
-          </div>
-          <div>
-            <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              Category on this IPO
-            </Typography.Text>
-            <Select
-              style={{ minWidth: 120 }}
-              value={adjustCategory}
-              options={categoryCompactOptionsForIpo(ipo)}
-              onChange={(val) => {
-                setAdjustCategory(val);
-                if (adjustFromIpoId) loadAdjustPreview(adjustFromIpoId, val);
-              }}
-            />
-          </div>
-        </Space>
-        {adjustPreview && (
-          <>
-            <Alert
-              type="success"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message={
-                <>
-                  Eligible {adjustPreview.eligibleCount}: adjust{' '}
-                  <strong>{formatCurrency(adjustPreview.totalAdjust)}</strong>
-                  {adjustPreview.totalPendingCollect > 0 && (
-                    <>
-                      {' '}· leave pending collect{' '}
-                      <strong>{formatCurrency(adjustPreview.totalPendingCollect)}</strong>
-                    </>
-                  )}
-                </>
-              }
-            />
-            <Table
-              size="small"
-              rowKey="applicationId"
-              loading={adjustLoading}
-              dataSource={adjustPreview.rows || []}
-              pagination={false}
-              scroll={{ y: 360 }}
-              rowSelection={{
-                selectedRowKeys: adjustSelectedIds,
-                onChange: (keys) => setAdjustSelectedIds(keys),
-                getCheckboxProps: (record) => ({ disabled: !record.eligible }),
-              }}
-              columns={[
-                {
-                  title: 'Member',
-                  dataIndex: 'memberName',
-                  render: (v, r) => (
-                    <span>
-                      {v}
-                      {!r.eligible && (
-                        <Typography.Text type="danger" style={{ display: 'block', fontSize: 12 }}>
-                          {r.blockedReason}
-                        </Typography.Text>
-                      )}
-                    </span>
-                  ),
-                },
-                {
-                  title: 'Old amount',
-                  dataIndex: 'oldAmount',
-                  align: 'right',
-                  width: 110,
-                  render: (v) => formatCurrency(v),
-                },
-                {
-                  title: 'New lot',
-                  dataIndex: 'newLot',
-                  align: 'right',
-                  width: 110,
-                  render: (v) => (v != null ? formatCurrency(v) : '—'),
-                },
-                {
-                  title: 'Adjust',
-                  dataIndex: 'adjustAmount',
-                  align: 'right',
-                  width: 110,
-                  render: (v) => (v != null ? formatCurrency(v) : '—'),
-                },
-                {
-                  title: 'Pending collect',
-                  dataIndex: 'pendingCollect',
-                  align: 'right',
-                  width: 120,
-                  render: (v) => (v != null ? formatCurrency(v) : '—'),
-                },
-              ]}
-            />
-          </>
-        )}
-      </Modal>
-
-      <Modal
         title="Edit IPO"
         open={editIpoModalOpen}
         onCancel={() => setEditIpoModalOpen(false)}
@@ -2722,6 +2601,13 @@ export default function IpoDetailPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item
+            name="listingDate"
+            label="Listing date"
+            extra="Allotted members wait for this date before withdrawal, P&L, or receiving funds. Clear it to undo mark listed."
+          >
+            <ModalDatePicker allowClear />
+          </Form.Item>
         </Form>
       </Modal>
 

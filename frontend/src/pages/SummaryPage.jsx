@@ -164,7 +164,7 @@ export default function SummaryPage() {
       title: (
         <span>
           Pending From Team{' '}
-          <Tooltip title="Principal still owed back on allotted or not-allotted IPOs (excludes applications still awaiting allotment)">
+          <Tooltip title="Principal still with the member and not yet marked received, including applications awaiting allotment. Subtracts funds already adjusted to another IPO.">
             <InfoCircleOutlined style={{ color: '#94a3b8' }} />
           </Tooltip>
         </span>

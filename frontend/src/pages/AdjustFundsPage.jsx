@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Alert, Button, Col, Row, Select, Space, Table, Tag, Typography, message,
 } from 'antd';
-import { ArrowLeftOutlined, SwapOutlined, SendOutlined, DownloadOutlined, ClockCircleOutlined, FundOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SwapOutlined, SendOutlined, DownloadOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
@@ -124,7 +124,7 @@ export default function AdjustFundsPage() {
           allotmentStatus: r.allotmentStatus,
           remainder: r.remainder,
           toCollect: r.remainder,
-          reason: 'Not selected for adjust — full amount to collect',
+          reason: 'Not selected — leftover stays on the old IPO',
           groupName: r.groupName,
         });
       } else if (!r.eligible && r.remainder > 0 && !selectedSet.has(r.applicationId)) {
@@ -134,7 +134,7 @@ export default function AdjustFundsPage() {
           allotmentStatus: r.allotmentStatus,
           remainder: r.remainder,
           toCollect: r.remainder,
-          reason: r.blockedReason || 'Not adjusted — full amount to collect',
+          reason: r.blockedReason || 'Cannot reuse — leftover stays on the old IPO',
           groupName: r.groupName,
         });
       }
@@ -146,34 +146,8 @@ export default function AdjustFundsPage() {
     const totalNewApps = selectedRows.reduce((s, r) => s + Number(r.newAppAmount || 0), 0);
     const unadjustedToCollect = unadjusted.reduce((s, r) => s + Number(r.toCollect || 0), 0);
 
-    const groupMap = new Map();
-    const individuals = [];
-    for (const row of selectedRows) {
-      if (row.groupId == null) {
-        individuals.push(row);
-        continue;
-      }
-      if (!groupMap.has(row.groupId)) {
-        groupMap.set(row.groupId, {
-          groupId: row.groupId,
-          groupName: row.groupName || `Group #${row.groupId}`,
-          members: [],
-          totalAdjust: 0,
-          totalToSend: 0,
-          totalToCollect: 0,
-        });
-      }
-      const g = groupMap.get(row.groupId);
-      g.members.push(row);
-      g.totalAdjust += Number(row.adjustAmount || 0);
-      g.totalToSend += Number(row.toSend || 0);
-      g.totalToCollect += Number(row.toCollect || 0);
-    }
-
     return {
       selectedRows,
-      groups: [...groupMap.values()],
-      individuals,
       unadjusted,
       totals: {
         totalAdjust,
@@ -188,25 +162,26 @@ export default function AdjustFundsPage() {
 
   const onSubmit = async () => {
     if (!fromIpoId) {
-      message.warning('Select a source IPO');
+      message.warning('Select the old IPO first');
       return;
     }
     if (!selectedIds.length) {
-      message.warning('Select at least one member to adjust');
+      message.warning('Select at least one member');
       return;
     }
     const toSend = Number(selectedPreview?.totals?.totalToSend || 0);
-    if (toSend > 0.001) {
+    const walletCredit = Number(selectedPreview?.totals?.totalWalletCredit || 0);
+    if (toSend > 0.001 || walletCredit > 0.001) {
       if (!bankAccounts.length) {
-        message.error('Add a provider wallet account before adjusting top-ups');
+        message.error('Add a provider wallet account before reusing leftover');
         return;
       }
       if (bankAccounts.length > 1 && !payAccountId) {
-        message.warning('Select provider wallet account for the top-up debit');
+        message.warning('Select provider wallet account');
         return;
       }
       const acc = bankAccounts.find((a) => a.id === (payAccountId || bankAccounts[0]?.id));
-      if (acc && Number(acc.balance) < toSend) {
+      if (toSend > 0.001 && acc && Number(acc.balance) < toSend) {
         message.error(
           `Insufficient provider wallet (${acc.label}). Need ${formatCurrency(toSend)}, available ${formatCurrency(acc.balance)}`
         );
@@ -220,23 +195,23 @@ export default function AdjustFundsPage() {
         applicationIds: selectedIds,
         investorCategory: category,
       };
-      if (toSend > 0.001) {
+      if (toSend > 0.001 || walletCredit > 0.001) {
         body.bankAccountId = payAccountId || bankAccounts[0]?.id;
       }
       const { data } = await client.post(`/ipos/${id}/adjust-from`, body);
-      const parts = [
-        `Adjusted ${data.count} member(s)`,
-        `rolled ${formatCurrency(data.totalAdjusted)}`,
-      ];
-      if (data.providerDebited > 0) {
-        parts.push(`provider debited ${formatCurrency(data.providerDebited)}`);
-      } else if (data.totalToSend > 0) {
-        parts.push(`to send ${formatCurrency(data.totalToSend)}`);
+      const parts = [`Moved leftover for ${data.count} member(s)`];
+      if (data.totalAdjusted > 0) {
+        parts.push(`${formatCurrency(data.totalAdjusted)} onto this IPO`);
       }
-      if (data.totalToCollect > 0 || data.totalPendingCollect > 0) {
-        parts.push(
-          `to collect ${formatCurrency(data.totalToCollect ?? data.totalPendingCollect)}`
-        );
+      if (data.providerDebited > 0) {
+        parts.push(`provider wallet −${formatCurrency(data.providerDebited)}`);
+      }
+      if (data.providerCredited > 0) {
+        parts.push(`provider wallet +${formatCurrency(data.providerCredited)}`);
+      }
+      const leftover = Number(data.totalToCollect ?? data.totalPendingCollect ?? 0);
+      if (leftover > 0.001) {
+        parts.push(`still collect ${formatCurrency(leftover)} on the old IPO`);
       }
       message.success(parts.join(' · '));
       navigate(`/ipos/${id}`);
@@ -267,19 +242,13 @@ export default function AdjustFundsPage() {
         title={
           <Space>
             <SwapOutlined />
-            Adjust funds → {targetIpo.name}
+            Reuse leftover funds
           </Space>
         }
-        subtitle={
-          <>
-            New lot ({category}): {lot != null ? formatCurrency(lot) : '—'}
-            {' · '}
-            Top-up debits provider wallet · group leader follows paid-to
-          </>
-        }
+        subtitle={`Move not-allotted money from an old IPO onto ${targetIpo.name}. Extra needed comes from the provider wallet. Extra left on the old IPO is collected later.`}
         extra={
           <>
-            <Button onClick={() => navigate('/adjust-combine')}>Combine adjust</Button>
+            <Button onClick={() => navigate('/adjust-combine')}>Several IPOs</Button>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/ipos/${id}`)}>
               Back to IPO
             </Button>
@@ -289,25 +258,42 @@ export default function AdjustFundsPage() {
               disabled={!selectedIds.length || previewLoading}
               onClick={onSubmit}
             >
-              Confirm adjust ({selectedIds.length})
+              Reuse leftover ({selectedIds.length})
             </Button>
           </>
         }
       />
 
-      <ContentCard title="Source & category" padded style={{ marginBottom: 16 }}>
+      <Alert
+        style={{ marginBottom: 16 }}
+        type="info"
+        showIcon
+        message="How leftover reuse works"
+        description={
+          <ol style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+            <li>Pick the old IPO that still has leftover with members — even small amounts like ₹180 or ₹48.</li>
+            <li>We apply that leftover to this new IPO’s lot. Several leftovers for the same member can be added together.</li>
+            <li>
+              If the new lot is bigger, extra comes from the <strong>provider wallet</strong>.
+              If the member is already on this IPO, leftover is added to that application and the wallet is credited.
+            </li>
+          </ol>
+        }
+      />
+
+      <ContentCard title="1. Choose old IPO" padded style={{ marginBottom: 16 }}>
         <Space wrap align="start" size="large">
           <div>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              From (old IPO)
+              Old IPO (money still with members)
             </Typography.Text>
             <Select
-              style={{ minWidth: 280, maxWidth: '100%' }}
-              placeholder="Select previous IPO"
+              style={{ minWidth: 320, maxWidth: '100%' }}
+              placeholder="Select old IPO"
               value={fromIpoId}
               options={(sources || []).map((s) => ({
                 value: s.id,
-                label: `${s.name} (${s.adjustable_count} · ${formatCurrency(s.adjustable_principal)})`,
+                label: `${s.name} · ${s.adjustable_count} member${s.adjustable_count === 1 ? '' : 's'} · ${formatCurrency(s.adjustable_principal)} leftover`,
               }))}
               onChange={(val) => setFromIpoId(val)}
               allowClear
@@ -320,18 +306,21 @@ export default function AdjustFundsPage() {
           </div>
           <div>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              Category on {targetIpo.name}
+              New lot on {targetIpo.name}
             </Typography.Text>
             <Select
-              style={{ minWidth: 120 }}
+              style={{ minWidth: 160 }}
               value={category}
               options={categoryCompactOptionsForIpo(targetIpo)}
               onChange={setCategory}
             />
+            <Typography.Text type="secondary" style={{ display: 'block', marginTop: 4, fontSize: 12 }}>
+              {lot != null ? formatCurrency(lot) : '—'} per member
+            </Typography.Text>
           </div>
           <div>
             <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 4 }}>
-              Provider wallet (top-up)
+              Provider wallet (if extra is needed)
             </Typography.Text>
             <Select
               style={{ minWidth: 220 }}
@@ -354,7 +343,7 @@ export default function AdjustFundsPage() {
             style={{ marginTop: 12 }}
             type="info"
             showIcon
-            message="No previous IPOs with not-allotted / not-applied unsettled funds"
+            message="No old IPOs with leftover not-allotted money to reuse"
           />
         )}
       </ContentCard>
@@ -362,63 +351,43 @@ export default function AdjustFundsPage() {
       {selectedPreview && (
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={12} sm={12} md={6}>
+            <Col xs={24} sm={8}>
               <StatCard
-                title="To send"
+                title="From provider wallet"
                 value={formatCurrency(selectedPreview.totals.totalToSend)}
                 icon={<SendOutlined />}
                 variant="danger"
               />
             </Col>
-            <Col xs={12} sm={12} md={6}>
+            <Col xs={24} sm={8}>
               <StatCard
-                title="To collect"
+                title="Leftover on old IPO"
                 value={formatCurrency(selectedPreview.totals.totalToCollect)}
                 icon={<DownloadOutlined />}
                 variant="warning"
               />
             </Col>
-            <Col xs={12} sm={12} md={6}>
+            <Col xs={24} sm={8}>
               <StatCard
-                title="Not adjusted"
+                title="Not reused"
                 value={formatCurrency(selectedPreview.totals.unadjustedToCollect)}
                 icon={<ClockCircleOutlined />}
                 variant="warning"
               />
             </Col>
-            <Col xs={12} sm={12} md={6}>
-              <StatCard
-                title="Total to collect"
-                value={formatCurrency(selectedPreview.totals.grandToCollect)}
-                icon={<FundOutlined />}
-                variant="primary"
-              />
-            </Col>
           </Row>
 
-          <Alert
-            style={{ marginBottom: 16 }}
-            type="info"
-            showIcon
-            message="How this works"
-            description={
-              <>
-                <div>
-                  <strong>Old ≤ new</strong> (e.g. ₹14,807 → ₹14,936): roll old fund, mark old as Received,
-                  show shortfall under <em>To send</em> — send manually (no wallet).
-                </div>
-                <div>
-                  <strong>Old &gt; new</strong>: roll new lot, leftover under <em>To collect</em> on old IPO.
-                </div>
-                <div>
-                  Members not adjusted (or still allotment Pending): <em>full amount to collect</em>.
-                </div>
-              </>
-            }
-          />
+          {selectedPreview.totals.totalToSend > providerBalance + 0.001 && (
+            <Alert
+              style={{ marginBottom: 16 }}
+              type="error"
+              showIcon
+              message={`Provider wallet is short by ${formatCurrency(selectedPreview.totals.totalToSend - providerBalance)}`}
+            />
+          )}
 
           <ContentCard
-            title={`Members to adjust (${selectedPreview.selectedRows.length})`}
+            title="2. Review members"
             style={{ marginBottom: 16 }}
             extra={
               <Space>
@@ -430,7 +399,7 @@ export default function AdjustFundsPage() {
                     )
                   }
                 >
-                  Select all eligible
+                  Select all
                 </Button>
                 <Button size="small" onClick={() => setSelectedIds([])}>
                   Clear
@@ -438,25 +407,36 @@ export default function AdjustFundsPage() {
               </Space>
             }
           >
+            <div className="combine-adjust-table-wrap">
             <Table
+              className="pro-table combine-adjust-table"
               size="small"
               rowKey="applicationId"
               loading={previewLoading}
               dataSource={preview.rows || []}
               pagination={false}
-              scroll={{ x: 900 }}
+              scroll={{ x: 980 }}
               rowSelection={{
                 selectedRowKeys: selectedIds,
                 onChange: (keys) => setSelectedIds(keys),
                 getCheckboxProps: (record) => ({ disabled: !record.eligible }),
+                columnWidth: 48,
+                fixed: true,
               }}
               columns={[
                 {
                   title: 'Member',
                   dataIndex: 'memberName',
+                  width: 200,
+                  fixed: 'left',
                   render: (v, r) => (
-                    <span>
-                      {v}
+                    <div className="combine-adjust-member">
+                      <Typography.Text
+                        ellipsis={{ tooltip: v }}
+                        className="combine-adjust-member-name"
+                      >
+                        {v}
+                      </Typography.Text>
                       {r.groupName && (
                         <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
                           {r.groupName}
@@ -467,14 +447,17 @@ export default function AdjustFundsPage() {
                           {r.blockedReason}
                         </Typography.Text>
                       )}
-                    </span>
+                      {r.ontoExisting && r.eligible && (
+                        <Tag color="cyan" style={{ marginTop: 4 }}>Adds to existing application</Tag>
+                      )}
+                    </div>
                   ),
                 },
                 {
-                  title: 'Old remaining',
+                  title: 'With member now',
                   dataIndex: 'remainder',
                   align: 'right',
-                  width: 120,
+                  width: 130,
                   render: (v) => formatCurrency(v),
                 },
                 {
@@ -485,49 +468,49 @@ export default function AdjustFundsPage() {
                   render: (v) => (v != null ? formatCurrency(v) : '—'),
                 },
                 {
-                  title: 'Roll from old',
+                  title: 'Moved to new IPO',
                   dataIndex: 'adjustAmount',
                   align: 'right',
-                  width: 120,
+                  width: 140,
                   render: (v) => (v != null ? formatCurrency(v) : '—'),
                 },
                 {
-                  title: 'To send',
+                  title: 'Wallet extra',
                   dataIndex: 'toSend',
                   align: 'right',
-                  width: 110,
+                  width: 120,
                   render: (v) =>
                     v > 0 ? (
                       <Typography.Text type="danger" strong>
                         {formatCurrency(v)}
                       </Typography.Text>
                     ) : (
-                      formatCurrency(0)
+                      '—'
                     ),
                 },
                 {
-                  title: 'To collect',
+                  title: 'Still on old IPO',
                   dataIndex: 'toCollect',
                   align: 'right',
-                  width: 110,
+                  width: 130,
                   render: (v) =>
                     v > 0 ? (
                       <Typography.Text type="warning" strong>
                         {formatCurrency(v)}
                       </Typography.Text>
                     ) : (
-                      formatCurrency(0)
+                      '—'
                     ),
                 },
                 {
-                  title: 'Old status after',
-                  width: 130,
+                  title: 'Old IPO after',
+                  width: 140,
                   render: (_, r) =>
                     r.eligible ? (
                       r.willMarkOldReceived ? (
-                        <Tag color="success">Received</Tag>
+                        <Tag color="success">Settled</Tag>
                       ) : (
-                        <Tag color="orange">Pending {formatCurrency(r.toCollect)}</Tag>
+                        <Tag color="orange">Collect {formatCurrency(r.toCollect)}</Tag>
                       )
                     ) : (
                       '—'
@@ -535,87 +518,17 @@ export default function AdjustFundsPage() {
                 },
               ]}
             />
+            </div>
           </ContentCard>
 
-          {selectedPreview.groups.length > 0 && (
-            <ContentCard title="By sub-group" padded style={{ marginBottom: 16 }}>
-              {selectedPreview.groups.map((g) => (
-                <div key={g.groupId} style={{ marginBottom: 16 }}>
-                  <Typography.Title level={5} style={{ marginBottom: 4 }}>
-                    {g.groupName}
-                  </Typography.Title>
-                  <Typography.Text type="secondary">
-                    {g.members.length} members · roll {formatCurrency(g.totalAdjust)} · to send{' '}
-                    <Typography.Text type="danger">{formatCurrency(g.totalToSend)}</Typography.Text>
-                    {' · '}to collect {formatCurrency(g.totalToCollect)}
-                  </Typography.Text>
-                  <Table
-                    size="small"
-                    style={{ marginTop: 8 }}
-                    rowKey="applicationId"
-                    pagination={false}
-                    dataSource={g.members}
-                    columns={[
-                      { title: 'Member', dataIndex: 'memberName' },
-                      {
-                        title: 'To send',
-                        dataIndex: 'toSend',
-                        align: 'right',
-                        render: (v) => formatCurrency(v),
-                      },
-                      {
-                        title: 'To collect',
-                        dataIndex: 'toCollect',
-                        align: 'right',
-                        render: (v) => formatCurrency(v),
-                      },
-                    ]}
-                  />
-                </div>
-              ))}
-            </ContentCard>
-          )}
-
-          {selectedPreview.individuals.length > 0 && (
-            <ContentCard title="Individuals (no sub-group)" style={{ marginBottom: 16 }}>
-              <Table
-                size="small"
-                rowKey="applicationId"
-                pagination={false}
-                dataSource={selectedPreview.individuals}
-                columns={[
-                  { title: 'Member', dataIndex: 'memberName' },
-                  {
-                    title: 'Old remaining',
-                    dataIndex: 'remainder',
-                    align: 'right',
-                    render: (v) => formatCurrency(v),
-                  },
-                  {
-                    title: 'To send',
-                    dataIndex: 'toSend',
-                    align: 'right',
-                    render: (v) => formatCurrency(v),
-                  },
-                  {
-                    title: 'To collect',
-                    dataIndex: 'toCollect',
-                    align: 'right',
-                    render: (v) => formatCurrency(v),
-                  },
-                ]}
-              />
-            </ContentCard>
-          )}
-
           {selectedPreview.unadjusted.length > 0 && (
-            <ContentCard title="Not adjusted — full amount to collect" style={{ marginBottom: 16 }}>
+            <ContentCard title="Not reused — still with these members" style={{ marginBottom: 16 }}>
               <div style={{ padding: '12px 16px 0' }}>
                 <Alert
                   type="warning"
                   showIcon
                   style={{ marginBottom: 12 }}
-                  message={`${formatCurrency(selectedPreview.totals.unadjustedToCollect)} still with members (pending allotment or not selected)`}
+                  message={`${formatCurrency(selectedPreview.totals.unadjustedToCollect)} stays on the old IPO (awaiting allotment or not selected)`}
                 />
               </div>
               <Table
@@ -637,7 +550,7 @@ export default function AdjustFundsPage() {
                     render: (v) => v || '—',
                   },
                   {
-                    title: 'To collect (full)',
+                    title: 'Amount',
                     dataIndex: 'toCollect',
                     align: 'right',
                     render: (v) => (
@@ -645,7 +558,7 @@ export default function AdjustFundsPage() {
                     ),
                   },
                   {
-                    title: 'Reason',
+                    title: 'Why',
                     dataIndex: 'reason',
                     render: (v) => (
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -667,7 +580,7 @@ export default function AdjustFundsPage() {
               onClick={onSubmit}
               icon={<SwapOutlined />}
             >
-              Confirm adjust ({selectedIds.length})
+              Reuse leftover ({selectedIds.length})
             </Button>
           </div>
         </>

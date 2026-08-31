@@ -1794,6 +1794,54 @@ body {
   z-index: 2;
 }
 
+.combine-adjust-table-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.combine-adjust-table-wrap .ant-table-container,
+.combine-adjust-table-wrap .ant-table-content {
+  overflow-x: scroll !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+.combine-adjust-table .ant-table-cell-fix-left,
+.combine-adjust-table .ant-table-cell-fix-right {
+  z-index: 2;
+  background: #fff;
+}
+
+.combine-adjust-table .ant-table-thead > tr > th.ant-table-cell-fix-left,
+.combine-adjust-table .ant-table-thead > tr > th.ant-table-cell-fix-right {
+  background: #f8fafc;
+}
+
+.combine-adjust-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left,
+.combine-adjust-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-right {
+  background: #f5f5f5;
+}
+
+.combine-adjust-table .ant-table-tbody > tr.ant-table-row-selected > td.ant-table-cell-fix-left,
+.combine-adjust-table .ant-table-tbody > tr.ant-table-row-selected > td.ant-table-cell-fix-right {
+  background: #e6fffb;
+}
+
+.combine-adjust-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.combine-adjust-table .combine-adjust-member {
+  min-width: 160px;
+}
+
+.combine-adjust-table .combine-adjust-member-name {
+  display: block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Leader wallets overview: equal-height panels, compact metrics (no nested StatCards) */
 .leader-wallet-overview {
   align-items: stretch;

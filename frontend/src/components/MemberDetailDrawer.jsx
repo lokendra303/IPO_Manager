@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Drawer, Spin, Row, Col, Table, Tag, Tabs, Descriptions, Empty, Alert, Button, Space, message,
+  Drawer, Spin, Row, Col, Table, Tag, Tabs, Descriptions, Empty, Alert, Button, Space, message, Tooltip,
 } from 'antd';
 import {
   ArrowDownOutlined,
@@ -95,7 +95,26 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
         )
       ),
     },
-    { title: 'Amount', dataIndex: 'amount', render: formatCurrency },
+    {
+      title: 'Amount',
+      dataIndex: 'amount',
+      render: (v, r) => {
+        const remaining = Number(
+          r.remaining_principal ?? Math.max(0, Number(v || 0) - Number(r.adjusted_out_amount || 0))
+        );
+        if (Number(r.adjusted_out_amount || 0) > 0.001) {
+          return (
+            <span>
+              {formatCurrency(remaining)}
+              <span style={{ display: 'block', fontSize: 11, color: '#64748b' }}>
+                of {formatCurrency(v)} adjusted
+              </span>
+            </span>
+          );
+        }
+        return formatCurrency(v);
+      },
+    },
     {
       title: 'Category',
       dataIndex: 'investor_category',
@@ -249,7 +268,11 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
             </Col>
             <Col xs={12} sm={8}>
               <StatCard
-                title="Pending"
+                title={
+                  <Tooltip title="Principal still with the member and not yet marked received. Includes applications awaiting allotment, and subtracts funds already adjusted to another IPO.">
+                    <span>Pending return</span>
+                  </Tooltip>
+                }
                 value={formatCurrency(s.willReceiveFromTeam)}
                 variant={s.willReceiveFromTeam !== 0 ? 'danger' : 'primary'}
                 valueClassName={s.willReceiveFromTeam !== 0 ? 'stat-card-value--loss' : ''}

@@ -175,7 +175,7 @@ export default function DashboardPage() {
           icon={<ClockCircleOutlined />}
           message={`${formatCurrency(totalPendingReturn)} pending return from ${pendingReturnAppCount} application${
             pendingReturnAppCount === 1 ? '' : 's'
-          } (${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'}) — allotted / not allotted, not yet received`}
+          } (${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'}) — not yet received`}
           action={
             <Link to="/summary">
               <Button size="small">View summary</Button>
