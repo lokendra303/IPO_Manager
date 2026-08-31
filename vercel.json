@@ -22,5 +22,11 @@
       "includeFiles": "frontend/dist/**"
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/ipo-sync",
+      "schedule": "*/15 * * * *"
+    }
+  ],
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }

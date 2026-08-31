@@ -11,6 +11,7 @@ import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import ModalDatePicker from '../components/ModalDatePicker';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
+import { formatGmp } from '../utils/liveIpo';
 import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
 import {
   categoryCompactOptionsForIpo,
@@ -28,6 +29,7 @@ import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
 import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, ipoListingDate } from '../utils/ipoProfit';
+import { applyAllotmentResult, sameAllotmentId, allotmentCheckAccess } from '../utils/allotmentAutoCheck';
 
 function toDateParam(v) {
   if (!v) return null;
@@ -51,6 +53,29 @@ function groupHasOwner(group) {
 
 function remainingAppPrincipal(app) {
   return Math.max(0, Number(app?.amount || 0) - Number(app?.adjusted_out_amount || 0));
+}
+
+const AVATAR_TONES = [
+  ['#ccfbf1', '#0f766e'],
+  ['#e0e7ff', '#4338ca'],
+  ['#fce7f3', '#be185d'],
+  ['#ffedd5', '#c2410c'],
+  ['#dbeafe', '#1d4ed8'],
+  ['#ede9fe', '#6d28d9'],
+];
+
+function memberInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function avatarTone(name) {
+  const s = String(name || '');
+  let n = 0;
+  for (let i = 0; i < s.length; i += 1) n += s.charCodeAt(i);
+  return AVATAR_TONES[n % AVATAR_TONES.length];
 }
 
 function normalizeIpo(row) {
@@ -197,6 +222,7 @@ export default function IpoDetailPage() {
   const isClosed = ipo?.status === 'CLOSED';
   const isInvalid = !!ipo?.is_invalid;
   const isFrozen = isClosed || isInvalid;
+  const allotmentAccess = allotmentCheckAccess(ipo);
   const riiLotAmount = getLotAmountForCategory(ipo, 'RII') ?? 0;
   const hniLotAmount = getLotAmountForCategory(ipo, 'HNI');
   const requiredFundForActiveRii = availableMembers.length * riiLotAmount;
@@ -227,6 +253,7 @@ export default function IpoDetailPage() {
     if (returnFilter === 'pending') return !isFundReturned(app);
     if (returnFilter === 'not_applied') return isNotApplied(app);
     if (returnFilter === 'allotted') return isAllotted(app);
+    if (returnFilter === 'waiting_listing') return isWaitingListing(app);
     if (returnFilter === 'not_allotted') return isNotAllotted(app);
     return true;
   });
@@ -1080,42 +1107,35 @@ export default function IpoDetailPage() {
       title: 'Member',
       dataIndex: 'display_name',
       fixed: 'left',
-      width: 148,
-      ellipsis: true,
-      render: (v) => <span style={{ fontWeight: 500 }}>{v}</span>,
+      width: 220,
+      render: (v, r) => {
+        const [bg, fg] = avatarTone(v);
+        const paidTo = (r.paid_to_member_id && r.paid_to_member_id !== r.member_id)
+          ? r.paid_to_display_name
+          : r.paid_to_external_name || null;
+        return (
+          <div className="allotment-member">
+            <span className="allotment-member-avatar" style={{ background: bg, color: fg }}>{memberInitials(v)}</span>
+            <div>
+              <div className="allotment-member-name">{v}</div>
+              {paidTo ? (
+                <Tooltip title="Group bulk — collect the return from this owner, then mark each member Received">
+                  <div className="ipo-app-pay-hint">Paid to {paidTo}</div>
+                </Tooltip>
+              ) : null}
+            </div>
+          </div>
+        );
+      },
     },
     {
       title: 'Sub-group',
       dataIndex: 'member_group_name',
-      width: 112,
+      width: 130,
       ellipsis: true,
-      render: (v) => (v ? <Tag style={{ marginInlineEnd: 0 }}>{v}</Tag> : '—'),
-    },
-    {
-      title: 'Payment',
-      width: 108,
-      ellipsis: true,
-      render: (_, r) => {
-        if (r.paid_to_member_id && r.paid_to_member_id !== r.member_id) {
-          return (
-            <Tooltip title="Group bulk — collect return from this owner, then mark each member below">
-              <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-                To {r.paid_to_display_name}
-              </Tag>
-            </Tooltip>
-          );
-        }
-        if (r.paid_to_external_name) {
-          return (
-            <Tooltip title="Group bulk — paid to third-party owner; collect from them, then receive per member">
-              <Tag color="gold" style={{ marginInlineEnd: 0 }}>
-                To {r.paid_to_external_name}
-              </Tag>
-            </Tooltip>
-          );
-        }
-        return <Typography.Text type="secondary">Direct</Typography.Text>;
-      },
+      render: (v) => (v
+        ? <Tag className="ipo-app-group-tag" style={{ marginInlineEnd: 0 }}>{v}</Tag>
+        : <Typography.Text type="secondary">—</Typography.Text>),
     },
     {
       title: 'Cat.',
@@ -1151,6 +1171,7 @@ export default function IpoDetailPage() {
               size="small"
               min={1}
               disabled={isFrozen || adjustedOut > 0 || r.adjusted_from_application_id}
+              className="ipo-app-amount"
               style={{ width: '100%' }}
               value={getRowVal(r, 'amount', 'amount')}
               onChange={(val) => updateAmount(r, val)}
@@ -1176,20 +1197,18 @@ export default function IpoDetailPage() {
       sorter: (a, b) => Number(isFundReturned(b)) - Number(isFundReturned(a)),
       render: (v, r) => {
         if (v === 'Received') {
-          return <Tag color="success" style={{ marginInlineEnd: 0 }}>Returned</Tag>;
+          return <span className="allotment-badge allotment-badge--allotted">Returned</span>;
         }
         const remaining = remainingAppPrincipal(r);
         const adjustedOut = Number(r.adjusted_out_amount || 0);
         if (adjustedOut > 0) {
           return (
             <Tooltip title={`Original ${formatCurrency(r.amount)}; adjusted out ${formatCurrency(adjustedOut)}`}>
-              <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-                Pending {formatCurrency(remaining)}
-              </Tag>
+              <span className="allotment-badge allotment-badge--checking">Pending {formatCurrency(remaining)}</span>
             </Tooltip>
           );
         }
-        return <Tag style={{ marginInlineEnd: 0 }}>Pending</Tag>;
+        return <span className="allotment-badge allotment-badge--pending">Pending</span>;
       },
     },
     {
@@ -1197,7 +1216,9 @@ export default function IpoDetailPage() {
       dataIndex: 'trns_given',
       width: 80,
       align: 'center',
-      render: (v) => (v ? <Tag color="blue" style={{ marginInlineEnd: 0 }}>{v}</Tag> : '—'),
+      render: (v) => (v
+        ? <span className="allotment-badge allotment-badge--given">{v}</span>
+        : <Typography.Text type="secondary">—</Typography.Text>),
     },
     {
       title: 'Allotment',
@@ -1514,7 +1535,7 @@ export default function IpoDetailPage() {
         }
         extra={
           <Space wrap>
-            <Link to="/ipos"><Button icon={<ArrowLeftOutlined />}>Back</Button></Link>
+            <Link to="/my-ipos"><Button icon={<ArrowLeftOutlined />}>Back</Button></Link>
             {!isFrozen && (
               <Button onClick={openHniSetup}>
                 {ipoAllowsHni(ipo) ? 'HNI settings' : 'Set up HNI'}
@@ -1561,9 +1582,34 @@ export default function IpoDetailPage() {
               Save Changes
             </Button>
             {applications.length > 0 && (
-              <Button icon={<SearchOutlined />} onClick={() => setAllotmentCheckOpen(true)} disabled={isFrozen}>
-                Check allotment (PAN)
-              </Button>
+              <>
+                {allotmentAccess.ready ? (
+                  <Link to={`/ipos/${id}/allotment`}>
+                    <Button icon={<SearchOutlined />} disabled={isFrozen}>
+                      Allotment queue
+                    </Button>
+                  </Link>
+                ) : (
+                  <Tooltip title={allotmentAccess.reason}>
+                    <span>
+                      <Button icon={<SearchOutlined />} disabled>
+                        Allotment queue
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
+                <Tooltip title={allotmentAccess.ready ? undefined : allotmentAccess.reason}>
+                  <span>
+                    <Button
+                      icon={<SearchOutlined />}
+                      onClick={() => setAllotmentCheckOpen(true)}
+                      disabled={isFrozen || !allotmentAccess.ready}
+                    >
+                      Check allotment
+                    </Button>
+                  </span>
+                </Tooltip>
+              </>
             )}
             <Link
               to="/profit-sharing"
@@ -1678,6 +1724,17 @@ export default function IpoDetailPage() {
           message="Invalid IPO"
           description="This IPO is hidden from the main list. You can still view records here. Restore it to distribute funds or use it normally."
         />
+      )}
+
+      {ipo?.gmp != null && (
+        <ContentCard title="GMP" padded style={{ marginBottom: 16 }}>
+          <Space size="large" wrap>
+            <span>Current {formatGmp(ipo.gmp)}</span>
+            <span>GMP % {ipo.gmpPercentage != null ? `${ipo.gmpPercentage}%` : '—'}</span>
+            <span>Est. listing {ipo.estimatedListingPrice != null ? formatCurrency(ipo.estimatedListingPrice) : '—'}</span>
+            <Link to="/gmp">GMP history</Link>
+          </Space>
+        </ContentCard>
       )}
 
       <div style={{ marginBottom: 16 }}>
@@ -1840,7 +1897,9 @@ export default function IpoDetailPage() {
                 { label: `Returned (${returnedCount})`, value: 'returned' },
                 { label: `Pending payment (${pendingReturnCount})`, value: 'pending' },
                 { label: `Did not apply (${notAppliedCount})`, value: 'not_applied' },
-                { label: `Alloted (${allottedCount})`, value: 'allotted' },
+                ipoListed
+                  ? { label: `Alloted (${allottedCount})`, value: 'allotted' }
+                  : { label: `Waiting for listing (${allottedCount})`, value: 'waiting_listing' },
                 { label: `Not Alloted (${notAllottedCount})`, value: 'not_allotted' },
               ]}
             />
@@ -1886,6 +1945,15 @@ export default function IpoDetailPage() {
           size="middle"
           columns={columns}
           dataSource={filteredApplications}
+          rowClassName={(r) => {
+            const status = getAllotmentStatus(r);
+            if (isFundReturned(r)) return 'ipo-app-row ipo-app-row--returned';
+            if ((status === 'ALLOTED' || status === 'PARTIALLY_ALLOTTED') && !ipoListed) return 'ipo-app-row ipo-app-row--waiting';
+            if (status === 'ALLOTED' || status === 'PARTIALLY_ALLOTTED') return 'ipo-app-row ipo-app-row--allotted';
+            if (status === 'NOT_ALLOTED') return 'ipo-app-row ipo-app-row--missed';
+            if (status === 'NOT_APPLIED') return 'ipo-app-row ipo-app-row--idle';
+            return 'ipo-app-row ipo-app-row--pending';
+          }}
           rowSelection={isFrozen ? undefined : {
             selectedRowKeys: selectedReceiveIds,
             onChange: setSelectedReceiveIds,
@@ -1904,7 +1972,9 @@ export default function IpoDetailPage() {
                 ? 'No members have returned funds yet'
                 : returnFilter === 'not_applied'
                   ? 'No members marked as did not apply'
-                  : returnFilter === 'allotted'
+                    : returnFilter === 'waiting_listing'
+                      ? 'No members waiting for listing'
+                      : returnFilter === 'allotted'
                     ? 'No members marked as alloted yet'
                     : returnFilter === 'not_allotted'
                       ? 'No members marked as not alloted yet'
@@ -2643,9 +2713,29 @@ export default function IpoDetailPage() {
         ipoId={Number(id)}
         open={allotmentCheckOpen}
         onClose={() => setAllotmentCheckOpen(false)}
-        onApplyStatus={(appId, status) => {
-          updateRow(appId, 'allotmentStatus', status);
-          if (status === 'NOT_ALLOTED' || status === 'NOT_APPLIED') clearAllotmentPnL(appId);
+        onRowUpdate={(row) => {
+          if (!row?.id || row.skipped) return;
+          setApplications((prev) => prev.map((app) => (
+            sameAllotmentId(app.id, row.id) ? applyAllotmentResult(app, row) : app
+          )));
+          setEditedRows((prev) => {
+            const key = Object.keys(prev).find((k) => sameAllotmentId(k, row.id));
+            if (!key || prev[key]?.allotmentStatus == null) return prev;
+            const next = { ...prev };
+            const { allotmentStatus, ...rest } = next[key];
+            if (Object.keys(rest).length) next[key] = rest;
+            else delete next[key];
+            return next;
+          });
+        }}
+        onChecked={(stats) => {
+          if (stats?.results?.length) {
+            setApplications((prev) => prev.map((app) => {
+              const hit = stats.results.find((r) => sameAllotmentId(r.id, app.id) && !r.skipped);
+              return hit ? applyAllotmentResult(app, hit) : app;
+            }));
+          }
+          refreshReceiveData();
         }}
       />
     </div>

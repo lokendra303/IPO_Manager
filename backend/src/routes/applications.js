@@ -211,4 +211,42 @@ router.patch('/bulk', async (req, res, next) => {
   }
 });
 
+router.post('/:id/allotment', async (req, res, next) => {
+  try {
+    const applicationId = parsePositiveInt(req.params.id, 'application id');
+    const { saveAllotmentResult, claimNextPending, getAllotmentQueue } = await import(
+      '../services/ipo/allotmentQueueService.js'
+    );
+    const saved = await withTransaction((conn) =>
+      saveAllotmentResult(conn, {
+        tenantId: req.tenantId,
+        applicationId,
+        result: req.body.result || req.body.allotmentStatus,
+        allottedLots: req.body.allottedLots,
+        applicationNumber: req.body.applicationNumber,
+      })
+    );
+
+    let next = { applicant: null, done: true };
+    if (req.body.checkNext !== false) {
+      next = await withTransaction((conn) =>
+        claimNextPending(conn, { tenantId: req.tenantId, ipoId: saved.ipoId })
+      );
+    }
+    const queue = await withTransaction((conn) =>
+      getAllotmentQueue(conn, { tenantId: req.tenantId, ipoId: saved.ipoId })
+    );
+    res.json({
+      success: true,
+      status: saved.status,
+      next: next.applicant,
+      done: Boolean(next.done),
+      counts: queue.counts,
+      lastChecked: queue.lastChecked,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

@@ -1,5 +1,5 @@
 export function getErrorMessage(err, fallback = 'Something went wrong') {
-  return err?.response?.data?.error || err?.message || fallback;
+  return err?.response?.data?.error || err?.response?.data?.message || err?.message || fallback;
 }
 
 /** Structured undo-settle failure for Modal / Alert. */

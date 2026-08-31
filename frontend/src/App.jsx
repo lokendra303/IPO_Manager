@@ -20,6 +20,10 @@ import MembersPage from './pages/MembersPage';
 import FundProvidersPage from './pages/FundProvidersPage';
 import GroupLeaderWalletsPage from './pages/GroupLeaderWalletsPage';
 import WalletPage from './pages/WalletPage';
+import LiveIposPage from './pages/LiveIposPage';
+import LiveIpoDetailPage from './pages/LiveIpoDetailPage';
+import AllotmentQueuePage from './pages/AllotmentQueuePage';
+import GmpDashboardPage from './pages/GmpDashboardPage';
 import IposPage from './pages/IposPage';
 import IpoDetailPage from './pages/IpoDetailPage';
 import AdjustFundsPage from './pages/AdjustFundsPage';
@@ -79,8 +83,14 @@ function AppRoutes() {
       <Route path="/fund-providers" element={<ManagerRoute><FundProvidersPage /></ManagerRoute>} />
       <Route path="/wallet" element={<ManagerRoute><WalletPage /></ManagerRoute>} />
       <Route path="/ipos" element={<ManagerRoute><IposPage /></ManagerRoute>} />
+      <Route path="/my-ipos" element={<ManagerRoute><IposPage /></ManagerRoute>} />
+      <Route path="/live-ipos" element={<ManagerRoute><LiveIposPage /></ManagerRoute>} />
+      <Route path="/live-ipos/:id" element={<ManagerRoute><LiveIpoDetailPage /></ManagerRoute>} />
+      <Route path="/gmp" element={<ManagerRoute><GmpDashboardPage /></ManagerRoute>} />
       <Route path="/adjust-combine" element={<ManagerRoute><CombineAdjustPage /></ManagerRoute>} />
       <Route path="/ipos/:id/adjust" element={<ManagerRoute><AdjustFundsPage /></ManagerRoute>} />
+      <Route path="/ipos/:id/allotment" element={<ManagerRoute><AllotmentQueuePage /></ManagerRoute>} />
+      <Route path="/my-ipos/:id/allotment" element={<ManagerRoute><AllotmentQueuePage /></ManagerRoute>} />
       <Route path="/ipos/:id" element={<ManagerRoute><IpoDetailPage /></ManagerRoute>} />
       <Route path="/summary" element={<ManagerRoute><SummaryPage /></ManagerRoute>} />
       <Route path="/settings" element={<ManagerRoute><SettingsPage /></ManagerRoute>} />

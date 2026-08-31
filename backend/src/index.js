@@ -16,6 +16,9 @@ import walletRoutes from './routes/wallet.js';
 import bankAccountsRoutes from './routes/bankAccounts.js';
 import iposRoutes from './routes/ipos.js';
 import ipoAllotmentRoutes from './routes/ipoAllotment.js';
+import liveIposRoutes from './routes/liveIpos.js';
+import myIposRoutes from './routes/myIpos.js';
+import cronIpoRoutes from './routes/cronIpo.js';
 import applicationsRoutes from './routes/applications.js';
 import summaryRoutes from './routes/summary.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -27,6 +30,7 @@ import memberGroupsRoutes from './routes/memberGroups.js';
 import groupLeaderWalletsRoutes from './routes/groupLeaderWallets.js';
 import auditLogsRoutes from './routes/auditLogs.js';
 import { warmPool } from './db/pool.js';
+import { startIpoCron } from './jobs/ipoCron.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -41,6 +45,7 @@ const authLimiter = rateLimit({
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.use('/api/cron', cronIpoRoutes);
 
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/admin', authLimiter, adminRoutes);
@@ -53,9 +58,12 @@ app.use('/api/members', membersRoutes);
 app.use('/api/fund-providers', fundProvidersRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/bank-accounts', bankAccountsRoutes);
+app.use('/api/live-ipos', liveIposRoutes);
+app.use('/api/my-ipos', myIposRoutes);
 app.use('/api/ipos', ipoAllotmentRoutes);
 app.use('/api/ipos', iposRoutes);
 app.use('/api/ipo-applications', applicationsRoutes);
+app.use('/api/applications', applicationsRoutes);
 app.use('/api/summary', summaryRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
@@ -124,6 +132,7 @@ if (isVercel) {
     .then(() => {
       app.listen(PORT, () => {
         console.log(`IPO Team API running on http://localhost:${PORT}`);
+        startIpoCron();
       });
     })
     .catch((err) => {

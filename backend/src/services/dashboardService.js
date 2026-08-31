@@ -96,6 +96,58 @@ export async function getManagerDashboard(pool, tenantId) {
       }
     );
 
+    const [[ipoStats]] = await conn.query(
+      `SELECT
+         COUNT(*) AS myIpos,
+         SUM(CASE WHEN i.status = 'OPEN' AND COALESCE(i.is_invalid, 0) = 0 THEN 1 ELSE 0 END) AS openIpos
+       FROM ipos i WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
+      [tenantId]
+    );
+
+    const [[appStats]] = await conn.query(
+      `SELECT
+         COUNT(*) AS teamApplications,
+         SUM(CASE WHEN allotment_status IN ('PENDING', 'CHECKING', 'RETRY') THEN 1 ELSE 0 END) AS pendingAllotments,
+         SUM(CASE WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 1 ELSE 0 END) AS allotted,
+         SUM(CASE WHEN allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS notAllotted
+       FROM ipo_applications WHERE tenant_id = ?`,
+      [tenantId]
+    );
+
+    const [[liveStats]] = await conn.query(
+      `SELECT
+         COUNT(*) AS liveIpos,
+         SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS liveOpen,
+         SUM(CASE WHEN status = 'UPCOMING' THEN 1 ELSE 0 END) AS liveUpcoming
+       FROM ipo_catalog`
+    ).catch(() => [[{ liveIpos: 0, liveOpen: 0, liveUpcoming: 0 }]]);
+
+    const [[gmpRow]] = await conn.query(
+      `SELECT c.name, c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at
+       FROM ipos i
+       JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0 AND c.gmp IS NOT NULL
+       ORDER BY c.gmp_updated_at DESC, i.id DESC
+       LIMIT 1`,
+      [tenantId]
+    ).catch(() => [[null]]);
+
+    const [[expected]] = await conn.query(
+      `SELECT COALESCE(SUM(
+         CASE
+           WHEN a.profit_loss IS NOT NULL AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN a.profit_loss
+           WHEN a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND c.gmp IS NOT NULL AND i.lot_size IS NOT NULL
+             THEN COALESCE(a.allotted_lots, 1) * i.lot_size * c.gmp
+           ELSE 0
+         END
+       ), 0) AS expectedProfit
+       FROM ipo_applications a
+       JOIN ipos i ON i.id = a.ipo_id
+       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE a.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
+      [tenantId]
+    ).catch(() => [[{ expectedProfit: 0 }]]);
+
     return {
       walletBalance: Number(wallet.balance),
       activeMembers: Number(memberCount.cnt),
@@ -117,6 +169,27 @@ export async function getManagerDashboard(pool, tenantId) {
         txn_date: row.txn_date,
         notes: row.notes,
       })),
+      liveIpos: Number(liveStats?.liveIpos || 0),
+      liveOpen: Number(liveStats?.liveOpen || 0),
+      liveUpcoming: Number(liveStats?.liveUpcoming || 0),
+      myIpos: Number(ipoStats?.myIpos || 0),
+      openIpoCount: Number(ipoStats?.openIpos || 0),
+      teamApplications: Number(appStats?.teamApplications || 0),
+      pendingAllotments: Number(appStats?.pendingAllotments || 0),
+      allotted: Number(appStats?.allotted || 0),
+      notAllotted: Number(appStats?.notAllotted || 0),
+      expectedProfit: Number(expected?.expectedProfit || 0),
+      currentGmp: gmpRow
+        ? {
+            name: gmpRow.name,
+            gmp: gmpRow.gmp != null ? Number(gmpRow.gmp) : null,
+            gmpPercentage: gmpRow.gmp_percentage != null ? Number(gmpRow.gmp_percentage) : null,
+            estimatedListingPrice: gmpRow.estimated_listing_price != null
+              ? Number(gmpRow.estimated_listing_price)
+              : null,
+            lastUpdated: gmpRow.gmp_updated_at,
+          }
+        : null,
     };
   } finally {
     conn.release();

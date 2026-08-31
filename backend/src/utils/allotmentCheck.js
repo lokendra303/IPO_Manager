@@ -31,6 +31,12 @@ export const REGISTRAR_PORTALS = {
     url: 'https://www.skylinerta.com/ipo.php',
     steps: 'Select company → PAN',
   },
+  PURVA: {
+    id: 'purva',
+    name: 'Purva Sharegistry',
+    url: 'https://www.purvashare.com/investor-service/ipo-query',
+    steps: 'Select company → PAN → search',
+  },
 };
 
 export const EXCHANGE_PORTALS = [
@@ -48,7 +54,7 @@ export const EXCHANGE_PORTALS = [
   },
 ];
 
-export const VALID_REGISTRARS = ['KFIN', 'LINK_INTIME', 'BIGSHARE', 'CAMEO', 'SKYLINE'];
+export const VALID_REGISTRARS = ['KFIN', 'LINK_INTIME', 'BIGSHARE', 'CAMEO', 'SKYLINE', 'PURVA'];
 
 export function getAllotmentPortalsMeta(registrar) {
   const portals = [...EXCHANGE_PORTALS];

@@ -7,6 +7,7 @@
     "dev": "node --watch-path=./.env --watch src/index.js",
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
+    "test": "node --test src/services/ipo/ipo.test.js src/services/ipo/allotment/allotment.test.js src/utils/validate.test.js",
     "seed-admin": "node src/db/seed-admin.js",
     "db:export": "node scripts/db-export.js",
     "db:import": "node scripts/db-import-server.js",
@@ -21,6 +22,7 @@
     "express-rate-limit": "^7.4.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.0",
+    "node-cron": "^3.0.3",
     "nodemailer": "^9.0.0"
   }
 }

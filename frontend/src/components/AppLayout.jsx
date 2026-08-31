@@ -17,6 +17,8 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   RiseOutlined,
+  LineChartOutlined,
+  GlobalOutlined,
   SwapOutlined,
 } from '@ant-design/icons';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -34,6 +36,9 @@ const MENU_PATH_KEYS = [
   '/members',
   '/fund-providers',
   '/wallet',
+  '/live-ipos',
+  '/my-ipos',
+  '/gmp',
   '/ipos',
   '/summary',
   '/profit-analysis',
@@ -44,6 +49,7 @@ const MENU_PATH_KEYS = [
 
 function getSelectedMenuKey(pathname) {
   if (pathname === '/') return '/';
+  if (pathname === '/ipos' || pathname.startsWith('/ipos/')) return '/my-ipos';
   const match = MENU_PATH_KEYS.find(
     (key) => pathname === key || pathname.startsWith(`${key}/`)
   );
@@ -86,7 +92,9 @@ export default function AppLayout({ children }) {
     { key: '/group-leader-wallets', icon: <WalletOutlined />, label: <Link to="/group-leader-wallets">Leader wallets</Link> },
     { key: '/fund-providers', icon: <BankOutlined />, label: <Link to="/fund-providers">Fund Providers</Link> },
     { key: '/wallet', icon: <WalletOutlined />, label: <Link to="/wallet">Wallet</Link> },
-    { key: '/ipos', icon: <StockOutlined />, label: <Link to="/ipos">IPOs</Link> },
+    { key: '/live-ipos', icon: <GlobalOutlined />, label: <Link to="/live-ipos">Live IPOs</Link> },
+    { key: '/my-ipos', icon: <StockOutlined />, label: <Link to="/my-ipos">My IPOs</Link> },
+    { key: '/gmp', icon: <LineChartOutlined />, label: <Link to="/gmp">GMP</Link> },
     { key: '/adjust-combine', icon: <SwapOutlined />, label: <Link to="/adjust-combine">Reuse leftover</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
     { key: '/profit-analysis', icon: <RiseOutlined />, label: <Link to="/profit-analysis">Profit Analysis</Link> },

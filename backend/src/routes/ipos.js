@@ -19,6 +19,7 @@ import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { VALID_REGISTRARS } from '../utils/allotmentCheck.js';
+import { allotmentCheckGate } from '../services/ipo/allotmentReady.js';
 import {
   IPO_SEGMENTS,
   ipoAllowsHni,
@@ -40,8 +41,25 @@ function dateOnly(value) {
 
 function serializeIpo(row) {
   if (!row) return row;
-  const listingDate = dateOnly(row.listing_date);
-  return { ...row, listing_date: listingDate, listingDate };
+  const listingDate = dateOnly(row.listing_date || row.catalog_listing_date);
+  const allotmentDate = dateOnly(row.catalog_allotment_date || row.allotment_date);
+  const gate = allotmentCheckGate(row);
+  return {
+    ...row,
+    listing_date: listingDate,
+    listingDate,
+    allotment_date: allotmentDate,
+    allotmentDate,
+    gmp: row.catalog_gmp != null ? Number(row.catalog_gmp) : (row.gmp != null ? Number(row.gmp) : null),
+    gmpPercentage: row.catalog_gmp_percentage != null ? Number(row.catalog_gmp_percentage) : null,
+    estimatedListingPrice: row.catalog_estimated_listing_price != null
+      ? Number(row.catalog_estimated_listing_price)
+      : null,
+    gmpLastUpdated: row.catalog_gmp_updated_at || null,
+    catalogStatus: row.catalog_status || null,
+    allotmentCheckReady: gate.ready,
+    allotmentCheckBlockedReason: gate.reason,
+  };
 }
 
 const router = Router();
@@ -61,18 +79,29 @@ router.get('/', async (req, res, next) => {
     const [rows] = await pool.query(
 
       `SELECT i.*,
+        c.gmp AS catalog_gmp,
+        c.gmp_percentage AS catalog_gmp_percentage,
+        c.estimated_listing_price AS catalog_estimated_listing_price,
+        c.gmp_updated_at AS catalog_gmp_updated_at,
+        c.status AS catalog_status,
+        c.open_date AS catalog_open_date,
+        c.close_date AS catalog_close_date,
+        c.allotment_date AS catalog_allotment_date,
+        c.listing_date AS catalog_listing_date,
 
         (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count,
 
         (SELECT COUNT(*) FROM ipo_applications a
-          WHERE a.ipo_id = i.id AND a.allotment_status = 'ALLOTED') as allotted_count,
+          WHERE a.ipo_id = i.id AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED')) as allotted_count,
 
         (SELECT COUNT(*) FROM ipo_applications a
           WHERE a.ipo_id = i.id
             AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
             AND a.allotment_status <> 'PENDING') as pending_return_count
 
-       FROM ipos i WHERE i.tenant_id = ? ${invalidFilter}
+       FROM ipos i
+       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.tenant_id = ? ${invalidFilter}
        ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
 
       [req.tenantId]
@@ -214,7 +243,24 @@ router.get('/:id', async (req, res, next) => {
 
     const [rows] = await pool.query(
 
-      'SELECT * FROM ipos WHERE id = ? AND tenant_id = ?',
+      `SELECT i.*,
+        c.gmp AS catalog_gmp,
+        c.gmp_percentage AS catalog_gmp_percentage,
+        c.estimated_listing_price AS catalog_estimated_listing_price,
+        c.gmp_updated_at AS catalog_gmp_updated_at,
+        c.status AS catalog_status,
+        c.open_date AS catalog_open_date,
+        c.close_date AS catalog_close_date,
+        c.allotment_date AS catalog_allotment_date,
+        c.listing_date AS catalog_listing_date,
+        c.subscription_qib AS catalog_subscription_qib,
+        c.subscription_nii AS catalog_subscription_nii,
+        c.subscription_retail AS catalog_subscription_retail,
+        c.subscription_total AS catalog_subscription_total,
+        c.registrar_name AS catalog_registrar_name
+       FROM ipos i
+       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.id = ? AND i.tenant_id = ?`,
 
       [ipoId, req.tenantId]
 
@@ -869,6 +915,120 @@ router.post('/applications/:appId/undistribute', async (req, res, next) => {
         bankAccountId: req.body.bankAccountId,
       })
     );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/add-to-my-ipos', async (req, res, next) => {
+  try {
+    const catalogId = parsePositiveInt(req.params.id, 'IPO id');
+    const { addCatalogToMyIpos } = await import('../services/ipo/catalogService.js');
+    const result = await withTransaction((conn) =>
+      addCatalogToMyIpos(conn, {
+        tenantId: req.tenantId,
+        catalogId,
+        userId: req.user?.userId,
+      })
+    );
+    res.status(result.alreadyAdded ? 200 : 201).json({
+      success: true,
+      alreadyAdded: result.alreadyAdded,
+      ipo: serializeIpo(result.ipo),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/remove-from-my-ipos', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const { removeFromMyIpos } = await import('../services/ipo/catalogService.js');
+    const result = await withTransaction((conn) =>
+      removeFromMyIpos(conn, {
+        tenantId: req.tenantId,
+        ipoId,
+        confirm: req.body?.confirm === true,
+      })
+    );
+    res.json({ success: true, ...result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/gmp/history', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [rows] = await pool.query(
+      'SELECT catalog_id FROM ipos WHERE id = ? AND tenant_id = ?',
+      [ipoId, req.tenantId]
+    );
+    if (!rows.length) throw new AppError('IPO not found', 404);
+    const { getGmpHistory } = await import('../services/ipo/gmpService.js');
+    const { summarizeGmpHistory } = await import('../services/ipo/gmpCalc.js');
+    if (!rows[0].catalog_id) {
+      return res.json({ success: true, current: null, summary: summarizeGmpHistory([]), history: [] });
+    }
+    const history = await getGmpHistory(pool, rows[0].catalog_id);
+    const [cat] = await pool.query(
+      'SELECT gmp, gmp_percentage, estimated_listing_price, gmp_updated_at FROM ipo_catalog WHERE id = ?',
+      [rows[0].catalog_id]
+    );
+    res.json({
+      success: true,
+      current: cat[0]
+        ? {
+            gmp: cat[0].gmp != null ? Number(cat[0].gmp) : null,
+            gmpPercentage: cat[0].gmp_percentage != null ? Number(cat[0].gmp_percentage) : null,
+            estimatedListingPrice: cat[0].estimated_listing_price != null ? Number(cat[0].estimated_listing_price) : null,
+            lastUpdated: cat[0].gmp_updated_at,
+          }
+        : null,
+      summary: summarizeGmpHistory(history),
+      history,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id/gmp', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [rows] = await pool.query(
+      `SELECT c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at
+       FROM ipos i LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.id = ? AND i.tenant_id = ?`,
+      [ipoId, req.tenantId]
+    );
+    if (!rows.length) throw new AppError('IPO not found', 404);
+    const row = rows[0];
+    res.json({
+      success: true,
+      gmp: row.gmp != null ? Number(row.gmp) : null,
+      gmpPercentage: row.gmp_percentage != null ? Number(row.gmp_percentage) : null,
+      estimatedListingPrice: row.estimated_listing_price != null ? Number(row.estimated_listing_price) : null,
+      lastUpdated: row.gmp_updated_at,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/sync-gmp', async (req, res, next) => {
+  try {
+    parsePositiveInt(req.params.id, 'IPO id');
+    const { syncLiveIpos } = await import('../services/ipo/syncService.js');
+    const result = await syncLiveIpos(pool, { force: true, jobName: 'gmp' });
+    if (!result.success) {
+      return res.status(503).json({
+        success: false,
+        message: result.message || 'IPO provider temporarily unavailable',
+      });
+    }
     res.json(result);
   } catch (err) {
     next(err);

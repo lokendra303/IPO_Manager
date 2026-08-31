@@ -3,6 +3,32 @@ export function formatPan(pan) {
   return String(pan).toUpperCase().trim();
 }
 
+/** Display form: XXXXX1234F. Never put full PAN in URLs. */
+export function maskPan(pan) {
+  if (pan == null || pan === '') return '';
+  const p = String(pan).toUpperCase().trim();
+  if (p.length < 10) return 'XXXXX****';
+  return `XXXXX${p.slice(5)}`;
+}
+
+export function relativeTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  const seconds = Math.round((Date.now() - d.getTime()) / 1000);
+  if (seconds < 0 && seconds > -120) return 'just now';
+  if (seconds < 0) return d.toLocaleString('en-IN');
+  if (seconds < 10) return 'just now';
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days > 400) return d.toLocaleString('en-IN');
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 export function formatDateTime(value) {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-IN');

@@ -6,34 +6,51 @@ import {
   Select,
   Space,
   Table,
-  Tag,
   Typography,
   message,
 } from 'antd';
-import {
-  LinkOutlined,
-  CopyOutlined,
-  SearchOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-} from '@ant-design/icons';
+import { SearchOutlined } from '@ant-design/icons';
 import client from '../api/client';
+import AllotmentProcessPanel from './AllotmentProcessPanel';
+import AllotmentStatusBadge from './AllotmentStatusBadge';
 import { getErrorMessage } from '../utils/errors';
-import { openAllotmentPortal, copyToClipboard, fetchRegistrarOptions } from '../utils/allotmentCheck';
+import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { tableDefaults } from '../utils/table';
-import { formatPan } from '../utils/format';
+import { checkAllotmentSequentially, pickAllotmentTargets, applyAllotmentResult, sameAllotmentId } from '../utils/allotmentAutoCheck';
+import { ipoIsListed } from '../utils/ipoProfit';
 
-const statusColors = {
-  PENDING: 'processing',
-  ALLOTED: 'success',
-  NOT_ALLOTED: 'default',
-};
-
-export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatus }) {
+export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, onRowUpdate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkingId, setCheckingId] = useState(null);
+  const [progress, setProgress] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [activity, setActivity] = useState([]);
   const [savingRegistrar, setSavingRegistrar] = useState(false);
   const [registrarOptions, setRegistrarOptions] = useState([]);
+
+  const load = () => {
+    if (!open || !ipoId) {
+      setData(null);
+      setSummary(null);
+      setProgress(null);
+      setActivity([]);
+      return;
+    }
+    setLoading(true);
+    client
+      .get(`/ipos/${ipoId}/allotment-check`)
+      .then((r) => setData(r.data))
+      .catch((err) => {
+        if (err.response?.status === 409 && err.response?.data?.code === 'ALLOTMENT_NOT_OPEN') {
+          setData({ blocked: true, message: getErrorMessage(err) });
+          return;
+        }
+        message.error(getErrorMessage(err, 'Failed to load'));
+      })
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -41,16 +58,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
   }, [open]);
 
   useEffect(() => {
-    if (!open || !ipoId) {
-      setData(null);
-      return;
-    }
-    setLoading(true);
-    client
-      .get(`/ipos/${ipoId}/allotment-check`)
-      .then((r) => setData(r.data))
-      .catch((err) => message.error(getErrorMessage(err, 'Failed to load')))
-      .finally(() => setLoading(false));
+    load();
   }, [open, ipoId]);
 
   const saveRegistrar = async (registrar) => {
@@ -67,57 +75,140 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
     }
   };
 
-  const copyPan = async (pan) => {
-    const ok = await copyToClipboard(formatPan(pan));
-    message[ok ? 'success' : 'error'](ok ? 'PAN copied' : 'Could not copy');
+  const patchRow = (appId, result) => {
+    setData((prev) => {
+      if (!prev?.applications) return prev;
+      return {
+        ...prev,
+        applications: prev.applications.map((row) => (
+          sameAllotmentId(row.id, appId) ? applyAllotmentResult(row, result) : row
+        )),
+      };
+    });
   };
 
+  const applyQueue = (applications) => {
+    if (!Array.isArray(applications)) return;
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        applications: applications.map((a) => ({
+          id: a.id,
+          display_name: a.name || a.display_name,
+          maskedPan: a.maskedPan,
+          allotment_status: a.allotmentStatus || a.allotment_status,
+        })),
+      };
+    });
+  };
+
+  const runCheck = async (recheck = false) => {
+    const targets = pickAllotmentTargets(data?.applications, recheck);
+    if (!targets.length) {
+      message.info(recheck ? 'No members to recheck' : 'No pending members');
+      return;
+    }
+    setChecking(true);
+    setSummary(null);
+    setActivity([]);
+    setProgress({ current: 0, total: targets.length, name: null, phase: 'start', allotted: 0, notAllotted: 0 });
+    let allotted = 0;
+    let notAllotted = 0;
+    try {
+      const stats = await checkAllotmentSequentially({
+        ipoId,
+        targets,
+        onProgress: ({ index, id, name, phase, row, message: blocked }) => {
+          setCheckingId(phase === 'checking' ? id : null);
+          if (row?.status === 'ALLOTED' || row?.status === 'PARTIALLY_ALLOTTED') allotted += 1;
+          if (row?.status === 'NOT_ALLOTED') notAllotted += 1;
+          if (phase === 'done' && row) {
+            setActivity((prev) => [
+              { key: `${id}-${index}`, name, status: row.status, lots: row.allottedLots },
+              ...prev,
+            ].slice(0, 6));
+          }
+          setProgress({
+            current: phase === 'checking' ? index : index + 1,
+            total: targets.length,
+            name,
+            phase,
+            message: blocked,
+            allotted,
+            notAllotted,
+          });
+        },
+        onQueue: applyQueue,
+        onRow: (row, app) => {
+          if (!row || row.skipped) return;
+          patchRow(app.id, row);
+          onRowUpdate?.(row);
+        },
+      });
+      setSummary(stats);
+      const { data: refreshed } = await client.get(`/ipos/${ipoId}/allotment-check`);
+      setData(refreshed);
+      onChecked?.(stats);
+      if (stats.message && !stats.checked) message.warning(stats.message);
+      else message.success(`Checked ${stats.checked} · allotted ${stats.allotted} · not allotted ${stats.notAllotted}`);
+    } catch (err) {
+      message.error(getErrorMessage(err, 'Allotment check failed'));
+    } finally {
+      setChecking(false);
+      setCheckingId(null);
+    }
+  };
+
+  const waitingForListing = !ipoIsListed(data?.ipo);
+  const blocked = Boolean(data?.blocked);
+
+  if (blocked) {
+    return (
+      <Modal
+        title="Check allotment"
+        open={open}
+        onCancel={onClose}
+        footer={<Button onClick={onClose}>Close</Button>}
+        width={560}
+        destroyOnClose
+        className="allotment-check-modal"
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="Allotment not open yet"
+          description={data.message}
+        />
+      </Modal>
+    );
+  }
+
   const memberCols = [
-    { title: 'Member', dataIndex: 'display_name' },
+    {
+      title: 'Member',
+      dataIndex: 'display_name',
+      render: (name, row) => (
+        <div>
+          <div className="allotment-member-name">{name}</div>
+          {sameAllotmentId(checkingId, row.id) && <div className="allotment-member-hint">Querying MUFG Intime…</div>}
+        </div>
+      ),
+    },
     {
       title: 'PAN',
-      dataIndex: 'pan',
-      render: (pan) => (
-        <Space>
-          <Typography.Text code>{formatPan(pan)}</Typography.Text>
-          <Button type="text" size="small" icon={<CopyOutlined />} onClick={() => copyPan(pan)} />
-        </Space>
-      ),
+      dataIndex: 'maskedPan',
+      render: (v, row) => <Typography.Text code>{v || row.masked_pan || '—'}</Typography.Text>,
     },
     {
-      title: 'In app',
+      title: 'Status',
       dataIndex: 'allotment_status',
-      render: (s) => (
-        <Tag color={statusColors[s]}>{s.replace(/_/g, ' ')}</Tag>
-      ),
-    },
-    {
-      title: 'After check',
-      key: 'apply',
-      width: 200,
-      render: (_, row) => (
-        <Space size="small">
-          <Button
-            size="small"
-            icon={<CheckCircleOutlined />}
-            onClick={() => {
-              onApplyStatus?.(row.id, 'ALLOTED');
-              message.success(`Marked ${row.display_name} as allotted — save grid to persist`);
-            }}
-          >
-            Allotted
-          </Button>
-          <Button
-            size="small"
-            icon={<CloseCircleOutlined />}
-            onClick={() => {
-              onApplyStatus?.(row.id, 'NOT_ALLOTED');
-              message.success(`Marked ${row.display_name} as not allotted — save grid to persist`);
-            }}
-          >
-            Not
-          </Button>
-        </Space>
+      render: (s, row) => (
+        <AllotmentStatusBadge
+          status={s}
+          checking={sameAllotmentId(checkingId, row.id)}
+          waitingForListing={waitingForListing}
+        />
       ),
     },
   ];
@@ -127,19 +218,21 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
       title={data ? `Check allotment — ${data.ipo.name}` : 'Check allotment'}
       open={open}
       onCancel={onClose}
-      footer={<Button onClick={onClose}>Close</Button>}
-      width={900}
+      footer={
+        <Space>
+          <Button onClick={onClose}>Close</Button>
+          <Button onClick={() => runCheck(true)} disabled={checking || loading}>
+            Recheck all
+          </Button>
+          <Button type="primary" icon={<SearchOutlined />} loading={checking} onClick={() => runCheck(false)}>
+            Check pending
+          </Button>
+        </Space>
+      }
+      width={860}
       destroyOnClose
       className="allotment-check-modal"
     >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="No free API for automatic PAN allotment lookup"
-        description="SEBI registrars (KFintech, Link Intime, etc.) and BSE/NSE only offer website checks with PAN. Copy each member PAN, open an official portal, select this IPO, then update status below or in the grid."
-      />
-
       <div className="allotment-check-registrar" style={{ marginBottom: 16 }}>
         <Typography.Text strong style={{ marginRight: 8 }}>
           IPO registrar (optional)
@@ -155,42 +248,34 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onApplyStatu
         />
       </div>
 
-      {data?.portals?.length > 0 && (
-        <div className="allotment-check-portals" style={{ marginBottom: 20 }}>
-          <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
-            Official check portals
-          </Typography.Text>
-          <Space wrap>
-            {data.portals.map((p) => (
-              <Button
-                key={p.id}
-                type={p.recommended ? 'primary' : 'default'}
-                icon={<LinkOutlined />}
-                onClick={() => openAllotmentPortal(p.url)}
-              >
-                {p.name}
-                {p.recommended ? ' (recommended)' : ''}
-              </Button>
-            ))}
-          </Space>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-            {data.portals.find((p) => p.recommended)?.steps ||
-              'On BSE/NSE: select issue name, enter PAN, complete captcha if shown.'}
-          </Typography.Paragraph>
-        </div>
-      )}
+      <AllotmentProcessPanel
+        checking={checking}
+        progress={progress}
+        summary={summary}
+        activity={activity}
+        waitingForListing={waitingForListing}
+        compact
+      />
 
-      <Typography.Text strong style={{ display: 'block', marginBottom: 8 }}>
-        Team members — copy PAN and check
-      </Typography.Text>
       <Table
-        rowKey="id"
+        {...tableDefaults}
+        className="pro-table allotment-table"
+        rowKey={(row) => String(row.id)}
         size="small"
         loading={loading}
         columns={memberCols}
         dataSource={data?.applications ?? []}
-        pagination={data?.applications?.length > 8 ? { pageSize: 8 } : false}
-        {...tableDefaults}
+        rowClassName={(row) => {
+          const status = row.allotment_status || row.allotmentStatus;
+          const parts = ['allotment-row'];
+          if (sameAllotmentId(checkingId, row.id)) parts.push('allotment-row--checking');
+          else if (waitingForListing && (status === 'ALLOTED' || status === 'PARTIALLY_ALLOTTED')) parts.push('allotment-row--waiting');
+          else if (status === 'ALLOTED' || status === 'PARTIALLY_ALLOTTED') parts.push('allotment-row--allotted');
+          else if (status === 'NOT_ALLOTED') parts.push('allotment-row--missed');
+          return parts.join(' ');
+        }}
+        pagination={data?.applications?.length > 8 ? { pageSize: 8, showTotal: (t) => `${t} members` } : false}
+        style={{ marginTop: 16 }}
       />
     </Modal>
   );

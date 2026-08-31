@@ -6,6 +6,7 @@ export const REGISTRAR_OPTIONS = [
   { value: 'BIGSHARE', label: 'Bigshare' },
   { value: 'CAMEO', label: 'Cameo' },
   { value: 'SKYLINE', label: 'Skyline' },
+  { value: 'PURVA', label: 'Purva Sharegistry' },
 ];
 
 export const REGISTRAR_PORTALS = {
@@ -38,6 +39,12 @@ export const REGISTRAR_PORTALS = {
     name: 'Skyline',
     url: 'https://www.skylinerta.com/ipo.php',
     steps: 'Select company → PAN or application no.',
+  },
+  PURVA: {
+    id: 'purva',
+    name: 'Purva Sharegistry',
+    url: 'https://www.purvashare.com/investor-service/ipo-query',
+    steps: 'Select company → PAN → search',
   },
 };
 

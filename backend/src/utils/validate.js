@@ -47,7 +47,17 @@ export function normalizeEmail(email) {
   return e;
 }
 
-export const ALLOTMENT_STATUSES = ['PENDING', 'ALLOTED', 'NOT_ALLOTED', 'NOT_APPLIED'];
+export const ALLOTMENT_STATUSES = [
+  'PENDING',
+  'CHECKING',
+  'ALLOTED',
+  'PARTIALLY_ALLOTTED',
+  'NOT_ALLOTED',
+  'NOT_APPLIED',
+  'REJECTED',
+  'ERROR',
+  'RETRY',
+];
 
 export function validateAllotmentStatus(status) {
   if (status && !ALLOTMENT_STATUSES.includes(status)) {

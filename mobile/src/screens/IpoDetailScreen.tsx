@@ -1207,7 +1207,19 @@ export default function IpoDetailScreen() {
             const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
             if (unsavedRowCount) buttons.push({ text: 'Undo changes', onPress: onUndoChanges });
             if (applications.length > 0) {
-              buttons.push({ text: 'Check allotment', onPress: () => setAllotmentCheckOpen(true) });
+              if (ipo?.allotmentCheckReady === false) {
+                buttons.push({
+                  text: 'Check allotment (not open yet)',
+                  onPress: () =>
+                    Alert.alert(
+                      'Allotment not open yet',
+                      ipo.allotmentCheckBlockedReason
+                        || 'NSE/BSE has not published allotment for this IPO yet.',
+                    ),
+                });
+              } else {
+                buttons.push({ text: 'Check allotment', onPress: () => setAllotmentCheckOpen(true) });
+              }
             }
             if (!isFrozen) {
               buttons.push({ text: 'Distribute P&L', onPress: onPreviewProfitShare });
@@ -1859,10 +1871,7 @@ export default function IpoDetailScreen() {
         ipoId={Number(id)}
         visible={allotmentCheckOpen}
         onClose={() => setAllotmentCheckOpen(false)}
-        onApplyStatus={(appId, status) => {
-          updateRow(appId, 'allotmentStatus', status);
-          if (status === 'NOT_ALLOTED' || status === 'NOT_APPLIED') clearAllotmentPnL(appId);
-        }}
+        onChecked={() => load()}
       />
     </Screen>
   );

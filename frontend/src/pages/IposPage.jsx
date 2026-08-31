@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Popconfirm, Typography, Select, Checkbox, Row, Col } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Popconfirm, Typography, Select, Checkbox, Row, Col, Tooltip } from 'antd';
 import {
   IPO_SEGMENT_OPTIONS,
   ipoAllowsHni,
   ipoHasHniLot,
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
-import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined, SwapOutlined, SearchOutlined, GlobalOutlined } from '@ant-design/icons';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import client from '../api/client';
 import { formatCurrency } from '../utils/format';
+import { formatGmp } from '../utils/liveIpo';
 import { getErrorMessage } from '../utils/errors';
 import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
@@ -31,6 +32,7 @@ export default function IposPage() {
   const [registrarOptions, setRegistrarOptions] = useState([]);
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const [search, setSearch] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -138,6 +140,51 @@ export default function IposPage() {
           Invalid
         </Button>
       </Popconfirm>
+      {r.allotmentCheckReady === false ? (
+        <Tooltip title={r.allotmentCheckBlockedReason || 'Allotment is not open on NSE/BSE yet'}>
+          <span>
+            <Button size="small" icon={<SearchOutlined />} block disabled>
+              Allotment
+            </Button>
+          </span>
+        </Tooltip>
+      ) : (
+        <Link to={`/ipos/${r.id}/allotment`}>
+          <Button size="small" icon={<SearchOutlined />} block>
+            Allotment
+          </Button>
+        </Link>
+      )}
+      <Popconfirm
+        title="Remove from My IPOs?"
+        description="Live catalog data is kept. If applications exist, the IPO is hidden rather than deleted."
+        onConfirm={async () => {
+          try {
+            await client.post(`/ipos/${r.id}/remove-from-my-ipos`);
+            message.success('Removed from My IPOs');
+            load();
+          } catch (err) {
+            if (err.response?.status === 409) {
+              Modal.confirm({
+                title: 'This IPO has team applications',
+                content: getErrorMessage(err),
+                okText: 'Hide from My IPOs',
+                onOk: async () => {
+                  await client.post(`/ipos/${r.id}/remove-from-my-ipos`, { confirm: true });
+                  message.success('Hidden from My IPOs');
+                  load();
+                },
+              });
+              return;
+            }
+            message.error(getErrorMessage(err));
+          }
+        }}
+      >
+        <Button size="small" danger block>
+          Remove
+        </Button>
+      </Popconfirm>
     </div>
   );
 
@@ -147,6 +194,18 @@ export default function IposPage() {
       dataIndex: 'name',
       ellipsis: true,
       render: (v) => <span style={{ fontWeight: 600 }}>{v}</span>,
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      width: 90,
+      render: (v) => <Tag color={v === 'OPEN' ? 'success' : 'default'}>{v}</Tag>,
+    },
+    {
+      title: 'GMP',
+      dataIndex: 'gmp',
+      width: 88,
+      render: (v) => formatGmp(v),
     },
     {
       title: 'Segment',
@@ -291,10 +350,13 @@ export default function IposPage() {
   return (
     <div>
       <PageHeader
-        title="IPOs"
-        subtitle="Create IPOs, distribute funds to members, and track allotments"
+        title="My IPOs"
+        subtitle="IPOs your team is managing. Live market IPOs stay on Live IPOs until you add them here."
         extra={
           <>
+          <Button icon={<GlobalOutlined />} onClick={() => navigate('/live-ipos')} style={{ marginRight: 8 }}>
+            Live IPOs
+          </Button>
           <Button
             icon={<SwapOutlined />}
             onClick={() => navigate('/adjust-combine')}
@@ -319,13 +381,29 @@ export default function IposPage() {
           </>
         }
       />
-      <ContentCard title={`IPO List (${ipos.length})`}>
+      <ContentCard
+        title={`My IPO list (${ipos.filter((i) => !search || String(i.name).toLowerCase().includes(search.toLowerCase()) || String(i.company_name || '').toLowerCase().includes(search.toLowerCase()) || String(i.symbol || '').toLowerCase().includes(search.toLowerCase())).length})`}
+        extra={
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="Search My IPOs"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 220 }}
+          />
+        }
+      >
         <Table
           rowKey="id"
           loading={loading}
           columns={columns}
-          dataSource={ipos}
-          locale={{ emptyText: 'No IPOs yet — create one to get started' }}
+          dataSource={ipos.filter((i) => {
+            if (!search.trim()) return true;
+            const q = search.toLowerCase();
+            return [i.name, i.company_name, i.symbol].some((v) => String(v || '').toLowerCase().includes(q));
+          })}
+          locale={{ emptyText: 'No My IPOs yet — add one from Live IPOs or create manually' }}
           {...tableDefaults}
         />
       </ContentCard>

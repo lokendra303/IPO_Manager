@@ -15,7 +15,7 @@ import {
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
-import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
+import { formatCurrency, maskPan, pnlClassName } from '../utils/format';
 import PageHeader from '../components/PageHeader';
 import StatCard from '../components/StatCard';
 import ContentCard from '../components/ContentCard';
@@ -36,6 +36,7 @@ export default function DashboardPage() {
   const [txns, setTxns] = useState([]);
   const [openIssueCount, setOpenIssueCount] = useState(0);
   const [pnlTotals, setPnlTotals] = useState(null);
+  const [dash, setDash] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,13 +46,15 @@ export default function DashboardPage() {
       client.get('/wallet/transactions'),
       client.get('/member-issues/count'),
       client.get('/profit-shares/totals').catch(() => ({ data: null })),
+      client.get('/dashboard').catch(() => ({ data: null })),
     ])
-      .then(([w, s, t, issues, pnl]) => {
+      .then(([w, s, t, issues, pnl, d]) => {
         setWallet(w.data);
         setSummary(s.data);
         setTxns(t.data.slice(0, 8));
         setOpenIssueCount(issues.data.openCount ?? 0);
         setPnlTotals(pnl.data);
+        setDash(d.data);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -98,7 +101,7 @@ export default function DashboardPage() {
 
   const pendingCols = [
     { title: 'Member', dataIndex: 'displayName' },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
+    { title: 'PAN', dataIndex: 'pan', render: (v) => maskPan(v) || '—' },
     {
       title: 'Pending return',
       dataIndex: 'willReceiveFromTeam',
@@ -183,6 +186,48 @@ export default function DashboardPage() {
           }
           style={{ marginBottom: 24 }}
         />
+      )}
+      {dash && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col xs={12} sm={8} lg={4}>
+            <Link to="/live-ipos"><StatCard title="Live IPOs" value={dash.liveIpos ?? 0} icon={<FundOutlined />} variant="info" /></Link>
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <Link to="/my-ipos"><StatCard title="My IPOs" value={dash.myIpos ?? 0} icon={<BankOutlined />} variant="primary" /></Link>
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard title="Open IPOs" value={dash.openIpoCount ?? dash.liveOpen ?? 0} icon={<ClockCircleOutlined />} variant="warning" />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard title="Team applications" value={dash.teamApplications ?? 0} icon={<TeamOutlined />} variant="default" />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard title="Allotment pending" value={dash.pendingAllotments ?? 0} icon={<ClockCircleOutlined />} variant="warning" />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard title="Allotted" value={dash.allotted ?? 0} icon={<RiseOutlined />} variant="success" />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard title="Not allotted" value={dash.notAllotted ?? 0} icon={<FallOutlined />} variant="danger" />
+          </Col>
+          <Col xs={12} sm={8} lg={4}>
+            <StatCard
+              title="Current GMP"
+              value={dash.currentGmp?.gmp != null ? `₹${dash.currentGmp.gmp}` : '—'}
+              icon={<PercentageOutlined />}
+              variant="info"
+            />
+          </Col>
+          <Col xs={12} sm={8} lg={6}>
+            <StatCard
+              title="Expected profit"
+              value={formatCurrency(dash.expectedProfit ?? 0)}
+              icon={<RiseOutlined />}
+              variant="success"
+              valueClassName={pnlClassName(dash.expectedProfit)}
+            />
+          </Col>
+        </Row>
       )}
       <ContentCard
         title={`Open IPOs — distributed${openIpoRows.length ? ` (${openIpoRows.length})` : ''}`}

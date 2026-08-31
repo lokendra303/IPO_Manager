@@ -1933,6 +1933,107 @@ async function applyGroupLeaderWalletsV55(conn) {
   }
 }
 
+async function applyIpoCatalogV58(conn) {
+  const sql = fs.readFileSync(path.join(__dirname, 'schema-ipo-catalog.sql'), 'utf8');
+  await conn.query(sql);
+  if (!(await tableExists(conn, 'ipo_catalog'))) {
+    throw new Error('ipo_catalog was not created');
+  }
+
+  const registrarSeeds = [
+    ['KFIN', 'KFintech', 'https://ipostatus.kfintech.com/'],
+    ['LINK_INTIME', 'MUFG Intime', 'https://in.mpms.mufg.com/Initial_Offer/public-issues.html'],
+    ['BIGSHARE', 'Bigshare', 'https://ipo.bigshareonline.com/IPO_Status.html'],
+    ['CAMEO', 'Cameo', 'https://ipostatus.cameoindia.com/'],
+    ['SKYLINE', 'Skyline', 'https://www.skylinerta.com/ipo.php'],
+    ['PURVA', 'Purva Sharegistry', 'https://www.purvashare.com/investor-service/ipo-query'],
+  ];
+  for (const [code, name, website] of registrarSeeds) {
+    await conn.query(
+      `INSERT INTO registrars (code, name, website, status)
+       VALUES (?, ?, ?, 'ACTIVE')
+       ON DUPLICATE KEY UPDATE name = VALUES(name), website = VALUES(website)`,
+      [code, name, website]
+    );
+  }
+
+  if (await tableExists(conn, 'ipos')) {
+    const ipoCols = [
+      ['catalog_id', 'INT DEFAULT NULL'],
+      ['company_name', 'VARCHAR(255) DEFAULT NULL'],
+      ['symbol', 'VARCHAR(64) DEFAULT NULL'],
+      ['allotment_date', 'DATE DEFAULT NULL'],
+      ['price_min', 'DECIMAL(15, 2) DEFAULT NULL'],
+      ['price_max', 'DECIMAL(15, 2) DEFAULT NULL'],
+      ['issue_price', 'DECIMAL(15, 2) DEFAULT NULL'],
+      ['lot_size', 'INT DEFAULT NULL'],
+      ['issue_size', 'VARCHAR(128) DEFAULT NULL'],
+      ['exchange', 'VARCHAR(64) DEFAULT NULL'],
+      ['source_provider', 'VARCHAR(64) DEFAULT NULL'],
+      ['source_last_updated', 'DATETIME DEFAULT NULL'],
+      ['added_to_my_ipo_at', 'DATETIME DEFAULT NULL'],
+    ];
+    for (const [col, def] of ipoCols) {
+      if (!(await columnExists(conn, 'ipos', col))) {
+        await conn.query(`ALTER TABLE ipos ADD COLUMN ${col} ${def}`);
+        console.log(`Added ipos.${col}`);
+      }
+    }
+    if (!(await indexExists(conn, 'ipos', 'uk_ipos_tenant_catalog'))) {
+      await conn.query(
+        'ALTER TABLE ipos ADD UNIQUE INDEX uk_ipos_tenant_catalog (tenant_id, catalog_id)'
+      );
+      console.log('Added uk_ipos_tenant_catalog');
+    }
+    const [fkRows] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipos'
+         AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = 'fk_ipos_catalog'`
+    );
+    if (!fkRows.length && (await columnExists(conn, 'ipos', 'catalog_id')) && (await tableExists(conn, 'ipo_catalog'))) {
+      await conn.query(
+        `ALTER TABLE ipos
+         ADD CONSTRAINT fk_ipos_catalog
+           FOREIGN KEY (catalog_id) REFERENCES ipo_catalog(id) ON DELETE SET NULL`
+      );
+      console.log('Added fk_ipos_catalog');
+    }
+  }
+
+  if (await tableExists(conn, 'ipo_applications')) {
+    const appCols = [
+      ['application_number', 'VARCHAR(50) DEFAULT NULL'],
+      ['applied_lots', 'INT DEFAULT NULL'],
+      ['allotted_lots', 'INT DEFAULT NULL'],
+      ['allotted_amount', 'DECIMAL(15, 2) DEFAULT NULL'],
+      ['allotment_checked_at', 'DATETIME DEFAULT NULL'],
+    ];
+    for (const [col, def] of appCols) {
+      if (!(await columnExists(conn, 'ipo_applications', col))) {
+        await conn.query(`ALTER TABLE ipo_applications ADD COLUMN ${col} ${def}`);
+        console.log(`Added ipo_applications.${col}`);
+      }
+    }
+
+    const [col] = await conn.query(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipo_applications' AND COLUMN_NAME = 'allotment_status'`
+    );
+    const columnType = String(col[0]?.COLUMN_TYPE || '');
+    const needed = ['CHECKING', 'PARTIALLY_ALLOTTED', 'REJECTED', 'ERROR', 'RETRY'];
+    if (needed.some((v) => !columnType.includes(v))) {
+      await conn.query(
+        `ALTER TABLE ipo_applications
+         MODIFY allotment_status ENUM(
+           'PENDING', 'CHECKING', 'ALLOTED', 'PARTIALLY_ALLOTTED',
+           'NOT_ALLOTED', 'NOT_APPLIED', 'REJECTED', 'ERROR', 'RETRY'
+         ) NOT NULL DEFAULT 'PENDING'`
+      );
+      console.log('Expanded ipo_applications.allotment_status for allotment queue');
+    }
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -1996,6 +2097,7 @@ async function migrate() {
   await applyGroupLeaderWalletsV55(conn);
   await applyFundAdjustPoolV56(conn);
   await applyIpoListingDateV57(conn);
+  await applyIpoCatalogV58(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }
