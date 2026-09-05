@@ -105,7 +105,7 @@ router.get('/:id/allotment-check', async (req, res, next) => {
         display_name: a.display_name,
         maskedPan: maskPan(a.pan),
       })),
-      note: 'Allotment is checked on the server against MUFG Intime (Link Intime). Bigshare and KFintech still require a website captcha, so those IPOs stay pending until they appear on MUFG or you mark them manually.',
+      note: 'Auto-check uses MUFG Intime, KFintech and Skyline. Bigshare, Cameo and Purva can be detected when allotment is live, but those sites still require a website captcha.',
     });
   } catch (err) {
     next(err);

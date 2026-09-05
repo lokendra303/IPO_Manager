@@ -119,7 +119,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       const stats = await checkAllotmentSequentially({
         ipoId,
         targets,
-        onProgress: ({ index, id, name, phase, row, message: blocked }) => {
+        onProgress: ({ index, id, name, phase, row, message: blocked, providerLabel }) => {
           setCheckingId(phase === 'checking' ? id : null);
           if (row?.status === 'ALLOTED' || row?.status === 'PARTIALLY_ALLOTTED') allotted += 1;
           if (row?.status === 'NOT_ALLOTED') notAllotted += 1;
@@ -135,6 +135,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
             name,
             phase,
             message: blocked,
+            providerLabel,
             allotted,
             notAllotted,
           });
@@ -191,7 +192,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       render: (name, row) => (
         <div>
           <div className="allotment-member-name">{name}</div>
-          {sameAllotmentId(checkingId, row.id) && <div className="allotment-member-hint">Querying MUFG Intime…</div>}
+          {sameAllotmentId(checkingId, row.id) && <div className="allotment-member-hint">Querying registrar…</div>}
         </div>
       ),
     },

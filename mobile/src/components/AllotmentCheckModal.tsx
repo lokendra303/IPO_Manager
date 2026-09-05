@@ -96,7 +96,7 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
         <ScrollView contentContainerStyle={ui.modalBody}>
           <View style={[ui.banner, ui.bannerInfo]}>
             <Text style={ui.bannerText}>
-              The server checks MUFG Intime and updates each member here. No registrar website is opened.
+              The server finds which registrar currently lists this IPO and checks member PANs there. Bigshare, Cameo and Purva still need a website captcha.
             </Text>
           </View>
 

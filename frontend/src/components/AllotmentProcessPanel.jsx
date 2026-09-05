@@ -7,7 +7,7 @@ import {
 import AllotmentStatusBadge from './AllotmentStatusBadge';
 
 const STEPS = [
-  { key: 'connect', label: 'Connect', hint: 'MUFG Intime' },
+  { key: 'connect', label: 'Connect', hint: 'Live registrar' },
   { key: 'check', label: 'Check PAN', hint: 'One member at a time' },
   { key: 'save', label: 'Save result', hint: 'Status on the member' },
 ];
@@ -69,7 +69,9 @@ export default function AllotmentProcessPanel({
         <div className="allotment-process">
           <div className="allotment-process-top">
             <div>
-              <div className="allotment-process-kicker">Live check · MUFG Intime</div>
+              <div className="allotment-process-kicker">
+                Live check · {progress.providerLabel || 'registrar'}
+              </div>
               <div className="allotment-process-title">
                 {progress.phase === 'blocked'
                   ? 'Registrar not ready'
@@ -126,13 +128,13 @@ export default function AllotmentProcessPanel({
                 ? waitingForListing
                   ? 'Allotted members wait for listing. Mark the IPO listed before withdrawal and P&L.'
                   : 'Results are saved on each member. Enter withdrawal and P&L for allotted rows.'
-                : 'This IPO is not on MUFG Intime yet. Leave members pending or mark them by hand.'}
+                : 'Leave members pending or mark them by hand.'}
             </div>
           </div>
         </div>
       ) : (
         <Typography.Paragraph type="secondary" className="allotment-process-idle">
-          Click <strong>Check pending</strong> to query each member PAN. The table highlights the row being checked and updates as each result comes in.
+          Click <strong>Check pending</strong> to query each member PAN on the registrar that has this IPO. The table highlights the row being checked and updates as each result comes in.
         </Typography.Paragraph>
       )}
     </div>

@@ -3,7 +3,12 @@ import { formatPan, toSqlDateTime } from '../../../utils/validate.js';
 import { maskPan } from '../../../utils/pan.js';
 import { withTransaction } from '../../../db/pool.js';
 import { saveAllotmentResult } from '../allotmentQueueService.js';
-import { mufgPlatform, resolveMufgCompany } from './mufgProvider.js';
+import { normalizeRegistrarCode } from '../registrarNormalize.js';
+import {
+  captchaPortalMessage,
+  resolveAllotmentPlatform,
+  unpublishedAllotmentMessage,
+} from './platforms.js';
 import { sharesToLots } from './parseAllotment.js';
 
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -16,42 +21,46 @@ function sleep(ms) {
 }
 
 function ipoSearchNames(ipo) {
-  return [ipo.company_name, ipo.name, ipo.registrar_name].filter(Boolean);
+  return [ipo.company_name, ipo.name].filter(Boolean);
 }
 
-export async function pickAllotmentResult(ipoNames, pan, platforms = [mufgPlatform]) {
-  let unmatched = null;
-  for (const platform of platforms) {
-    try {
-      const result = await platform.check({ ipoNames, pan });
-      if (!result) continue;
-      if (result.kind === 'unmatched') {
-        unmatched = result;
-        continue;
-      }
-      if (result.kind === 'message') {
-        return { ...result, status: 'RETRY' };
-      }
-      if (result.kind === 'empty') {
-        return { ...result, status: 'NOT_ALLOTED', allottedShares: 0 };
-      }
-      if (result.kind === 'result' && result.status) {
-        return result;
-      }
-    } catch (err) {
-      unmatched = {
-        platform: platform.id,
-        kind: 'error',
-        status: 'RETRY',
-        message: err.message || 'Registrar temporarily unavailable',
-      };
-    }
-  }
-  return unmatched || {
-    kind: 'unmatched',
-    status: null,
-    message: 'No registrar returned allotment for this IPO yet.',
+function blockedResponse(ipo, platform, message) {
+  return {
+    success: true,
+    provider: platform?.id || null,
+    providerLabel: platform?.name || null,
+    portalUrl: platform?.url || null,
+    ipo: { id: ipo.id, name: ipo.name, registrar: ipo.registrar || ipo.registrar_code },
+    checked: 0,
+    allotted: 0,
+    notAllotted: 0,
+    skipped: 0,
+    failed: 0,
+    remaining: 0,
+    results: [],
+    message,
   };
+}
+
+export async function pickAllotmentResult(platform, { ipoNames, pan, company }) {
+  try {
+    const result = await platform.check({ ipoNames, pan, company });
+    if (!result) {
+      return { kind: 'unmatched', status: null, message: 'No registrar returned allotment for this IPO yet.' };
+    }
+    if (result.kind === 'unmatched') return result;
+    if (result.kind === 'message') return { ...result, status: 'RETRY' };
+    if (result.kind === 'empty') return { ...result, status: 'NOT_ALLOTED', allottedShares: 0 };
+    if (result.kind === 'result' && result.status) return result;
+    return result;
+  } catch (err) {
+    return {
+      platform: platform.id,
+      kind: 'error',
+      status: 'RETRY',
+      message: err.message || 'Registrar temporarily unavailable',
+    };
+  }
 }
 
 export async function autoCheckIpoAllotment(pool, { tenantId, ipoId, recheck = false, applicationId = null } = {}) {
@@ -69,30 +78,23 @@ export async function autoCheckIpoAllotment(pool, { tenantId, ipoId, recheck = f
   const names = ipoSearchNames({
     name: ipo.name,
     company_name: ipo.company_name || ipo.catalog_company,
-    registrar_name: ipo.registrar_name,
   });
+  const registrarCode = normalizeRegistrarCode(ipo.registrar || ipo.registrar_code);
 
-  let registrarCompany = null;
+  let resolved;
   try {
-    registrarCompany = await resolveMufgCompany(names);
+    resolved = await resolveAllotmentPlatform(names, registrarCode);
   } catch (err) {
     throw new AppError(err.message || 'Allotment registrar temporarily unavailable', err.status || 503);
   }
-  if (!registrarCompany) {
-    return {
-      success: true,
-      provider: 'mufg',
-      providerLabel: 'MUFG Intime',
-      ipo: { id: ipo.id, name: ipo.name, registrar: ipo.registrar || ipo.registrar_code },
-      checked: 0,
-      allotted: 0,
-      notAllotted: 0,
-      skipped: 0,
-      failed: 0,
-      remaining: 0,
-      results: [],
-      message: 'This IPO is not on MUFG Intime yet. Allotment may not be published, or Bigshare/KFintech (captcha portals) handles it.',
-    };
+  if (!resolved.company || !resolved.platform) {
+    if (!resolved.lookedUp && resolved.errors?.length) {
+      throw new AppError(resolved.errors[0]?.message || 'Allotment registrar temporarily unavailable', 503);
+    }
+    return blockedResponse(ipo, null, unpublishedAllotmentMessage());
+  }
+  if (!resolved.platform.canCheck) {
+    return blockedResponse(ipo, resolved.platform, captchaPortalMessage(resolved.platform));
   }
 
   const params = [ipoId, tenantId];
@@ -140,7 +142,11 @@ export async function autoCheckIpoAllotment(pool, { tenantId, ipoId, recheck = f
       continue;
     }
 
-    const lookup = await pickAllotmentResult(names, pan);
+    const lookup = await pickAllotmentResult(resolved.platform, {
+      ipoNames: names,
+      pan,
+      company: resolved.company,
+    });
     if (!lookup?.status || lookup.kind === 'unmatched') {
       skipped += 1;
       results.push({
@@ -210,8 +216,9 @@ export async function autoCheckIpoAllotment(pool, { tenantId, ipoId, recheck = f
 
   return {
     success: true,
-    provider: 'mufg',
-    providerLabel: 'MUFG Intime',
+    provider: resolved.platform.id,
+    providerLabel: resolved.platform.name,
+    portalUrl: resolved.platform.url,
     ipo: { id: ipo.id, name: ipo.name, registrar: ipo.registrar || ipo.registrar_code },
     checked,
     allotted,

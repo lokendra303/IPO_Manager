@@ -168,7 +168,7 @@ export default function AllotmentQueuePage() {
       const stats = await checkAllotmentSequentially({
         ipoId: id,
         targets,
-        onProgress: ({ index, total, id: appId, name, phase, row, message: blocked }) => {
+        onProgress: ({ index, total, id: appId, name, phase, row, message: blocked, providerLabel }) => {
           setCheckingId(phase === 'checking' ? appId : null);
           if (row?.status === 'ALLOTED' || row?.status === 'PARTIALLY_ALLOTTED') allotted += 1;
           if (row?.status === 'NOT_ALLOTED') notAllotted += 1;
@@ -184,6 +184,7 @@ export default function AllotmentQueuePage() {
             name,
             phase,
             message: blocked,
+            providerLabel,
             allotted,
             notAllotted,
           });
@@ -340,7 +341,7 @@ export default function AllotmentQueuePage() {
     <div className="allotment-checker">
       <PageHeader
         title={`${queue?.ipo?.name || 'IPO'} — Allotment`}
-        subtitle="Live check against MUFG Intime. Each member is queried in this screen and the table updates as results come in."
+        subtitle="Checks the registrar that currently lists this IPO (MUFG Intime, KFintech, or Skyline). Bigshare, Cameo and Purva are detected when allotment is live, but those sites need a captcha."
         extra={
           <Link to={`/ipos/${id}`}>
             <Button icon={<ArrowLeftOutlined />}>Back to IPO</Button>

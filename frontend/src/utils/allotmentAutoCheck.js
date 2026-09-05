@@ -62,7 +62,7 @@ export async function checkAllotmentSequentially({
     remaining: 0,
     results: [],
     message: null,
-    providerLabel: 'MUFG Intime',
+    providerLabel: null,
   };
   const list = targets || [];
   onStart?.({ total: list.length });
@@ -75,12 +75,14 @@ export async function checkAllotmentSequentially({
       id: app.id,
       name: app.name || app.display_name,
       phase: 'checking',
+      providerLabel: stats.providerLabel,
     });
     const { data } = await client.post(
       `/ipos/${ipoId}/allotment/auto-check`,
       { applicationId: app.id },
-      { timeout: 30000 }
+      { timeout: 45000 }
     );
+    if (data.providerLabel) stats.providerLabel = data.providerLabel;
     if (data.message && !data.checked && !(data.results || []).length) {
       stats.message = data.message;
       onProgress?.({
@@ -90,6 +92,7 @@ export async function checkAllotmentSequentially({
         name: app.name || app.display_name,
         phase: 'blocked',
         message: data.message,
+        providerLabel: data.providerLabel,
       });
       return stats;
     }
@@ -110,6 +113,7 @@ export async function checkAllotmentSequentially({
       name: app.name || app.display_name,
       phase: 'done',
       row,
+      providerLabel: data.providerLabel,
     });
   }
   return stats;

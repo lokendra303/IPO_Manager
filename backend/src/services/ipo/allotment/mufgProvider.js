@@ -85,19 +85,25 @@ export async function searchMufgByPan({ companyId, pan }) {
 export const mufgPlatform = {
   id: 'mufg',
   name: 'MUFG Intime',
-  async check({ ipoNames, pan }) {
-    const company = await resolveMufgCompany(ipoNames);
-    if (!company) {
+  registrarCode: 'LINK_INTIME',
+  url: 'https://in.mpms.mufg.com/Initial_Offer/public-issues.html',
+  canCheck: true,
+  async resolve(ipoNames) {
+    return resolveMufgCompany(ipoNames);
+  },
+  async check({ ipoNames, pan, company }) {
+    const hit = company || await resolveMufgCompany(ipoNames);
+    if (!hit) {
       return {
         platform: 'mufg',
         kind: 'unmatched',
         message: 'This IPO is not on MUFG Intime yet (allotment not published, or another registrar handles it).',
       };
     }
-    const parsed = await searchMufgByPan({ companyId: company.companyId, pan });
+    const parsed = await searchMufgByPan({ companyId: hit.companyId, pan });
     return {
       platform: 'mufg',
-      platformCompany: company.companyName,
+      platformCompany: hit.companyName,
       ...parsed,
     };
   },
