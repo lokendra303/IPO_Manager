@@ -1,14 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Modal,
   Form,
   Input,
-  Table,
-  Space,
   message,
   Popconfirm,
-  Tag,
   Checkbox,
   Typography,
   Select,
@@ -18,20 +15,69 @@ import {
   Radio,
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, TeamOutlined, EyeOutlined, BankOutlined, UserOutlined, WalletOutlined,
+  PlusOutlined,
+  EditOutlined,
+  TeamOutlined,
+  EyeOutlined,
+  BankOutlined,
+  UserOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import { formatCurrency, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
-import PageHeader from '../components/PageHeader';
-import ContentCard from '../components/ContentCard';
-import { tableDefaults } from '../utils/table';
+
+const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
+
+function initials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((p) => p[0]).join('').toUpperCase() || '?';
+}
+
+function avatarTone(id) {
+  return AVATAR_TONES[Math.abs(Number(id) || 0) % AVATAR_TONES.length];
+}
+
+function groupHasOwner(group) {
+  return Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
+}
+
+function Kpi({ label, value, hint, tone = 'neutral', active, to, onClick }) {
+  const body = (
+    <article className={`dash-kpi dash-kpi--${tone}`}>
+      <span className="dash-kpi-label">{label}</span>
+      <strong className="dash-kpi-value">{value}</strong>
+      {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+    </article>
+  );
+  if (to) {
+    return <Link to={to} className="dash-kpi-a">{body}</Link>;
+  }
+  if (!onClick) {
+    return <div className="dash-kpi-a">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      {body}
+    </button>
+  );
+}
 
 export default function MemberGroupsPage() {
   const [groups, setGroups] = useState([]);
   const [allMembers, setAllMembers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [needOwnerOnly, setNeedOwnerOnly] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [membersModalOpen, setMembersModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -55,13 +101,50 @@ export default function MemberGroupsPage() {
     setLoading(true);
     Promise.all([client.get('/member-groups'), client.get('/members')])
       .then(([g, m]) => {
-        setGroups(g.data);
-        setAllMembers(m.data);
+        setGroups(Array.isArray(g.data) ? g.data : []);
+        setAllMembers(Array.isArray(m.data) ? m.data : []);
+      })
+      .catch((err) => {
+        message.error(getErrorMessage(err, 'Could not load sub-groups'));
+        setGroups([]);
+        setAllMembers([]);
       })
       .finally(() => setLoading(false));
   };
 
   useEffect(load, []);
+
+  const uniqueMembers = useMemo(() => {
+    const map = new Map();
+    for (const m of allMembers) {
+      if (!map.has(m.id)) map.set(m.id, m);
+    }
+    return [...map.values()];
+  }, [allMembers]);
+
+  const groupedCount = uniqueMembers.filter((m) => m.member_group_id).length;
+  const ungroupedCount = uniqueMembers.length - groupedCount;
+  const needOwnerCount = groups.filter((g) => !groupHasOwner(g)).length;
+
+  const filteredGroups = useMemo(() => {
+    let list = groups;
+    if (needOwnerOnly) list = list.filter((g) => !groupHasOwner(g));
+    const needle = search.trim().toLowerCase();
+    if (!needle) return list;
+    return list.filter((g) => {
+      const hay = [
+        g.name,
+        g.ownerDisplayName,
+        g.ownerExternalName,
+        g.ownerPan,
+        ...(g.members || []).map((m) => m.displayName),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [groups, needOwnerOnly, search]);
 
   const openCreate = () => {
     setEditing(null);
@@ -69,7 +152,8 @@ export default function MemberGroupsPage() {
     setModalOpen(true);
   };
 
-  const openEdit = (group) => {
+  const openEdit = (group, e) => {
+    e?.stopPropagation();
     setEditing(group);
     form.setFieldsValue({ name: group.name, sortOrder: group.sortOrder });
     setModalOpen(true);
@@ -93,9 +177,6 @@ export default function MemberGroupsPage() {
       setSaving(false);
     }
   };
-
-  const groupHasOwner = (group) =>
-    Boolean(group?.ownerMemberId || (group?.ownerExternalName && String(group.ownerExternalName).trim()));
 
   const syncOwnerFormFromGroup = (group) => {
     if (group?.ownerExternalName?.trim()) {
@@ -166,7 +247,8 @@ export default function MemberGroupsPage() {
     }
   };
 
-  const openAssignMembers = (group) => {
+  const openAssignMembers = (group, e) => {
+    e?.stopPropagation();
     setAssignGroup(group);
     setSelectedMemberIds(group.members.map((m) => m.id));
     if (group.ownerExternalName?.trim()) {
@@ -203,7 +285,8 @@ export default function MemberGroupsPage() {
       setMembersModalOpen(false);
       if (viewGroup?.id === assignGroup.id) {
         const { data: refreshed } = await client.get('/member-groups');
-        const updated = refreshed.data.find((g) => g.id === assignGroup.id);
+        const list = Array.isArray(refreshed) ? refreshed : [];
+        const updated = list.find((g) => g.id === assignGroup.id);
         if (updated) {
           setViewGroup(updated);
           syncOwnerFormFromGroup(updated);
@@ -236,7 +319,7 @@ export default function MemberGroupsPage() {
     }
     if (group.ownerDisplayName) {
       return group.ownerPan
-        ? `${group.ownerDisplayName} (${group.ownerPan})`
+        ? `${group.ownerDisplayName} (${formatPan(group.ownerPan)})`
         : group.ownerDisplayName;
     }
     if (group.ownerMemberId && group.members?.length) {
@@ -248,116 +331,173 @@ export default function MemberGroupsPage() {
     return null;
   };
 
-  const memberOptions = allMembers.reduce((acc, row) => {
-    if (acc.some((m) => m.id === row.id)) return acc;
-    acc.push({
-      id: row.id,
-      displayName: row.display_name,
-      pan: row.pan,
-      status: row.status,
-      currentGroupId: row.member_group_id,
-      currentGroupName: row.member_group_name,
-    });
-    return acc;
-  }, []);
-
-  const columns = [
-    {
-      title: 'Group',
-      dataIndex: 'name',
-      render: (v, row) => {
-        const ownerLabel = getOwnerLabel(row);
-        return (
-          <div>
-            <strong>{v}</strong>
-            {ownerLabel ? (
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                Owner: <span style={{ color: '#b45309', fontWeight: 500 }}>{ownerLabel}</span>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Owner: not set</div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      title: 'Owner',
-      key: 'owner',
-      render: (_, row) =>
-        row.ownerDisplayName ? (
-          <Tag color="gold">{row.ownerDisplayName}</Tag>
-        ) : (
-          <Typography.Text type="secondary">Not set</Typography.Text>
-        ),
-    },
-    {
-      title: 'Members',
-      dataIndex: 'memberCount',
-      render: (count, row) => (
-        <Space wrap>
-          <Tag icon={<TeamOutlined />}>{count}</Tag>
-          {row.members.slice(0, 4).map((m) => (
-            <Tag key={m.id} color={m.status === 'ACTIVE' ? 'blue' : 'default'}>
-              {m.displayName}
-            </Tag>
-          ))}
-          {row.members.length > 4 && <Tag>+{row.members.length - 4} more</Tag>}
-        </Space>
-      ),
-    },
-    {
-      title: 'Actions',
-      render: (_, row) => (
-        <Space>
-          <Button size="small" icon={<EyeOutlined />} onClick={() => openViewInfo(row)}>
-            View info
-          </Button>
-          <Button size="small" onClick={() => openAssignMembers(row)}>
-            Manage members
-          </Button>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)} />
-          <Popconfirm
-            title="Remove this group?"
-            description="Members stay in your team — only the group label is removed."
-            onConfirm={() => onDelete(row.id)}
-          >
-            <Button size="small" danger>
-              Remove
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+  const memberOptions = uniqueMembers.map((row) => ({
+    id: row.id,
+    displayName: row.display_name,
+    pan: row.pan,
+    status: row.status,
+    currentGroupId: row.member_group_id,
+    currentGroupName: row.member_group_name,
+  }));
 
   return (
-    <div>
-      <PageHeader
-        title="Member Sub-Groups"
-        subtitle="Create teams with a group owner — IPO funds can be paid in one bulk transfer to the owner for all members"
-        extra={
-          <Space>
-            <Link to="/group-leader-wallets">
-              <Button icon={<WalletOutlined />}>Leader wallets</Button>
-            </Link>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              Add group
-            </Button>
-          </Space>
-        }
-      />
+    <div className="sg">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">Team</p>
+          <h1>Sub-groups</h1>
+          <p className="dash-lead">
+            Pay one bulk transfer to a group owner for everyone in that team.
+          </p>
+        </div>
+        <div className="dash-head-actions">
+          <Link to="/members" className="dash-btn">Members</Link>
+          <Link to="/group-leader-wallets" className="dash-btn">Leader wallets</Link>
+          <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+            <PlusOutlined /> Add group
+          </button>
+        </div>
+      </header>
 
-      <ContentCard title={`Groups (${groups.length})`}>
-        <Table
-          rowKey="id"
-          loading={loading}
-          columns={columns}
-          dataSource={groups}
-          locale={{ emptyText: 'No sub-groups yet — create one for Rinku or similar teams' }}
-          {...tableDefaults}
+      <section className="dash-kpi-grid mem-kpis">
+        <Kpi
+          label="Groups"
+          value={groups.length}
+          hint="All sub-groups"
+          tone="teal"
+          active={!needOwnerOnly}
+          onClick={() => setNeedOwnerOnly(false)}
         />
-      </ContentCard>
+        <Kpi
+          label="Need owner"
+          value={needOwnerCount}
+          hint="Bulk pay blocked"
+          tone={needOwnerCount > 0 ? 'warn' : 'neutral'}
+          active={needOwnerOnly}
+          onClick={() => setNeedOwnerOnly(true)}
+        />
+        <Kpi
+          label="In a group"
+          value={groupedCount}
+          hint="Assigned members"
+        />
+        <Kpi
+          to="/members"
+          label="Ungrouped"
+          value={ungroupedCount}
+          hint="Open members"
+          tone={ungroupedCount > 0 ? 'info' : 'neutral'}
+        />
+      </section>
+
+      <section className="dash-card mem-card">
+        <div className="mem-toolbar">
+          <Input.Search
+            className="mem-search"
+            placeholder="Search group, owner, or member…"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <p className="mem-count">
+            Showing <strong>{filteredGroups.length}</strong>
+            {filteredGroups.length !== groups.length ? ` of ${groups.length}` : ''}
+          </p>
+        </div>
+
+        {loading && groups.length === 0 ? (
+          <div className="sg-grid" aria-hidden>
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="mem-skel" />
+            ))}
+          </div>
+        ) : filteredGroups.length === 0 ? (
+          <div className="mem-empty">
+            <p>
+              {search.trim() || needOwnerOnly
+                ? 'No groups match these filters.'
+                : 'No sub-groups yet. Create one for a team like Rinku.'}
+            </p>
+            {!groups.length && (
+              <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+                <PlusOutlined /> Add group
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="sg-grid">
+            {filteredGroups.map((row) => {
+              const ownerLabel = getOwnerLabel(row);
+              const faces = row.members.slice(0, 5);
+              const extra = row.members.length - faces.length;
+              return (
+                <article
+                  key={row.id}
+                  className="sg-group"
+                  onClick={() => openViewInfo(row)}
+                >
+                  <header className="sg-group-head">
+                    <span className={`mem-avatar mem-avatar--${avatarTone(row.id)}`}>
+                      {initials(row.name)}
+                    </span>
+                    <div>
+                      <strong>{row.name}</strong>
+                      {ownerLabel ? (
+                        <p className="sg-owner">Owner · {ownerLabel}</p>
+                      ) : (
+                        <p className="sg-owner sg-owner--miss">Owner not set</p>
+                      )}
+                    </div>
+                  </header>
+
+                  <div className="sg-group-meta">
+                    <span>{row.memberCount} member{row.memberCount === 1 ? '' : 's'}</span>
+                    {!groupHasOwner(row) && <span className="mem-share-miss">Needs owner</span>}
+                  </div>
+
+                  {row.members.length > 0 ? (
+                    <div className="sg-faces">
+                      {faces.map((m) => (
+                        <span
+                          key={m.id}
+                          className={`sg-face mem-avatar--${avatarTone(m.id)}${m.id === row.ownerMemberId ? ' is-owner' : ''}`}
+                          title={m.displayName}
+                        >
+                          {initials(m.displayName)}
+                        </span>
+                      ))}
+                      {extra > 0 && <span className="sg-face sg-face--more">+{extra}</span>}
+                    </div>
+                  ) : (
+                    <p className="sg-none">No members assigned yet</p>
+                  )}
+
+                  <div className="sg-group-actions" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="mem-icon-btn" title="View info" onClick={() => openViewInfo(row)}>
+                      <EyeOutlined />
+                    </button>
+                    <button type="button" className="dash-btn sg-mini" onClick={(e) => openAssignMembers(row, e)}>
+                      <TeamOutlined /> Members
+                    </button>
+                    <button type="button" className="mem-icon-btn" title="Edit" onClick={(e) => openEdit(row, e)}>
+                      <EditOutlined />
+                    </button>
+                    <Popconfirm
+                      title="Remove this group?"
+                      description="Members stay in your team — only the group label is removed."
+                      onConfirm={() => onDelete(row.id)}
+                    >
+                      <button type="button" className="mem-icon-btn mem-icon-btn--danger" title="Remove">
+                        <DeleteOutlined />
+                      </button>
+                    </Popconfirm>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <Modal
         className="subgroup-view-modal"
@@ -391,13 +531,11 @@ export default function MemberGroupsPage() {
           <div className="subgroup-view">
             <div className="subgroup-view__owner-bar">
               {hasOwner ? (
-                <Space wrap size="middle">
-                  <Tag color="gold" icon={<UserOutlined />}>Owner</Tag>
-                  <Typography.Text strong style={{ fontSize: 16 }}>{ownerName}</Typography.Text>
-                  {ownerPan && (
-                    <Typography.Text type="secondary">PAN {formatPan(ownerPan)}</Typography.Text>
-                  )}
-                </Space>
+                <div className="sg-view-owner">
+                  <span className="mem-share-ok"><UserOutlined /> Owner</span>
+                  <strong>{ownerName}</strong>
+                  {ownerPan && <span>PAN {formatPan(ownerPan)}</span>}
+                </div>
               ) : (
                 <Typography.Text type="warning">No owner set — bulk IPO pay requires an owner</Typography.Text>
               )}
@@ -447,20 +585,18 @@ export default function MemberGroupsPage() {
                   <Radio value="external">Third party (name only)</Radio>
                 </Radio.Group>
                 {viewOwnerMode === 'member' ? (
-                  <Space wrap>
-                    <Select
-                      style={{ minWidth: 260 }}
-                      placeholder="Choose owner from members"
-                      value={viewOwnerId}
-                      onChange={setViewOwnerId}
-                      options={viewGroup.members.map((m) => ({
-                        value: m.id,
-                        label: `${m.displayName} (${formatPan(m.pan)})`,
-                      }))}
-                    />
-                  </Space>
+                  <Select
+                    style={{ minWidth: 260, maxWidth: '100%' }}
+                    placeholder="Choose owner from members"
+                    value={viewOwnerId}
+                    onChange={setViewOwnerId}
+                    options={viewGroup.members.map((m) => ({
+                      value: m.id,
+                      label: `${m.displayName} (${formatPan(m.pan)})`,
+                    }))}
+                  />
                 ) : (
-                  <Space direction="vertical" style={{ width: '100%', maxWidth: 360 }}>
+                  <div className="sg-ext-fields">
                     <Input
                       placeholder="Owner name (not on member list)"
                       value={viewOwnerExternalName}
@@ -472,7 +608,7 @@ export default function MemberGroupsPage() {
                       onChange={(e) => setViewOwnerExternalPan(e.target.value.toUpperCase())}
                       maxLength={10}
                     />
-                  </Space>
+                  </div>
                 )}
                 <Button type="primary" loading={saving} onClick={onSaveViewOwner} style={{ marginTop: 12 }}>
                   Save owner
@@ -485,37 +621,23 @@ export default function MemberGroupsPage() {
             </Divider>
             <div className="subgroup-view__panel subgroup-view__panel--members">
               {viewGroup.members.length ? (
-                <Table
-                  rowKey="id"
-                  size="small"
-                  pagination={false}
-                  scroll={{ x: 'max-content', y: 240 }}
-                  dataSource={viewGroup.members}
-                  columns={[
-                    {
-                      title: 'Name',
-                      dataIndex: 'displayName',
-                      render: (v, m) => (
-                        <Space size={6}>
-                          <span style={{ fontWeight: m.id === viewGroup.ownerMemberId ? 600 : 400 }}>{v}</span>
-                          {m.id === viewGroup.ownerMemberId && <Tag color="gold">Owner</Tag>}
-                        </Space>
-                      ),
-                    },
-                    { title: 'PAN', dataIndex: 'pan', width: 140, render: (v) => formatPan(v) || '—' },
-                    {
-                      title: 'Status',
-                      dataIndex: 'status',
-                      width: 96,
-                      align: 'center',
-                      render: (s) => (
-                        <Tag color={s === 'ACTIVE' ? 'success' : 'default'}>
-                          {s === 'ACTIVE' ? 'Active' : 'Inactive'}
-                        </Tag>
-                      ),
-                    },
-                  ]}
-                />
+                <ul className="sg-view-members">
+                  {viewGroup.members.map((m) => (
+                    <li key={m.id}>
+                      <span className={`sg-face mem-avatar--${avatarTone(m.id)}`}>{initials(m.displayName)}</span>
+                      <div>
+                        <strong>
+                          {m.displayName}
+                          {m.id === viewGroup.ownerMemberId ? <em>Owner</em> : null}
+                        </strong>
+                        <span>{formatPan(m.pan) || '—'}</span>
+                      </div>
+                      <span className={`mem-status ${m.status === 'ACTIVE' ? 'is-on' : 'is-off'}`}>
+                        {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               ) : (
                 <Typography.Paragraph type="secondary" style={{ margin: 12 }}>
                   No members assigned — use Manage members to add people to this group.
@@ -531,58 +653,27 @@ export default function MemberGroupsPage() {
               Each member’s share appears on Summary → Total Given.
             </Typography.Paragraph>
             <div className="subgroup-view__panel subgroup-view__panel--history">
-              <Table
-                className="subgroup-history-table"
-                rowKey="id"
-                size="small"
-                loading={bulkTxnsLoading}
-                pagination={false}
-                tableLayout="fixed"
-                locale={{ emptyText: 'No bulk payments yet — use Bulk to owner on an IPO' }}
-                dataSource={groupBulkTxns}
-                columns={[
-                  {
-                    title: 'Date',
-                    dataIndex: 'paidAt',
-                    width: 118,
-                    align: 'left',
-                    render: (v) => (
-                      <span className="subgroup-history-table__date">
-                        {v ? new Date(v).toLocaleDateString('en-IN') : '—'}
-                      </span>
-                    ),
-                  },
-                  {
-                    title: 'IPO',
-                    dataIndex: 'ipoName',
-                    align: 'left',
-                    ellipsis: { showTitle: true },
-                  },
-                  {
-                    title: 'Transfer',
-                    dataIndex: 'totalAmount',
-                    width: 132,
-                    align: 'right',
-                    render: (v) => (
-                      <span className="subgroup-history-table__amount">{formatCurrency(v)}</span>
-                    ),
-                  },
-                  {
-                    title: 'Members',
-                    dataIndex: 'memberCount',
-                    width: 96,
-                    align: 'center',
-                    render: (n) => n,
-                  },
-                  {
-                    title: 'Type',
-                    dataIndex: 'investorCategory',
-                    width: 72,
-                    align: 'center',
-                    render: (v) => (v ? <Tag>{v}</Tag> : '—'),
-                  },
-                ]}
-              />
+              {bulkTxnsLoading ? (
+                <p className="dash-empty">Loading payments…</p>
+              ) : groupBulkTxns.length === 0 ? (
+                <p className="dash-empty">No bulk payments yet — use Bulk to owner on an IPO.</p>
+              ) : (
+                <ul className="sg-history">
+                  {groupBulkTxns.map((t) => (
+                    <li key={t.id}>
+                      <div>
+                        <strong>{t.ipoName}</strong>
+                        <span>
+                          {t.paidAt ? new Date(t.paidAt).toLocaleDateString('en-IN') : '—'}
+                          {t.investorCategory ? ` · ${t.investorCategory}` : ''}
+                          {t.memberCount != null ? ` · ${t.memberCount} members` : ''}
+                        </span>
+                      </div>
+                      <b>{formatCurrency(t.totalAmount)}</b>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
           );
@@ -615,13 +706,14 @@ export default function MemberGroupsPage() {
         confirmLoading={saving}
         width={560}
         destroyOnClose
+        className="sg-assign-modal"
+        okText="Save members"
       >
-        <Typography.Paragraph type="secondary">
-          A member can belong to one sub-group only. To move someone from another group, unassign them there first
-          (uncheck in that group, or clear Sub-Group on the member).
-        </Typography.Paragraph>
+        <p className="sg-assign-hint">
+          A member can belong to one sub-group only. To move someone, unassign them from the other group first.
+        </p>
         <Checkbox.Group
-          style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflow: 'auto' }}
+          className="sg-pick"
           value={selectedMemberIds}
           onChange={setSelectedMemberIds}
         >
@@ -629,14 +721,16 @@ export default function MemberGroupsPage() {
             const inOtherGroup =
               m.currentGroupId && assignGroup && m.currentGroupId !== assignGroup.id;
             return (
-              <Checkbox key={m.id} value={m.id} disabled={inOtherGroup}>
-                {m.displayName} ({formatPan(m.pan)})
-                {m.status === 'INACTIVE' && <Tag style={{ marginLeft: 8 }}>Inactive</Tag>}
-                {inOtherGroup && (
-                  <Typography.Text type="danger" style={{ marginLeft: 8 }}>
-                    in “{m.currentGroupName}” — unassign first
-                  </Typography.Text>
-                )}
+              <Checkbox key={m.id} value={m.id} disabled={inOtherGroup} className="sg-pick-row">
+                <span className={`sg-face mem-avatar--${avatarTone(m.id)}`}>{initials(m.displayName)}</span>
+                <span className="sg-pick-copy">
+                  <strong>{m.displayName}</strong>
+                  <span>
+                    {formatPan(m.pan)}
+                    {m.status === 'INACTIVE' ? ' · Inactive' : ''}
+                    {inOtherGroup ? ` · in “${m.currentGroupName}” — unassign first` : ''}
+                  </span>
+                </span>
               </Checkbox>
             );
           })}
@@ -657,7 +751,7 @@ export default function MemberGroupsPage() {
         <Form.Item
           label="Group owner"
           style={{ marginTop: 16, marginBottom: 0 }}
-          extra="Receives bulk IPO payments. Pick a member in this group, or enter a third-party name (not on your member list)."
+          extra="Receives bulk IPO payments. Pick a member in this group, or enter a third-party name."
         >
           <Radio.Group
             value={ownerMode}
@@ -679,7 +773,7 @@ export default function MemberGroupsPage() {
               }).filter(Boolean)}
             />
           ) : (
-            <Space direction="vertical" style={{ width: '100%' }}>
+            <div className="sg-ext-fields">
               <Input
                 placeholder="Owner name"
                 value={ownerExternalName}
@@ -691,7 +785,7 @@ export default function MemberGroupsPage() {
                 onChange={(e) => setOwnerExternalPan(e.target.value.toUpperCase())}
                 maxLength={10}
               />
-            </Space>
+            </div>
           )}
         </Form.Item>
       </Modal>

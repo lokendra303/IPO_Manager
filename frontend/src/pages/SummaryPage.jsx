@@ -1,383 +1,348 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Table, Col, Row, Tag, Tooltip } from 'antd';
-import {
-  InfoCircleOutlined,
-  WalletOutlined,
-  BankOutlined,
-  RiseOutlined,
-  ClockCircleOutlined,
-  FundOutlined,
-} from '@ant-design/icons';
+import { Input } from 'antd';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
-import PageHeader from '../components/PageHeader';
-import StatCard from '../components/StatCard';
-import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
-import { tableDefaults } from '../utils/table';
 
-function renderPnl(value) {
-  return <span className={pnlClassName(value)}>{formatCurrency(value)}</span>;
+function moneyTone(value) {
+  const n = Number(value || 0);
+  if (n > 0) return 'up';
+  if (n < 0) return 'down';
+  return 'neutral';
+}
+
+function Kpi({ label, value, hint, tone = 'neutral', active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      <article className={`dash-kpi dash-kpi--${tone}`}>
+        <span className="dash-kpi-label">{label}</span>
+        <strong className="dash-kpi-value">{value}</strong>
+        {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+      </article>
+    </button>
+  );
+}
+
+function Fact({ label, value, tone }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <b className={tone || undefined}>{value}</b>
+    </div>
+  );
+}
+
+function IpoCard({ row, rich }) {
+  const pending = Number(row.pendingReturn) > 0;
+  const open = row.status === 'OPEN';
+  return (
+    <Link to={`/ipos/${row.ipoId}`} className="ipo-item sum-ipo">
+      <header className="ipo-item-head">
+        <div>
+          <div className="ipo-item-tags">
+            <span className={`ipo-pill ${open ? 'is-open' : 'is-closed'}`}>{open ? 'Open' : 'Closed'}</span>
+            <span className="ipo-pill is-muted">{row.ipoSegment === 'SME' ? 'SME' : 'Mainboard'}</span>
+          </div>
+          <h3>{row.name}</h3>
+        </div>
+        {rich && (
+          <div className={`ipo-gmp ${pnlClassName(row.totalProfitLoss) === 'amount-positive' ? 'ipo-gmp--up' : pnlClassName(row.totalProfitLoss) === 'amount-negative' ? 'ipo-gmp--down' : ''}`}>
+            <span>Gross P&L</span>
+            <strong>{formatCurrency(row.totalProfitLoss)}</strong>
+          </div>
+        )}
+      </header>
+      <div className="ipo-facts">
+        <Fact label="Distributed" value={formatCurrency(row.totalDistributed)} />
+        <Fact label="Returned" value={formatCurrency(row.totalReturned)} />
+        <Fact
+          label="Still with members"
+          value={formatCurrency(row.pendingReturn)}
+          tone={pending ? 'ipo-gmp--down' : undefined}
+        />
+        <Fact label="Members" value={row.applicationCount ?? 0} />
+        {rich && (
+          <>
+            <Fact label="Allotted" value={row.allottedCount ?? 0} />
+            <Fact label="Not allotted" value={row.notAllottedCount ?? 0} />
+            <Fact label="Did not apply" value={row.notAppliedCount ?? 0} />
+            <Fact label="Pending allot." value={row.pendingAllotmentCount ?? 0} />
+          </>
+        )}
+      </div>
+      {rich && (
+        <p className="ipo-item-foot">
+          Returns {row.returnedCount}/{row.applicationCount}
+          {Number(row.shareManagerTotal) ? ` · Manager ${formatCurrency(row.shareManagerTotal)}` : ''}
+          {Number(row.shareProviderTotal) ? ` · Provider ${formatCurrency(row.shareProviderTotal)}` : ''}
+          {Number(row.shareMemberTotal) ? ` · Member ${formatCurrency(row.shareMemberTotal)}` : ''}
+          {row.profitSharedCount ? ` · ${row.profitSharedCount} splits` : ''}
+        </p>
+      )}
+    </Link>
+  );
 }
 
 export default function SummaryPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('OPEN');
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
-    client.get('/summary').then((r) => setData(r.data)).finally(() => setLoading(false));
+    client
+      .get('/summary')
+      .then((r) => {
+        setData(r.data);
+        const openCount = (r.data?.ipoSummary?.rows ?? []).filter((row) => row.status === 'OPEN').length;
+        setTab(openCount > 0 ? 'OPEN' : 'IPOS');
+      })
+      .finally(() => setLoading(false));
   }, []);
+
+  const profit = data?.totals?.totalIpoProfit ?? 0;
+  const ipo = data?.ipoSummary;
+  const ipoTotals = ipo?.totals;
+  const openIpoRows = useMemo(
+    () => (ipo?.rows ?? []).filter((r) => r.status === 'OPEN'),
+    [ipo]
+  );
+  const openIpoTotals = useMemo(
+    () =>
+      openIpoRows.reduce(
+        (acc, r) => ({
+          totalDistributed: acc.totalDistributed + Number(r.totalDistributed || 0),
+          totalReturned: acc.totalReturned + Number(r.totalReturned || 0),
+          pendingReturn: acc.pendingReturn + Number(r.pendingReturn || 0),
+          applicationCount: acc.applicationCount + Number(r.applicationCount || 0),
+        }),
+        { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
+      ),
+    [openIpoRows]
+  );
+
+  const filteredIpos = useMemo(() => {
+    const source = tab === 'OPEN' ? openIpoRows : (ipo?.rows ?? []);
+    const q = search.trim().toLowerCase();
+    if (!q) return source;
+    return source.filter((r) => String(r.name || '').toLowerCase().includes(q));
+  }, [tab, openIpoRows, ipo, search]);
+
+  const filteredMembers = useMemo(() => {
+    const source = data?.rows ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return source;
+    return source.filter((r) =>
+      [r.displayName, r.pan, r.memberGroupName]
+        .some((v) => String(v || '').toLowerCase().includes(q))
+    );
+  }, [data, search]);
 
   if (loading) return <PageLoading />;
 
-  const profit = data.totals.totalIpoProfit;
-  const ipo = data.ipoSummary;
-  const ipoTotals = ipo?.totals;
-  const openIpoRows = (ipo?.rows ?? []).filter((r) => r.status === 'OPEN');
-  const openIpoTotals = openIpoRows.reduce(
-    (acc, r) => ({
-      totalDistributed: acc.totalDistributed + Number(r.totalDistributed || 0),
-      totalReturned: acc.totalReturned + Number(r.totalReturned || 0),
-      pendingReturn: acc.pendingReturn + Number(r.pendingReturn || 0),
-      applicationCount: acc.applicationCount + Number(r.applicationCount || 0),
-    }),
-    { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
-  );
+  if (!data) {
+    return (
+      <div className="sum">
+        <header className="dash-head">
+          <div>
+            <p className="dash-hello">Team</p>
+            <h1>Summary</h1>
+            <p className="dash-lead">Could not load summary.</p>
+          </div>
+        </header>
+      </div>
+    );
+  }
 
-  const ipoColumns = [
-    {
-      title: 'IPO',
-      dataIndex: 'name',
-      fixed: 'left',
-      width: 180,
-      ellipsis: true,
-      render: (v, r) => (
-        <Link to={`/ipos/${r.ipoId}`} style={{ fontWeight: 500 }}>
-          {v}
-        </Link>
-      ),
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 88,
-      render: (s) => <Tag color={s === 'OPEN' ? 'success' : 'default'}>{s}</Tag>,
-    },
-    {
-      title: 'Segment',
-      dataIndex: 'ipoSegment',
-      width: 100,
-      render: (v) => (v === 'SME' ? 'SME' : 'Mainboard'),
-    },
-    { title: 'Members', dataIndex: 'applicationCount', width: 88, align: 'center' },
-    { title: 'Distributed', dataIndex: 'totalDistributed', width: 120, render: formatCurrency },
-    { title: 'Returned', dataIndex: 'totalReturned', width: 120, render: formatCurrency },
-    {
-      title: (
-        <span>
-          Pending Return{' '}
-          <Tooltip title="Distributed amount not yet marked as received back to wallet">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
-          </Tooltip>
-        </span>
-      ),
-      dataIndex: 'pendingReturn',
-      width: 130,
-      render: (v) => (
-        <span className={Number(v) > 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
-      ),
-    },
-    {
-      title: 'Fund returns',
-      width: 110,
-      align: 'center',
-      render: (_, r) => `${r.returnedCount} / ${r.applicationCount}`,
-    },
-    { title: 'Alloted', dataIndex: 'allottedCount', width: 80, align: 'center' },
-    { title: 'Not Alloted', dataIndex: 'notAllottedCount', width: 96, align: 'center' },
-    { title: 'Did not apply', dataIndex: 'notAppliedCount', width: 108, align: 'center' },
-    { title: 'Pending allot.', dataIndex: 'pendingAllotmentCount', width: 108, align: 'center' },
-    {
-      title: 'Gross P&L',
-      dataIndex: 'totalProfitLoss',
-      width: 120,
-      render: renderPnl,
-    },
-    {
-      title: 'Provider share',
-      dataIndex: 'shareProviderTotal',
-      width: 120,
-      render: (v) => (v ? renderPnl(v) : '—'),
-    },
-    {
-      title: 'Manager share',
-      dataIndex: 'shareManagerTotal',
-      width: 120,
-      render: (v) => (v ? renderPnl(v) : '—'),
-    },
-    {
-      title: 'Member share',
-      dataIndex: 'shareMemberTotal',
-      width: 120,
-      render: (v) => (v ? renderPnl(v) : '—'),
-    },
-    {
-      title: 'P&L splits',
-      dataIndex: 'profitSharedCount',
-      width: 88,
-      align: 'center',
-      render: (v) => v || '—',
-    },
-  ];
-
-  const columns = [
-    { title: 'Member', dataIndex: 'displayName', fixed: 'left', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      render: (s) => <Tag color={s === 'ACTIVE' ? 'success' : 'error'}>{s}</Tag>,
-    },
-    { title: 'Total Given', dataIndex: 'totalGiven', render: formatCurrency },
-    {
-      title: (
-        <span>
-          Total Received{' '}
-          <Tooltip title="Money this member paid back to you (UPI/refund). Not used for sub-group bulk paid to owner.">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
-          </Tooltip>
-        </span>
-      ),
-      dataIndex: 'totalReceived',
-      render: formatCurrency,
-    },
-    { title: 'Bonus', dataIndex: 'bonus', render: (v) => (v ? formatCurrency(v) : '—') },
-    { title: 'IPOs Applied', dataIndex: 'iposApplied' },
-    { title: 'IPOs Alloted', dataIndex: 'iposAlloted' },
-    {
-      title: 'Total IPO Profit',
-      dataIndex: 'totalIpoProfit',
-      render: renderPnl,
-    },
-    {
-      title: (
-        <span>
-          Pending From Team{' '}
-          <Tooltip title="Principal still with the member and not yet marked received, including applications awaiting allotment. Subtracts funds already adjusted to another IPO.">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
-          </Tooltip>
-        </span>
-      ),
-      dataIndex: 'willReceiveFromTeam',
-      render: (v) => (
-        <span className={Number(v) !== 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
-      ),
-    },
-    { title: 'Sub-Group', dataIndex: 'memberGroupName', ellipsis: true },
-  ];
+  const pendingTeam = data.totals.willReceiveFromTeam;
 
   return (
-    <div>
-      <PageHeader
-        title="Team Summary"
-        subtitle="IPO-wise and member-wise funds, allotments, returns, and profit & loss"
-      />
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard title="Free Wallet" value={formatCurrency(data.availableFreeAmount)} icon={<WalletOutlined />} variant="primary" />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="Distributed (open IPOs)"
-            value={formatCurrency(openIpoTotals.totalDistributed)}
-            icon={<FundOutlined />}
-            variant="info"
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="Team IPO Profit"
-            value={formatCurrency(profit)}
-            icon={<RiseOutlined />}
-            variant={profit >= 0 ? 'success' : 'danger'}
-            valueClassName={profit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-          />
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard title="Pending From Team" value={formatCurrency(data.totals.willReceiveFromTeam)} icon={<ClockCircleOutlined />} variant="warning" />
-        </Col>
-      </Row>
-
-      {openIpoRows.length > 0 && (
-        <ContentCard
-          title={`Open IPOs — current distributed (${openIpoRows.length})`}
-          style={{ marginBottom: 24 }}
-        >
-          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={8} lg={8}>
-              <StatCard
-                title="Distributed now"
-                value={formatCurrency(openIpoTotals.totalDistributed)}
-                icon={<FundOutlined />}
-                variant="info"
-              />
-            </Col>
-            <Col xs={24} sm={8} lg={8}>
-              <StatCard
-                title="Returned"
-                value={formatCurrency(openIpoTotals.totalReturned)}
-                icon={<RiseOutlined />}
-                variant="success"
-              />
-            </Col>
-            <Col xs={24} sm={8} lg={8}>
-              <StatCard
-                title="Still with members"
-                value={formatCurrency(openIpoTotals.pendingReturn)}
-                icon={<ClockCircleOutlined />}
-                variant="warning"
-              />
-            </Col>
-          </Row>
-          <Table
-            rowKey="ipoId"
-            columns={[
-              {
-                title: 'IPO',
-                dataIndex: 'name',
-                render: (v, r) => (
-                  <Link to={`/ipos/${r.ipoId}`} style={{ fontWeight: 500 }}>
-                    {v}
-                  </Link>
-                ),
-              },
-              { title: 'Distributed', dataIndex: 'totalDistributed', render: formatCurrency },
-              { title: 'Returned', dataIndex: 'totalReturned', render: formatCurrency },
-              {
-                title: 'Still with members',
-                dataIndex: 'pendingReturn',
-                render: (v) => (
-                  <span className={Number(v) > 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
-                ),
-              },
-              { title: 'Members', dataIndex: 'applicationCount', align: 'center' },
-            ]}
-            dataSource={openIpoRows}
-            pagination={false}
-            {...tableDefaults}
-            summary={() => (
-              <Table.Summary fixed>
-                <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
-                  <Table.Summary.Cell index={0}>TOTAL</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalDistributed)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalReturned)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.pendingReturn)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{openIpoTotals.applicationCount}</Table.Summary.Cell>
-                </Table.Summary.Row>
-              </Table.Summary>
-            )}
-          />
-        </ContentCard>
-      )}
-
-      {ipo?.rows?.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-        <ContentCard title={`All IPOs — full summary (${ipoTotals.ipoCount})`}>
-          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={24} sm={8} lg={6}>
-              <StatCard
-                title="Total Distributed (all)"
-                value={formatCurrency(ipoTotals.totalDistributed)}
-                icon={<FundOutlined />}
-                variant="info"
-              />
-            </Col>
-            <Col xs={24} sm={8} lg={6}>
-              <StatCard
-                title="Gross IPO P&L"
-                value={formatCurrency(ipoTotals.totalProfitLoss)}
-                icon={<RiseOutlined />}
-                variant={ipoTotals.totalProfitLoss >= 0 ? 'success' : 'danger'}
-                valueClassName={ipoTotals.totalProfitLoss >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-              />
-            </Col>
-            <Col xs={24} sm={8} lg={6}>
-              <StatCard
-                title="Pending IPO Returns"
-                value={formatCurrency(ipoTotals.pendingReturn)}
-                icon={<ClockCircleOutlined />}
-                variant="warning"
-              />
-            </Col>
-            <Col xs={24} sm={8} lg={6}>
-              <StatCard
-                title="Manager Share (all IPOs)"
-                value={formatCurrency(ipoTotals.shareManagerTotal)}
-                icon={<BankOutlined />}
-                variant="primary"
-              />
-            </Col>
-          </Row>
-          <Table
-            rowKey="ipoId"
-            columns={ipoColumns}
-            dataSource={ipo.rows}
-            scroll={{ x: 1800 }}
-            pagination={false}
-            {...tableDefaults}
-            summary={() => (
-              <Table.Summary fixed>
-                <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
-                  <Table.Summary.Cell index={0} colSpan={3}>TOTAL</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.applicationCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(ipoTotals.totalDistributed)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(ipoTotals.totalReturned)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(ipoTotals.pendingReturn)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.returnedCount} / {ipoTotals.applicationCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.allottedCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.notAllottedCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.notAppliedCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.pendingAllotmentCount}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{renderPnl(ipoTotals.totalProfitLoss)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{renderPnl(ipoTotals.shareProviderTotal)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{renderPnl(ipoTotals.shareManagerTotal)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{renderPnl(ipoTotals.shareMemberTotal)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{ipoTotals.profitSharedCount || '—'}</Table.Summary.Cell>
-                </Table.Summary.Row>
-              </Table.Summary>
-            )}
-          />
-        </ContentCard>
+    <div className="sum">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">Team</p>
+          <h1>Summary</h1>
+          <p className="dash-lead">Funds, allotments, returns, and P&L by IPO and member.</p>
         </div>
-      )}
+        <div className="dash-head-actions">
+          <Link to="/wallet" className="dash-btn">Wallet</Link>
+          <Link to="/my-ipos" className="dash-btn">My IPOs</Link>
+          <Link to="/profit-sharing" className="dash-btn dash-btn--primary">P&L share</Link>
+        </div>
+      </header>
 
-      <ContentCard title="Member-wise Summary">
-        <Table
-          rowKey="memberId"
-          columns={columns}
-          dataSource={data.rows}
-          scroll={{ x: 1400 }}
-          rowClassName={(r) => (r.mismatch ? 'summary-mismatch' : '')}
-          pagination={false}
-          {...tableDefaults}
-          summary={() => (
-            <Table.Summary fixed>
-              <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
-                <Table.Summary.Cell index={0} colSpan={3}>TOTAL</Table.Summary.Cell>
-                <Table.Summary.Cell>{formatCurrency(data.totals.totalGiven)}</Table.Summary.Cell>
-                <Table.Summary.Cell>{formatCurrency(data.totals.totalReceived)}</Table.Summary.Cell>
-                <Table.Summary.Cell />
-                <Table.Summary.Cell>{data.totals.iposApplied}</Table.Summary.Cell>
-                <Table.Summary.Cell>{data.totals.iposAlloted}</Table.Summary.Cell>
-                <Table.Summary.Cell>{renderPnl(data.totals.totalIpoProfit)}</Table.Summary.Cell>
-                <Table.Summary.Cell>{formatCurrency(data.totals.willReceiveFromTeam)}</Table.Summary.Cell>
-                <Table.Summary.Cell />
-              </Table.Summary.Row>
-            </Table.Summary>
-          )}
+      <section className="dash-money">
+        <Link to="/wallet" className="dash-money-cell dash-money-cell--main">
+          <span>Free wallet</span>
+          <strong>{formatCurrency(data.availableFreeAmount)}</strong>
+          <em>Ready to distribute</em>
+        </Link>
+        <Link to="/profit-sharing" className={`dash-money-cell dash-money-cell--${moneyTone(profit)}`}>
+          <span>Team IPO profit</span>
+          <strong>{formatCurrency(profit)}</strong>
+          <em>Gross P&L across members</em>
+        </Link>
+        <button
+          type="button"
+          className={`dash-money-cell ${Number(pendingTeam) > 0 ? 'dash-money-cell--warn' : ''}`}
+          onClick={() => { setTab('MEMBERS'); setSearch(''); }}
+        >
+          <span>Pending from team</span>
+          <strong>{formatCurrency(pendingTeam)}</strong>
+          <em>Still with members</em>
+        </button>
+      </section>
+
+      <section className="dash-kpi-grid mem-kpis">
+        <Kpi
+          label="Open IPOs"
+          value={openIpoRows.length}
+          hint={formatCurrency(openIpoTotals.totalDistributed)}
+          tone="warn"
+          active={tab === 'OPEN'}
+          onClick={() => setTab('OPEN')}
         />
-      </ContentCard>
+        <Kpi
+          label="All IPOs"
+          value={ipoTotals?.ipoCount ?? ipo?.rows?.length ?? 0}
+          hint="Full history"
+          tone="teal"
+          active={tab === 'IPOS'}
+          onClick={() => setTab('IPOS')}
+        />
+        <Kpi
+          label="Members"
+          value={data.rows?.length ?? 0}
+          hint="Given and returned"
+          active={tab === 'MEMBERS'}
+          onClick={() => setTab('MEMBERS')}
+        />
+        <Kpi
+          label="Still out"
+          value={formatCurrency(openIpoTotals.pendingReturn)}
+          hint="Open IPO funds"
+          tone={openIpoTotals.pendingReturn > 0 ? 'down' : 'neutral'}
+          onClick={() => setTab('OPEN')}
+          active={false}
+        />
+      </section>
+
+      <section className="dash-card mem-card">
+        <div className="mem-toolbar">
+          <Input.Search
+            className="mem-search"
+            placeholder={tab === 'MEMBERS' ? 'Search member, PAN, group…' : 'Search IPO…'}
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <p className="mem-count">
+            Showing <strong>{tab === 'MEMBERS' ? filteredMembers.length : filteredIpos.length}</strong>
+          </p>
+        </div>
+
+        {tab !== 'MEMBERS' && (
+          <div className="dash-inline-stats sum-totals">
+            {tab === 'OPEN' ? (
+              <>
+                <Fact label="Distributed" value={formatCurrency(openIpoTotals.totalDistributed)} />
+                <Fact label="Returned" value={formatCurrency(openIpoTotals.totalReturned)} />
+                <Fact
+                  label="Still with members"
+                  value={formatCurrency(openIpoTotals.pendingReturn)}
+                  tone={openIpoTotals.pendingReturn > 0 ? 'ipo-gmp--down' : undefined}
+                />
+                <Fact label="Applications" value={openIpoTotals.applicationCount} />
+              </>
+            ) : (
+              <>
+                <Fact label="Distributed" value={formatCurrency(ipoTotals?.totalDistributed)} />
+                <Fact
+                  label="Gross P&L"
+                  value={formatCurrency(ipoTotals?.totalProfitLoss)}
+                  tone={pnlClassName(ipoTotals?.totalProfitLoss) === 'amount-positive' ? 'ipo-gmp--up' : pnlClassName(ipoTotals?.totalProfitLoss) === 'amount-negative' ? 'ipo-gmp--down' : undefined}
+                />
+                <Fact
+                  label="Pending returns"
+                  value={formatCurrency(ipoTotals?.pendingReturn)}
+                  tone={Number(ipoTotals?.pendingReturn) > 0 ? 'ipo-gmp--down' : undefined}
+                />
+                <Fact label="Manager share" value={formatCurrency(ipoTotals?.shareManagerTotal)} />
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'MEMBERS' && (
+          <div className="dash-inline-stats sum-totals">
+            <Fact label="Given" value={formatCurrency(data.totals.totalGiven)} />
+            <Fact label="Received" value={formatCurrency(data.totals.totalReceived)} />
+            <Fact
+              label="IPO profit"
+              value={formatCurrency(data.totals.totalIpoProfit)}
+              tone={pnlClassName(data.totals.totalIpoProfit) === 'amount-positive' ? 'ipo-gmp--up' : pnlClassName(data.totals.totalIpoProfit) === 'amount-negative' ? 'ipo-gmp--down' : undefined}
+            />
+            <Fact
+              label="Pending from team"
+              value={formatCurrency(data.totals.willReceiveFromTeam)}
+              tone={Number(data.totals.willReceiveFromTeam) > 0 ? 'ipo-gmp--down' : undefined}
+            />
+          </div>
+        )}
+
+        {tab !== 'MEMBERS' && (filteredIpos.length === 0 ? (
+          <p className="mem-empty">
+            {tab === 'OPEN' ? 'No open IPOs with distributions.' : 'No IPO summary rows yet.'}
+          </p>
+        ) : (
+          <div className="ipo-grid">
+            {filteredIpos.map((row) => (
+              <IpoCard key={row.ipoId} row={row} rich={tab === 'IPOS'} />
+            ))}
+          </div>
+        ))}
+
+        {tab === 'MEMBERS' && (filteredMembers.length === 0 ? (
+          <p className="mem-empty">No members match.</p>
+        ) : (
+          <ul className="sum-members">
+            {filteredMembers.map((row) => (
+              <li key={row.memberId} className={row.mismatch ? 'sum-member is-mismatch' : 'sum-member'}>
+                <div className="sum-member-top">
+                  <div>
+                    <strong>{row.displayName}</strong>
+                    <p className="mem-person-meta">
+                      <span>{formatPan(row.pan) || 'No PAN'}</span>
+                      <span>{row.status === 'ACTIVE' ? 'Active' : 'Inactive'}</span>
+                      {row.memberGroupName ? <span>{row.memberGroupName}</span> : null}
+                    </p>
+                  </div>
+                  <b className={pnlClassName(row.totalIpoProfit) === 'amount-positive' ? 'ipo-gmp--up' : pnlClassName(row.totalIpoProfit) === 'amount-negative' ? 'ipo-gmp--down' : ''}>
+                    {formatCurrency(row.totalIpoProfit)}
+                  </b>
+                </div>
+                <div className="ipo-facts">
+                  <Fact label="Given" value={formatCurrency(row.totalGiven)} />
+                  <Fact label="Received" value={formatCurrency(row.totalReceived)} />
+                  <Fact
+                    label="Pending"
+                    value={formatCurrency(row.willReceiveFromTeam)}
+                    tone={Number(row.willReceiveFromTeam) !== 0 ? 'ipo-gmp--down' : undefined}
+                  />
+                  <Fact label="Applied / allotted" value={`${row.iposApplied} / ${row.iposAlloted}`} />
+                  {Number(row.bonus) > 0 && <Fact label="Bonus" value={formatCurrency(row.bonus)} />}
+                </div>
+                {row.mismatch && <p className="sum-mismatch-note">Figures do not reconcile — check this member.</p>}
+              </li>
+            ))}
+          </ul>
+        ))}
+      </section>
     </div>
   );
 }

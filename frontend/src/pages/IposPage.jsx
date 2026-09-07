@@ -1,12 +1,22 @@
-import { useEffect, useState } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Tag, message, Popconfirm, Typography, Select, Checkbox, Row, Col, Tooltip } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Modal, Form, Input, InputNumber, message, Popconfirm, Typography, Select, Checkbox, Row, Col, Tooltip } from 'antd';
 import {
   IPO_SEGMENT_OPTIONS,
   ipoAllowsHni,
   ipoHasHniLot,
   getLotAmountForCategory,
 } from '../utils/ipoCategories';
-import { PlusOutlined, ArrowRightOutlined, StockOutlined, LockOutlined, UnlockOutlined, StopOutlined, RollbackOutlined, DeleteOutlined, SwapOutlined, SearchOutlined, GlobalOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined,
+  StockOutlined,
+  LockOutlined,
+  UnlockOutlined,
+  StopOutlined,
+  RollbackOutlined,
+  DeleteOutlined,
+  SwapOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { Link, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -14,14 +24,171 @@ import client from '../api/client';
 import { formatCurrency } from '../utils/format';
 import { formatGmp } from '../utils/liveIpo';
 import { getErrorMessage } from '../utils/errors';
-import PageHeader from '../components/PageHeader';
-import ContentCard from '../components/ContentCard';
 import ModalDatePicker from '../components/ModalDatePicker';
-import { tableDefaults } from '../utils/table';
 
 function toDateParam(v) {
   if (!v) return null;
   return dayjs.isDayjs(v) ? v.format('YYYY-MM-DD') : dayjs(v).format('YYYY-MM-DD');
+}
+
+function matchesIpoSearch(ipo, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [ipo.name, ipo.company_name, ipo.symbol].some((v) => String(v || '').toLowerCase().includes(q));
+}
+
+function gmpTone(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return '';
+  return n > 0 ? 'ipo-gmp--up' : 'ipo-gmp--down';
+}
+
+function Kpi({ label, value, hint, tone = 'neutral', active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      <article className={`dash-kpi dash-kpi--${tone}`}>
+        <span className="dash-kpi-label">{label}</span>
+        <strong className="dash-kpi-value">{value}</strong>
+        {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+      </article>
+    </button>
+  );
+}
+
+function IpoCard({ ipo, invalid, onOpen }) {
+  const rii = formatCurrency(getLotAmountForCategory(ipo, 'RII'));
+  const showHni = ipoAllowsHni(ipo);
+  const apps = Number(ipo.application_count) || 0;
+  const allotted = Number(ipo.allotted_count) || 0;
+  const pending = Number(ipo.pending_return_count) || 0;
+  const open = ipo.status === 'OPEN';
+
+  return (
+    <article className={`ipo-item${invalid ? ' is-invalid' : ''}${open ? '' : ' is-closed'}`}>
+      <header className="ipo-item-head">
+        <div>
+          <div className="ipo-item-tags">
+            <span className={`ipo-pill ${open ? 'is-open' : 'is-closed'}`}>{open ? 'Open' : 'Closed'}</span>
+            <span className="ipo-pill is-muted">{ipo.ipo_segment === 'SME' ? 'SME' : 'Mainboard'}</span>
+            {invalid && <span className="ipo-pill is-warn">Invalid</span>}
+          </div>
+          <h3>{ipo.name}</h3>
+          {(ipo.company_name || ipo.symbol) && (
+            <p className="ipo-item-sub">{ipo.company_name || ipo.symbol}</p>
+          )}
+        </div>
+        <div className={`ipo-gmp ${gmpTone(ipo.gmp)}`}>
+          <span>GMP</span>
+          <strong>{formatGmp(ipo.gmp)}</strong>
+          {ipo.gmpPercentage != null && <em>{ipo.gmpPercentage}%</em>}
+        </div>
+      </header>
+
+      <div className="ipo-facts">
+        <div>
+          <span>RII lot</span>
+          <b>{rii}</b>
+        </div>
+        {showHni && (
+          <div>
+            <span>HNI lot</span>
+            <b>{ipoHasHniLot(ipo) ? formatCurrency(getLotAmountForCategory(ipo, 'HNI')) : 'Not set'}</b>
+          </div>
+        )}
+        <div>
+          <span>Applications</span>
+          <b>{apps}</b>
+        </div>
+        <div>
+          <span>Allotted</span>
+          <b className={allotted > 0 ? 'ipo-gmp--up' : ''}>{allotted}</b>
+        </div>
+        <div>
+          <span>Pending return</span>
+          <b className={pending > 0 ? 'ipo-gmp--down' : ''}>{pending}</b>
+        </div>
+      </div>
+
+      <div className="ipo-item-actions" onClick={(e) => e.stopPropagation()}>
+        <Link to={`/ipos/${ipo.id}`} className="dash-btn dash-btn--primary sg-mini">View</Link>
+        {invalid ? (
+          <>
+            <Popconfirm title="Restore to main IPO list?" onConfirm={() => onOpen('restore', ipo)}>
+              <button type="button" className="dash-btn sg-mini">
+                <RollbackOutlined /> Restore
+              </button>
+            </Popconfirm>
+            <Popconfirm
+              title="Permanently delete this IPO?"
+              description="Only empty invalid IPOs can be deleted. This cannot be undone."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => onOpen('delete', ipo)}
+            >
+              <button type="button" className="dash-btn sg-mini ipo-btn-danger">
+                <DeleteOutlined /> Delete
+              </button>
+            </Popconfirm>
+          </>
+        ) : (
+          <>
+            {ipo.allotmentCheckReady === false ? (
+              <Tooltip title={ipo.allotmentCheckBlockedReason || 'Allotment is not open on NSE/BSE yet'}>
+                <span>
+                  <button type="button" className="dash-btn sg-mini" disabled>
+                    <SearchOutlined /> Allotment
+                  </button>
+                </span>
+              </Tooltip>
+            ) : (
+              <Link to={`/ipos/${ipo.id}/allotment`} className="dash-btn sg-mini">
+                <SearchOutlined /> Allotment
+              </Link>
+            )}
+            {open ? (
+              <Popconfirm
+                title="Close this IPO?"
+                description="Status only — does not return funds to providers or members."
+                onConfirm={() => onOpen('close', ipo)}
+              >
+                <button type="button" className="dash-btn sg-mini ipo-btn-danger">
+                  <LockOutlined /> Close
+                </button>
+              </Popconfirm>
+            ) : (
+              <Popconfirm title="Reopen this IPO?" onConfirm={() => onOpen('reopen', ipo)}>
+                <button type="button" className="dash-btn sg-mini">
+                  <UnlockOutlined /> Reopen
+                </button>
+              </Popconfirm>
+            )}
+            <Popconfirm
+              title="Mark as invalid IPO?"
+              description="Hides from the main list. Records are kept — you can restore later."
+              onConfirm={() => onOpen('invalidate', ipo)}
+            >
+              <button type="button" className="mem-icon-btn" title="Invalid">
+                <StopOutlined />
+              </button>
+            </Popconfirm>
+            <Popconfirm
+              title="Remove from My IPOs?"
+              description="Live catalog data is kept. If applications exist, the IPO is hidden rather than deleted."
+              onConfirm={() => onOpen('remove', ipo)}
+            >
+              <button type="button" className="mem-icon-btn mem-icon-btn--danger" title="Remove">
+                <DeleteOutlined />
+              </button>
+            </Popconfirm>
+          </>
+        )}
+      </div>
+    </article>
+  );
 }
 
 export default function IposPage() {
@@ -33,6 +200,7 @@ export default function IposPage() {
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [tab, setTab] = useState('ALL');
 
   const load = () => {
     setLoading(true);
@@ -41,9 +209,10 @@ export default function IposPage() {
       client.get('/ipos', { params: { invalidOnly: 1 } }),
     ])
       .then(([active, invalid]) => {
-        setIpos(active.data);
-        setInvalidIpos(invalid.data);
+        setIpos(Array.isArray(active.data) ? active.data : []);
+        setInvalidIpos(Array.isArray(invalid.data) ? invalid.data : []);
       })
+      .catch((err) => message.error(getErrorMessage(err, 'Could not load IPOs')))
       .finally(() => setLoading(false));
   };
 
@@ -52,6 +221,17 @@ export default function IposPage() {
   useEffect(() => {
     fetchRegistrarOptions(client).then(setRegistrarOptions);
   }, []);
+
+  const openCount = ipos.filter((i) => i.status === 'OPEN').length;
+  const closedCount = ipos.length - openCount;
+
+  const visible = useMemo(() => {
+    if (tab === 'INVALID') return invalidIpos.filter((i) => matchesIpoSearch(i, search));
+    let list = ipos;
+    if (tab === 'OPEN') list = list.filter((i) => i.status === 'OPEN');
+    if (tab === 'CLOSED') list = list.filter((i) => i.status !== 'OPEN');
+    return list.filter((i) => matchesIpoSearch(i, search));
+  }, [ipos, invalidIpos, tab, search]);
 
   const onCreate = async (values) => {
     try {
@@ -78,350 +258,153 @@ export default function IposPage() {
     }
   };
 
-  const actionStackStyle = { display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch', minWidth: 108 };
-
-  const renderActiveActions = (_, r) => (
-    <div style={actionStackStyle} onClick={(e) => e.stopPropagation()}>
-      <Link to={`/ipos/${r.id}`}>
-        <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />} block>
-          View
-        </Button>
-      </Link>
-      {r.status === 'OPEN' ? (
-        <Popconfirm
-          title="Close this IPO?"
-          description="Status only — does not return funds to providers or members."
-          onConfirm={async () => {
-            try {
-              await client.post(`/ipos/${r.id}/close`);
-              message.success('IPO closed');
-              load();
-            } catch (err) {
-              message.error(getErrorMessage(err));
-            }
-          }}
-        >
-          <Button size="small" icon={<LockOutlined />} danger block>
-            Close
-          </Button>
-        </Popconfirm>
-      ) : (
-        <Popconfirm
-          title="Reopen this IPO?"
-          onConfirm={async () => {
-            try {
-              await client.post(`/ipos/${r.id}/reopen`);
-              message.success('IPO reopened');
-              load();
-            } catch (err) {
-              message.error(getErrorMessage(err));
-            }
-          }}
-        >
-          <Button size="small" icon={<UnlockOutlined />} block>
-            Reopen
-          </Button>
-        </Popconfirm>
-      )}
-      <Popconfirm
-        title="Mark as invalid IPO?"
-        description="Hides from the main list. Records are kept — you can restore later."
-        onConfirm={async () => {
-          try {
-            await client.post(`/ipos/${r.id}/invalidate`);
-            message.success('IPO marked invalid');
-            load();
-          } catch (err) {
-            message.error(getErrorMessage(err));
+  const runAction = async (action, ipo) => {
+    try {
+      if (action === 'close') {
+        await client.post(`/ipos/${ipo.id}/close`);
+        message.success('IPO closed');
+      } else if (action === 'reopen') {
+        await client.post(`/ipos/${ipo.id}/reopen`);
+        message.success('IPO reopened');
+      } else if (action === 'invalidate') {
+        await client.post(`/ipos/${ipo.id}/invalidate`);
+        message.success('IPO marked invalid');
+      } else if (action === 'restore') {
+        await client.post(`/ipos/${ipo.id}/restore`);
+        message.success('IPO restored');
+      } else if (action === 'delete') {
+        await client.delete(`/ipos/${ipo.id}`);
+        message.success('IPO deleted');
+      } else if (action === 'remove') {
+        try {
+          await client.post(`/ipos/${ipo.id}/remove-from-my-ipos`);
+          message.success('Removed from My IPOs');
+        } catch (err) {
+          if (err.response?.status === 409) {
+            Modal.confirm({
+              title: 'This IPO has team applications',
+              content: getErrorMessage(err),
+              okText: 'Hide from My IPOs',
+              onOk: async () => {
+                await client.post(`/ipos/${ipo.id}/remove-from-my-ipos`, { confirm: true });
+                message.success('Hidden from My IPOs');
+                load();
+              },
+            });
+            return;
           }
-        }}
-      >
-        <Button size="small" icon={<StopOutlined />} block>
-          Invalid
-        </Button>
-      </Popconfirm>
-      {r.allotmentCheckReady === false ? (
-        <Tooltip title={r.allotmentCheckBlockedReason || 'Allotment is not open on NSE/BSE yet'}>
-          <span>
-            <Button size="small" icon={<SearchOutlined />} block disabled>
-              Allotment
-            </Button>
-          </span>
-        </Tooltip>
-      ) : (
-        <Link to={`/ipos/${r.id}/allotment`}>
-          <Button size="small" icon={<SearchOutlined />} block>
-            Allotment
-          </Button>
-        </Link>
-      )}
-      <Popconfirm
-        title="Remove from My IPOs?"
-        description="Live catalog data is kept. If applications exist, the IPO is hidden rather than deleted."
-        onConfirm={async () => {
-          try {
-            await client.post(`/ipos/${r.id}/remove-from-my-ipos`);
-            message.success('Removed from My IPOs');
-            load();
-          } catch (err) {
-            if (err.response?.status === 409) {
-              Modal.confirm({
-                title: 'This IPO has team applications',
-                content: getErrorMessage(err),
-                okText: 'Hide from My IPOs',
-                onOk: async () => {
-                  await client.post(`/ipos/${r.id}/remove-from-my-ipos`, { confirm: true });
-                  message.success('Hidden from My IPOs');
-                  load();
-                },
-              });
-              return;
-            }
-            message.error(getErrorMessage(err));
-          }
-        }}
-      >
-        <Button size="small" danger block>
-          Remove
-        </Button>
-      </Popconfirm>
-    </div>
-  );
+          throw err;
+        }
+      }
+      load();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
+  };
 
-  const columns = [
-    {
-      title: 'IPO name',
-      dataIndex: 'name',
-      ellipsis: true,
-      render: (v) => <span style={{ fontWeight: 600 }}>{v}</span>,
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 90,
-      render: (v) => <Tag color={v === 'OPEN' ? 'success' : 'default'}>{v}</Tag>,
-    },
-    {
-      title: 'GMP',
-      dataIndex: 'gmp',
-      width: 88,
-      render: (v) => formatGmp(v),
-    },
-    {
-      title: 'Segment',
-      dataIndex: 'ipo_segment',
-      width: 110,
-      align: 'center',
-      render: (v) => (
-        <Tag style={{ marginInlineEnd: 0 }}>{v === 'SME' ? 'SME' : 'Mainboard'}</Tag>
-      ),
-    },
-    {
-      title: 'Lot amounts',
-      key: 'lots',
-      width: 160,
-      render: (_, r) => {
-        const rii = formatCurrency(getLotAmountForCategory(r, 'RII'));
-        const showHni = ipoAllowsHni(r);
-        return (
-          <div style={{ fontSize: 13, lineHeight: 1.45, fontVariantNumeric: 'tabular-nums' }}>
-            <div>
-              <span style={{ color: '#64748b', marginRight: 6 }}>RII</span>
-              {rii}
-            </div>
-            {showHni && (
-              <div>
-                <span style={{ color: '#64748b', marginRight: 6 }}>HNI</span>
-                {ipoHasHniLot(r)
-                  ? formatCurrency(getLotAmountForCategory(r, 'HNI'))
-                  : 'Not set'}
+  const openCreate = () => {
+    form.resetFields();
+    form.setFieldsValue({ ipoSegment: 'MAINBOARD', enableHni: false });
+    setModalOpen(true);
+  };
+
+  return (
+    <div className="myipo">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">Portfolio</p>
+          <h1>My IPOs</h1>
+          <p className="dash-lead">
+            Issues your team is managing. Add from Live IPOs, or create one by hand.
+          </p>
+        </div>
+        <div className="dash-head-actions">
+          <Link to="/live-ipos" className="dash-btn">Live IPOs</Link>
+          <Link to="/adjust-combine" className="dash-btn">
+            <SwapOutlined /> Reuse leftover
+          </Link>
+          <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+            <PlusOutlined /> New IPO
+          </button>
+        </div>
+      </header>
+
+      <section className="dash-kpi-grid mem-kpis">
+        <Kpi
+          label="All"
+          value={ipos.length}
+          hint="On My IPOs"
+          tone="teal"
+          active={tab === 'ALL'}
+          onClick={() => setTab('ALL')}
+        />
+        <Kpi
+          label="Open"
+          value={openCount}
+          hint="Can take applications"
+          tone="up"
+          active={tab === 'OPEN'}
+          onClick={() => setTab('OPEN')}
+        />
+        <Kpi
+          label="Closed"
+          value={closedCount}
+          hint="Finished issues"
+          active={tab === 'CLOSED'}
+          onClick={() => setTab('CLOSED')}
+        />
+        <Kpi
+          label="Invalid"
+          value={invalidIpos.length}
+          hint="Hidden from the list"
+          tone={invalidIpos.length > 0 ? 'warn' : 'neutral'}
+          active={tab === 'INVALID'}
+          onClick={() => setTab('INVALID')}
+        />
+      </section>
+
+      <section className="dash-card mem-card">
+        <div className="mem-toolbar">
+          <Input.Search
+            className="mem-search"
+            placeholder="Search name, company, symbol…"
+            allowClear
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <p className="mem-count">
+            Showing <strong>{visible.length}</strong>
+          </p>
+        </div>
+
+        {loading && ipos.length === 0 && invalidIpos.length === 0 ? (
+          <div className="ipo-grid" aria-hidden>
+            {[1, 2, 3, 4].map((n) => <div key={n} className="mem-skel" />)}
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="mem-empty">
+            <p>
+              {search.trim() || tab !== 'ALL'
+                ? 'No IPOs match these filters.'
+                : 'No My IPOs yet — add one from Live IPOs or create it here.'}
+            </p>
+            {tab === 'ALL' && !ipos.length && (
+              <div className="dash-head-actions" style={{ justifyContent: 'center' }}>
+                <Link to="/live-ipos" className="dash-btn">Browse live IPOs</Link>
+                <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+                  <PlusOutlined /> New IPO
+                </button>
               </div>
             )}
           </div>
-        );
-      },
-    },
-    {
-      title: 'Applications',
-      dataIndex: 'application_count',
-      width: 110,
-      align: 'center',
-      render: (v) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v ?? 0}</span>,
-    },
-    {
-      title: 'Allotted',
-      dataIndex: 'allotted_count',
-      width: 96,
-      align: 'center',
-      render: (v) => {
-        const n = Number(v) || 0;
-        if (n <= 0) {
-          return <span style={{ color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>0</span>;
-        }
-        return (
-          <Tag color="success" style={{ marginInlineEnd: 0, minWidth: 28, textAlign: 'center' }}>
-            {n}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: 'Pending return',
-      dataIndex: 'pending_return_count',
-      width: 120,
-      align: 'center',
-      render: (v) => {
-        const n = Number(v) || 0;
-        if (n <= 0) {
-          return <span style={{ color: '#94a3b8', fontVariantNumeric: 'tabular-nums' }}>0</span>;
-        }
-        return (
-          <Tag color="warning" style={{ marginInlineEnd: 0, minWidth: 28, textAlign: 'center' }}>
-            {n}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: 'Actions',
-      width: 124,
-      align: 'center',
-      fixed: 'right',
-      render: renderActiveActions,
-    },
-  ];
-
-  const renderInvalidActions = (_, r) => (
-    <div style={actionStackStyle} onClick={(e) => e.stopPropagation()}>
-      <Link to={`/ipos/${r.id}`}>
-        <Button type="primary" ghost size="small" icon={<ArrowRightOutlined />} block>
-          View
-        </Button>
-      </Link>
-      <Popconfirm
-        title="Restore to main IPO list?"
-        onConfirm={async () => {
-          try {
-            await client.post(`/ipos/${r.id}/restore`);
-            message.success('IPO restored');
-            load();
-          } catch (err) {
-            message.error(getErrorMessage(err));
-          }
-        }}
-      >
-        <Button size="small" icon={<RollbackOutlined />} block>
-          Restore
-        </Button>
-      </Popconfirm>
-      <Popconfirm
-        title="Permanently delete this IPO?"
-        description="Only empty invalid IPOs can be deleted. This cannot be undone."
-        okText="Delete"
-        okButtonProps={{ danger: true }}
-        onConfirm={async () => {
-          try {
-            await client.delete(`/ipos/${r.id}`);
-            message.success('IPO deleted');
-            load();
-          } catch (err) {
-            message.error(getErrorMessage(err));
-          }
-        }}
-      >
-        <Button size="small" danger icon={<DeleteOutlined />} block>
-          Delete
-        </Button>
-      </Popconfirm>
-    </div>
-  );
-
-  const invalidColumns = [
-    ...columns.slice(0, -1),
-    {
-      title: 'Actions',
-      width: 124,
-      align: 'center',
-      fixed: 'right',
-      render: renderInvalidActions,
-    },
-  ];
-
-  return (
-    <div>
-      <PageHeader
-        title="My IPOs"
-        subtitle="IPOs your team is managing. Live market IPOs stay on Live IPOs until you add them here."
-        extra={
-          <>
-          <Button icon={<GlobalOutlined />} onClick={() => navigate('/live-ipos')} style={{ marginRight: 8 }}>
-            Live IPOs
-          </Button>
-          <Button
-            icon={<SwapOutlined />}
-            onClick={() => navigate('/adjust-combine')}
-            style={{ marginRight: 8 }}
-          >
-            Reuse leftover
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              form.resetFields();
-              form.setFieldsValue({
-                ipoSegment: 'MAINBOARD',
-                enableHni: false,
-              });
-              setModalOpen(true);
-            }}
-          >
-            New IPO
-          </Button>
-          </>
-        }
-      />
-      <ContentCard
-        title={`My IPO list (${ipos.filter((i) => !search || String(i.name).toLowerCase().includes(search.toLowerCase()) || String(i.company_name || '').toLowerCase().includes(search.toLowerCase()) || String(i.symbol || '').toLowerCase().includes(search.toLowerCase())).length})`}
-        extra={
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="Search My IPOs"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 220 }}
-          />
-        }
-      >
-        <Table
-          rowKey="id"
-          loading={loading}
-          columns={columns}
-          dataSource={ipos.filter((i) => {
-            if (!search.trim()) return true;
-            const q = search.toLowerCase();
-            return [i.name, i.company_name, i.symbol].some((v) => String(v || '').toLowerCase().includes(q));
-          })}
-          locale={{ emptyText: 'No My IPOs yet — add one from Live IPOs or create manually' }}
-          {...tableDefaults}
-        />
-      </ContentCard>
-
-      {invalidIpos.length > 0 && (
-        <ContentCard title={`Invalid IPOs (${invalidIpos.length})`} style={{ marginTop: 16 }}>
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-            Duplicate or mistaken IPOs hidden from the main list. Restore to bring back, or delete if there are no applications.
-          </Typography.Paragraph>
-          <Table
-            rowKey="id"
-            loading={loading}
-            columns={invalidColumns}
-            dataSource={invalidIpos}
-            {...tableDefaults}
-          />
-        </ContentCard>
-      )}
+        ) : (
+          <div className="ipo-grid">
+            {visible.map((ipo) => (
+              <IpoCard key={ipo.id} ipo={ipo} invalid={tab === 'INVALID'} onOpen={runAction} />
+            ))}
+          </div>
+        )}
+      </section>
 
       <Modal
         title="Create IPO"
@@ -461,12 +444,12 @@ export default function IposPage() {
             <Select allowClear placeholder="KFintech, Link Intime, etc." options={registrarOptions} />
           </Form.Item>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="openDate" label="Open date">
                 <ModalDatePicker />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="lastApplyDate" label="Close date (last apply)">
                 <ModalDatePicker />
               </Form.Item>

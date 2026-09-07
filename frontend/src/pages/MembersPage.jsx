@@ -1,17 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
-  Table,
   Button,
-  Tag,
   Modal,
   Form,
   Input,
   Select,
-  Space,
   message,
   Switch,
-  Segmented,
   Typography,
   Popconfirm,
   Alert,
@@ -20,15 +16,31 @@ import {
   Col,
   Tooltip,
 } from 'antd';
-import { PlusOutlined, EditOutlined, EyeOutlined, LinkOutlined } from '@ant-design/icons';
-import { Link } from 'react-router-dom';
+import {
+  PlusOutlined,
+  EditOutlined,
+  EyeOutlined,
+  PercentageOutlined,
+} from '@ant-design/icons';
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
 import MemberDetailDrawer from '../components/MemberDetailDrawer';
-import PageHeader from '../components/PageHeader';
-import ContentCard from '../components/ContentCard';
-import { tableDefaults } from '../utils/table';
 import { formatPan } from '../utils/format';
+
+const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
+
+function initials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((p) => p[0]).join('').toUpperCase() || '?';
+}
+
+function avatarTone(id) {
+  return AVATAR_TONES[Math.abs(Number(id) || 0) % AVATAR_TONES.length];
+}
 
 function memberMatchesSearch(member, query) {
   const needle = query.trim().toLowerCase();
@@ -50,6 +62,22 @@ function memberMatchesSearch(member, query) {
   return haystack.includes(needle);
 }
 
+function Kpi({ label, value, hint, tone = 'neutral', active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      <article className={`dash-kpi dash-kpi--${tone}`}>
+        <span className="dash-kpi-label">{label}</span>
+        <strong className="dash-kpi-value">{value}</strong>
+        {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+      </article>
+    </button>
+  );
+}
+
 export default function MembersPage() {
   const navigate = useNavigate();
   const [members, setMembers] = useState([]);
@@ -57,6 +85,8 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [needsShareOnly, setNeedsShareOnly] = useState(false);
+  const [groupFilter, setGroupFilter] = useState(null);
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -98,18 +128,22 @@ export default function MembersPage() {
     return [...map.values()];
   }, [members]);
 
-  const statusFilteredMembers = useMemo(() => {
-    if (statusFilter === 'ALL') return uniqueMembers;
-    return uniqueMembers.filter((m) => m.status === statusFilter);
-  }, [uniqueMembers, statusFilter]);
-
-  const filteredMembers = useMemo(() => {
-    if (!search.trim()) return statusFilteredMembers;
-    return statusFilteredMembers.filter((m) => memberMatchesSearch(m, search));
-  }, [statusFilteredMembers, search]);
-
   const activeCount = uniqueMembers.filter((m) => m.status === 'ACTIVE').length;
   const inactiveCount = uniqueMembers.filter((m) => m.status === 'INACTIVE').length;
+  const needsShareCount = uniqueMembers.filter(
+    (m) => m.status === 'ACTIVE' && !m.share_rule_id
+  ).length;
+  const ungroupedCount = uniqueMembers.filter((m) => !m.member_group_id).length;
+
+  const filteredMembers = useMemo(() => {
+    let list = uniqueMembers;
+    if (statusFilter !== 'ALL') list = list.filter((m) => m.status === statusFilter);
+    if (needsShareOnly) list = list.filter((m) => !m.share_rule_id);
+    if (groupFilter === 'NONE') list = list.filter((m) => !m.member_group_id);
+    else if (groupFilter != null) list = list.filter((m) => Number(m.member_group_id) === Number(groupFilter));
+    if (search.trim()) list = list.filter((m) => memberMatchesSearch(m, search));
+    return list;
+  }, [uniqueMembers, statusFilter, needsShareOnly, groupFilter, search]);
 
   const nextSortOrder = useMemo(() => {
     if (!uniqueMembers.length) return 0;
@@ -177,86 +211,20 @@ export default function MembersPage() {
     }
   };
 
-  const columns = [
-    {
-      title: 'Active',
-      key: 'active',
-      width: 72,
-      align: 'center',
-      render: (_, r) => (
-        <Tooltip title={r.status === 'ACTIVE' ? 'Active — click to deactivate' : 'Inactive — click to activate'}>
-          <Popconfirm
-            title={r.status === 'ACTIVE' ? 'Set member inactive?' : 'Activate this member?'}
-            description={
-              r.status === 'ACTIVE'
-                ? 'Inactive members are hidden from IPO distribute and cannot log in. History is kept.'
-                : 'Member can receive IPOs and log in with PAN again.'
-            }
-            onConfirm={() => setMemberStatus(r, r.status !== 'ACTIVE')}
-            okText={r.status === 'ACTIVE' ? 'Set inactive' : 'Activate'}
-            disabled={togglingId === r.id}
-          >
-            <Switch
-              checked={r.status === 'ACTIVE'}
-              loading={togglingId === r.id}
-              size="small"
-              onClick={(_, e) => e.stopPropagation()}
-            />
-          </Popconfirm>
-        </Tooltip>
-      ),
-    },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
-    {
-      title: 'Name',
-      dataIndex: 'display_name',
-      render: (v, r) => (
-        <Button type="link" style={{ padding: 0 }} onClick={() => openDetail(r)}>
-          {v}
-        </Button>
-      ),
-    },
-    { title: 'Relationship', dataIndex: 'relationship_note' },
-    {
-      title: 'P&L share rules',
-      render: (_, r) => {
-        if (!r.share_rule_id) return <Tag color="warning">Not set</Tag>;
-        return (
-          <span>
-            <Tag color="success">{r.share_provider_name || r.fund_provider_name}</Tag>
-            <span style={{ fontSize: 12, color: '#64748b', marginLeft: 4 }}>
-              P {r.share_profit_provider_percent}/{r.share_profit_manager_percent}%
-              · L {r.share_loss_provider_percent}/{r.share_loss_manager_percent}%
-            </span>
-          </span>
-        );
-      },
-    },
-    { title: 'Sub-Group', dataIndex: 'member_group_name', render: (v) => v ? <Tag>{v}</Tag> : '—' },
-    {
-      title: 'Actions',
-      render: (_, r) => (
-        <Space onClick={(e) => e.stopPropagation()}>
-          <Button icon={<EyeOutlined />} size="small" onClick={() => openDetail(r)} title="View details" />
-          <Button
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate('/profit-sharing', { state: { editMemberId: r.id } });
-            }}
-          >
-            Share %
-          </Button>
-          <Button icon={<EditOutlined />} size="small" onClick={(e) => openEdit(r, e)} />
-        </Space>
-      ),
-    },
-  ];
+  const setStatusKpi = (value) => {
+    setStatusFilter(value);
+    setNeedsShareOnly(false);
+  };
 
   if (loadError && !loading && !uniqueMembers.length) {
     return (
-      <div>
-        <PageHeader title="Team Members" />
+      <div className="mem">
+        <header className="dash-head">
+          <div>
+            <p className="dash-hello">Team</p>
+            <h1>Members</h1>
+          </div>
+        </header>
         <Result
           status="error"
           title="Could not load members"
@@ -272,27 +240,27 @@ export default function MembersPage() {
   }
 
   return (
-    <div>
-      <PageHeader
-        title="Team Members"
-        subtitle="Use Active/Inactive instead of deleting — inactive members keep all IPO history"
-        extra={
-          <Space>
-            <Link to="/member-groups">
-              <Button icon={<LinkOutlined />}>Manage sub-groups</Button>
-            </Link>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              Add Member
-            </Button>
-          </Space>
-        }
-      />
+    <div className="mem">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">Team</p>
+          <h1>Members</h1>
+          <p className="dash-lead">People who receive IPOs. Inactive keeps history — it is not a delete.</p>
+        </div>
+        <div className="dash-head-actions">
+          <Link to="/member-groups" className="dash-btn">Sub-groups</Link>
+          <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+            <PlusOutlined /> Add member
+          </button>
+        </div>
+      </header>
+
       {loadError && (
         <Alert
           type="warning"
           showIcon
           closable
-          style={{ marginBottom: 16 }}
+          className="mem-alert"
           message="Some data could not be refreshed"
           description={loadError}
           action={
@@ -302,48 +270,190 @@ export default function MembersPage() {
           }
         />
       )}
-      <ContentCard
-        title={`Members (${filteredMembers.length}${
-          statusFilter !== 'ALL' || search.trim()
-            ? ` of ${
-                search.trim() && statusFilter !== 'ALL'
-                  ? statusFilteredMembers.length
-                  : uniqueMembers.length
-              }`
-            : ''
-        })`}
-      >
-        <div className="members-toolbar">
+
+      <section className="dash-kpi-grid mem-kpis">
+        <Kpi
+          label="All"
+          value={uniqueMembers.length}
+          hint="Everyone on the team"
+          active={statusFilter === 'ALL' && !needsShareOnly}
+          onClick={() => setStatusKpi('ALL')}
+        />
+        <Kpi
+          label="Active"
+          value={activeCount}
+          hint="Can receive IPOs"
+          tone="teal"
+          active={statusFilter === 'ACTIVE' && !needsShareOnly}
+          onClick={() => setStatusKpi('ACTIVE')}
+        />
+        <Kpi
+          label="Inactive"
+          value={inactiveCount}
+          hint="Hidden from new IPOs"
+          tone="down"
+          active={statusFilter === 'INACTIVE' && !needsShareOnly}
+          onClick={() => setStatusKpi('INACTIVE')}
+        />
+        <Kpi
+          label="Need share %"
+          value={needsShareCount}
+          hint="Active, no P&L rule"
+          tone={needsShareCount > 0 ? 'warn' : 'neutral'}
+          active={needsShareOnly}
+          onClick={() => {
+            setNeedsShareOnly(true);
+            setStatusFilter('ALL');
+          }}
+        />
+      </section>
+
+      <section className="dash-card mem-card">
+        <div className="mem-toolbar">
           <Input.Search
-            className="members-search"
+            className="mem-search"
             placeholder="Search name, PAN, email, UPI, group…"
             allowClear
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <Segmented
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={[
-              { label: `All (${uniqueMembers.length})`, value: 'ALL' },
-              { label: `Active (${activeCount})`, value: 'ACTIVE' },
-              { label: `Inactive (${inactiveCount})`, value: 'INACTIVE' },
-            ]}
-          />
+          <p className="mem-count">
+            Showing <strong>{filteredMembers.length}</strong>
+            {filteredMembers.length !== uniqueMembers.length ? ` of ${uniqueMembers.length}` : ''}
+          </p>
         </div>
-        <Table
-          rowKey="id"
-          loading={loading}
-          columns={columns}
-          dataSource={filteredMembers}
-          rowClassName={(record) => (record.status === 'INACTIVE' ? 'member-row-inactive' : '')}
-          onRow={(record) => ({
-            onClick: () => openDetail(record),
-            style: { cursor: 'pointer' },
-          })}
-          {...tableDefaults}
-        />
-      </ContentCard>
+
+        {memberGroups.length > 0 && (
+          <div className="mem-chips" role="tablist" aria-label="Filter by sub-group">
+            <button
+              type="button"
+              className={`mem-chip${groupFilter == null ? ' is-on' : ''}`}
+              onClick={() => setGroupFilter(null)}
+            >
+              All groups
+            </button>
+            {memberGroups.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                className={`mem-chip${groupFilter === g.id ? ' is-on' : ''}`}
+                onClick={() => setGroupFilter(g.id)}
+              >
+                {g.name}
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`mem-chip${groupFilter === 'NONE' ? ' is-on' : ''}`}
+              onClick={() => setGroupFilter('NONE')}
+            >
+              No group ({ungroupedCount})
+            </button>
+          </div>
+        )}
+
+        {loading && uniqueMembers.length === 0 ? (
+          <ul className="mem-list" aria-hidden>
+            {[1, 2, 3, 4].map((n) => (
+              <li key={n} className="mem-skel" />
+            ))}
+          </ul>
+        ) : filteredMembers.length === 0 ? (
+          <div className="mem-empty">
+            <p>{search.trim() || statusFilter !== 'ALL' || needsShareOnly || groupFilter != null
+              ? 'No members match these filters.'
+              : 'No members yet. Add the first person on your team.'}</p>
+            {!uniqueMembers.length && (
+              <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+                <PlusOutlined /> Add member
+              </button>
+            )}
+          </div>
+        ) : (
+          <ul className="mem-list">
+            {filteredMembers.map((row) => {
+              const inactive = row.status !== 'ACTIVE';
+              return (
+                <li key={row.id}>
+                  <article
+                    className={`mem-person${inactive ? ' is-inactive' : ''}`}
+                    onClick={() => openDetail(row)}
+                  >
+                    <span className={`mem-avatar mem-avatar--${avatarTone(row.id)}`}>
+                      {initials(row.display_name)}
+                    </span>
+                    <div className="mem-person-main">
+                      <div className="mem-person-top">
+                        <strong>{row.display_name}</strong>
+                        <span className={`mem-status ${inactive ? 'is-off' : 'is-on'}`}>
+                          {inactive ? 'Inactive' : 'Active'}
+                        </span>
+                      </div>
+                      <p className="mem-person-meta">
+                        <span>{formatPan(row.pan) || 'No PAN'}</span>
+                        {row.relationship_note ? <span>{row.relationship_note}</span> : null}
+                        {row.member_group_name ? <span>{row.member_group_name}</span> : null}
+                        {row.email ? <span>{row.email}</span> : null}
+                      </p>
+                      <div className="mem-share">
+                        {row.share_rule_id ? (
+                          <>
+                            <span className="mem-share-ok">
+                              {row.share_provider_name || row.fund_provider_name || 'Share set'}
+                            </span>
+                            <span className="mem-share-split">
+                              P {row.share_profit_provider_percent}/{row.share_profit_manager_percent}%
+                              {' · '}
+                              L {row.share_loss_provider_percent}/{row.share_loss_manager_percent}%
+                            </span>
+                          </>
+                        ) : (
+                          <span className="mem-share-miss">Needs share %</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mem-person-actions" onClick={(e) => e.stopPropagation()}>
+                      <Tooltip title={inactive ? 'Inactive — click to activate' : 'Active — click to deactivate'}>
+                        <Popconfirm
+                          title={inactive ? 'Activate this member?' : 'Set member inactive?'}
+                          description={
+                            inactive
+                              ? 'Member can receive IPOs and log in with PAN again.'
+                              : 'Inactive members are hidden from IPO distribute and cannot log in. History is kept.'
+                          }
+                          onConfirm={() => setMemberStatus(row, inactive)}
+                          okText={inactive ? 'Activate' : 'Set inactive'}
+                          disabled={togglingId === row.id}
+                        >
+                          <Switch
+                            checked={!inactive}
+                            loading={togglingId === row.id}
+                            size="small"
+                          />
+                        </Popconfirm>
+                      </Tooltip>
+                      <button type="button" className="mem-icon-btn" title="View details" onClick={() => openDetail(row)}>
+                        <EyeOutlined />
+                      </button>
+                      <button
+                        type="button"
+                        className="mem-icon-btn"
+                        title="Share %"
+                        onClick={() => navigate('/profit-sharing', { state: { editMemberId: row.id } })}
+                      >
+                        <PercentageOutlined />
+                      </button>
+                      <button type="button" className="mem-icon-btn" title="Edit" onClick={(e) => openEdit(row, e)}>
+                        <EditOutlined />
+                      </button>
+                    </div>
+                  </article>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <MemberDetailDrawer
         memberId={detailMemberId}
@@ -352,13 +462,14 @@ export default function MembersPage() {
       />
 
       <Modal
-        title={editing ? 'Edit Member' : 'Add Member'}
+        title={editing ? 'Edit member' : 'Add member'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={() => form.submit()}
         destroyOnClose
         width={760}
         className="member-form-modal"
+        okText={editing ? 'Save' : 'Add member'}
         styles={{ body: { maxHeight: 'none', overflow: 'visible', paddingTop: 8 } }}
       >
         <Form form={form} layout="vertical" onFinish={onSave}>

@@ -1,12 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Input, Segmented, Table, Tag, Tooltip, Typography, message, Space } from 'antd';
-import { PlusOutlined, EyeOutlined, ReloadOutlined, CheckOutlined, SearchOutlined } from '@ant-design/icons';
+import { Alert, Input, Tooltip, message } from 'antd';
+import { PlusOutlined, EyeOutlined, ReloadOutlined, CheckOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import client from '../api/client';
-import PageHeader from '../components/PageHeader';
-import ContentCard from '../components/ContentCard';
-import { tableDefaults } from '../utils/table';
 import { getErrorMessage } from '../utils/errors';
 import { formatCurrency, relativeTime } from '../utils/format';
 import { formatGmp, formatPriceBand, liveStatusMeta, canAddLiveIpoToMyIpos } from '../utils/liveIpo';
@@ -24,22 +21,30 @@ function providerLabel(name) {
 function formatDate(v) {
   if (!v) return '—';
   const d = dayjs(v);
-  return d.isValid() ? d.format('DD MMM YYYY') : '—';
+  return d.isValid() ? d.format('DD MMM') : '—';
 }
 
-const STATUS_FILTERS = [
-  { label: 'All', value: 'ALL' },
-  { label: 'Upcoming', value: 'UPCOMING' },
-  { label: 'Open', value: 'OPEN' },
-  { label: 'Closed', value: 'CLOSED' },
-  { label: 'Listed', value: 'LISTED' },
-];
+function gmpTone(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return '';
+  return n > 0 ? 'ipo-gmp--up' : 'ipo-gmp--down';
+}
 
-const TYPE_FILTERS = [
-  { label: 'All types', value: 'ALL' },
-  { label: 'Mainboard', value: 'MAINBOARD' },
-  { label: 'SME', value: 'SME' },
-];
+function Kpi({ label, value, hint, tone = 'neutral', active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      <article className={`dash-kpi dash-kpi--${tone}`}>
+        <span className="dash-kpi-label">{label}</span>
+        <strong className="dash-kpi-value">{value}</strong>
+        {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+      </article>
+    </button>
+  );
+}
 
 export default function LiveIposPage() {
   const [rows, setRows] = useState([]);
@@ -112,6 +117,14 @@ export default function LiveIposPage() {
     }
   };
 
+  const counts = useMemo(() => ({
+    ALL: rows.length,
+    UPCOMING: rows.filter((r) => r.status === 'UPCOMING').length,
+    OPEN: rows.filter((r) => r.status === 'OPEN').length,
+    CLOSED: rows.filter((r) => r.status === 'CLOSED').length,
+    LISTED: rows.filter((r) => r.status === 'LISTED').length,
+  }), [rows]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
@@ -127,183 +140,183 @@ export default function LiveIposPage() {
     });
   }, [rows, statusFilter, typeFilter, q]);
 
-  const columns = [
-    {
-      title: 'IPO',
-      dataIndex: 'name',
-      width: 240,
-      ellipsis: true,
-      render: (v, r) => (
-        <div className="live-ipo-name-cell">
-          <div className="live-ipo-name-cell__title">{v}</div>
-          <Typography.Text type="secondary" className="live-ipo-name-cell__sub">
-            {r.companyName || r.symbol || '—'}
-          </Typography.Text>
-        </div>
-      ),
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      width: 120,
-      render: (s) => {
-        const meta = liveStatusMeta(s);
-        return (
-          <Tag color={meta.color}>
-            <span className={meta.dot} /> {meta.label}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: 'Type',
-      dataIndex: 'marketType',
-      width: 110,
-      render: (v) => <Tag>{v === 'SME' ? 'SME' : 'Mainboard'}</Tag>,
-    },
-    { title: 'Open', dataIndex: 'openDate', width: 110, render: formatDate },
-    { title: 'Close', dataIndex: 'closeDate', width: 110, render: formatDate },
-    { title: 'Allotment', dataIndex: 'allotmentDate', width: 110, render: formatDate },
-    { title: 'Listing', dataIndex: 'listingDate', width: 110, render: formatDate },
-    { title: 'Price band', key: 'band', width: 130, render: (_, r) => formatPriceBand(r) },
-    { title: 'Lot', dataIndex: 'lotSize', width: 80, render: (v) => v ?? '—' },
-    { title: 'Issue size', dataIndex: 'issueSize', width: 110, render: (v) => v || '—' },
-    { title: 'Registrar', dataIndex: 'registrarName', width: 120, ellipsis: true, render: (v, r) => v || r.registrar || '—' },
-    { title: 'Sub', dataIndex: ['subscription', 'total'], width: 72, render: (v) => (v ? `${v}x` : '—') },
-    {
-      title: 'GMP',
-      dataIndex: 'gmp',
-      width: 88,
-      render: (v) => <span style={{ fontWeight: 600 }}>{formatGmp(v)}</span>,
-    },
-    {
-      title: 'GMP %',
-      dataIndex: 'gmpPercentage',
-      width: 80,
-      render: (v) => (v == null ? '—' : `${v}%`),
-    },
-    {
-      title: 'Est. listing',
-      dataIndex: 'estimatedListingPrice',
-      width: 110,
-      render: (v) => (v != null ? formatCurrency(v) : '—'),
-    },
-    {
-      title: 'GMP updated',
-      dataIndex: 'gmpLastUpdated',
-      width: 120,
-      render: (v) => relativeTime(v),
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      width: 168,
-      fixed: 'right',
-      render: (_, r) => (
-        <Space direction="vertical" size={6} style={{ width: '100%' }}>
-          <Link to={`/live-ipos/${r.id}`}>
-            <Button size="small" icon={<EyeOutlined />} block>
-              View details
-            </Button>
-          </Link>
-          {r.isMyIpo ? (
-            <Button size="small" icon={<CheckOutlined />} disabled block>
-              Added to My IPOs
-            </Button>
-          ) : canAddLiveIpoToMyIpos(r) ? (
-            <Button
-              size="small"
-              type="primary"
-              icon={<PlusOutlined />}
-              loading={addingId === r.id}
-              onClick={() => addToMyIpos(r.id)}
-              block
-            >
-              Add to My IPOs
-            </Button>
-          ) : (
-            <Tooltip title="Closed and listed IPOs cannot be added to My IPOs">
-              <Button size="small" disabled block>
-                {r.status === 'LISTED' ? 'Listed — cannot add' : 'Closed — cannot add'}
-              </Button>
-            </Tooltip>
-          )}
-        </Space>
-      ),
-    },
-  ];
+  const subtitle = usedFallback
+    ? 'Sample data — IPO_PROVIDER is set to mock. Switch it off and click Refresh to load live IPOs.'
+    : lastSyncedAt
+      ? `Live market data · ${providerLabel(provider)} · Updated ${relativeTime(lastSyncedAt)}`
+      : 'Live list from NSE, Downstox, and IPO Alerts. Add an IPO here before team applications.';
 
   return (
-    <div>
-      <PageHeader
-        title="Live IPOs"
-        subtitle={
-          usedFallback
-            ? 'Sample data — IPO_PROVIDER is set to mock. Switch it off and click Refresh to load live IPOs.'
-            : lastSyncedAt
-              ? `Live market data · ${providerLabel(provider)} · Last updated ${relativeTime(lastSyncedAt)}`
-              : 'Live IPO list from free public feeds (NSE, Downstox, IPO Alerts). Adding an IPO here is required before team applications.'
-        }
-        extra={
-          <Button icon={<ReloadOutlined />} loading={syncing} onClick={refresh}>
-            {syncing ? 'Syncing…' : 'Refresh'}
-          </Button>
-        }
-      />
-      <ContentCard
-        title={
-          filtered.length === rows.length
-            ? `Live list (${rows.length})`
-            : `Live list (${filtered.length} of ${rows.length})`
-        }
-        extra={
-          <Input
+    <div className="liveipo">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">Market</p>
+          <h1>Live IPOs</h1>
+          <p className="dash-lead">{subtitle}</p>
+        </div>
+        <div className="dash-head-actions">
+          <Link to="/my-ipos" className="dash-btn">My IPOs</Link>
+          <button type="button" className="dash-btn dash-btn--primary" onClick={refresh} disabled={syncing}>
+            <ReloadOutlined /> {syncing ? 'Syncing…' : 'Refresh'}
+          </button>
+        </div>
+      </header>
+
+      {usedFallback && (
+        <Alert
+          type="info"
+          showIcon
+          className="mem-alert"
+          message="Demo data — not the live market"
+          description="IPO_PROVIDER is set to mock. Switch it off and click Refresh to load real IPOs."
+        />
+      )}
+
+      <section className="dash-kpi-grid liveipo-kpis">
+        <Kpi label="All" value={counts.ALL} hint="In the catalog" active={statusFilter === 'ALL'} onClick={() => setStatusFilter('ALL')} />
+        <Kpi label="Upcoming" value={counts.UPCOMING} tone="warn" active={statusFilter === 'UPCOMING'} onClick={() => setStatusFilter('UPCOMING')} />
+        <Kpi label="Open" value={counts.OPEN} tone="up" active={statusFilter === 'OPEN'} onClick={() => setStatusFilter('OPEN')} />
+        <Kpi label="Closed" value={counts.CLOSED} tone="down" active={statusFilter === 'CLOSED'} onClick={() => setStatusFilter('CLOSED')} />
+        <Kpi label="Listed" value={counts.LISTED} tone="info" active={statusFilter === 'LISTED'} onClick={() => setStatusFilter('LISTED')} />
+      </section>
+
+      <section className="dash-card mem-card">
+        <div className="mem-toolbar">
+          <Input.Search
+            className="mem-search"
+            placeholder="Search name, company, symbol…"
             allowClear
-            prefix={<SearchOutlined />}
-            placeholder="Search name, company, symbol"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            style={{ width: 260 }}
           />
-        }
-      >
-        {usedFallback && (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-            message="Demo data — not the live market"
-            description="IPO_PROVIDER is set to mock. Switch it off and click Refresh to load real IPOs from NSE, Downstox, and IPO Alerts."
-          />
+          <p className="mem-count">
+            Showing <strong>{filtered.length}</strong>
+            {filtered.length !== rows.length ? ` of ${rows.length}` : ''}
+          </p>
+        </div>
+
+        <div className="mem-chips" role="tablist" aria-label="IPO type">
+          <button type="button" className={`mem-chip${typeFilter === 'ALL' ? ' is-on' : ''}`} onClick={() => setTypeFilter('ALL')}>
+            All types
+          </button>
+          <button type="button" className={`mem-chip${typeFilter === 'MAINBOARD' ? ' is-on' : ''}`} onClick={() => setTypeFilter('MAINBOARD')}>
+            Mainboard
+          </button>
+          <button type="button" className={`mem-chip${typeFilter === 'SME' ? ' is-on' : ''}`} onClick={() => setTypeFilter('SME')}>
+            SME
+          </button>
+        </div>
+
+        {loading && rows.length === 0 ? (
+          <div className="ipo-grid" aria-hidden>
+            {[1, 2, 3, 4, 5, 6].map((n) => <div key={n} className="mem-skel" />)}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="mem-empty">
+            <p>{rows.length === 0 ? 'No live IPOs yet — click Refresh to sync.' : 'No IPOs match these filters.'}</p>
+            {rows.length === 0 && (
+              <button type="button" className="dash-btn dash-btn--primary" onClick={refresh}>
+                <ReloadOutlined /> Refresh
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="ipo-grid">
+            {filtered.map((r) => {
+              const meta = liveStatusMeta(r.status);
+              const canAdd = canAddLiveIpoToMyIpos(r);
+              const sub = r.subscription?.total;
+              return (
+                <article key={r.id} className="ipo-item">
+                  <header className="ipo-item-head">
+                    <div>
+                      <div className="ipo-item-tags">
+                        <span className={`ipo-pill is-${String(r.status || '').toLowerCase()}`}>
+                          <span className={meta.dot} />
+                          {meta.label}
+                        </span>
+                        <span className="ipo-pill is-muted">{r.marketType === 'SME' ? 'SME' : 'Mainboard'}</span>
+                        {r.isMyIpo && <span className="ipo-pill is-ok">On My IPOs</span>}
+                      </div>
+                      <h3>{r.name}</h3>
+                      <p className="ipo-item-sub">{r.companyName || r.symbol || '—'}</p>
+                    </div>
+                    <div className={`ipo-gmp ${gmpTone(r.gmp)}`}>
+                      <span>GMP</span>
+                      <strong>{formatGmp(r.gmp)}</strong>
+                      {r.gmpPercentage != null && <em>{r.gmpPercentage}%</em>}
+                    </div>
+                  </header>
+
+                  <div className="ipo-facts">
+                    <div>
+                      <span>Open</span>
+                      <b>{formatDate(r.openDate)}</b>
+                    </div>
+                    <div>
+                      <span>Close</span>
+                      <b>{formatDate(r.closeDate)}</b>
+                    </div>
+                    <div>
+                      <span>Price</span>
+                      <b>{formatPriceBand(r)}</b>
+                    </div>
+                    <div>
+                      <span>Lot</span>
+                      <b>{r.lotSize ?? '—'}</b>
+                    </div>
+                    <div>
+                      <span>Sub</span>
+                      <b>{sub ? `${sub}x` : '—'}</b>
+                    </div>
+                    {r.estimatedListingPrice != null && (
+                      <div>
+                        <span>Est. listing</span>
+                        <b>{formatCurrency(r.estimatedListingPrice)}</b>
+                      </div>
+                    )}
+                  </div>
+
+                  {(r.registrarName || r.registrar || r.issueSize) && (
+                    <p className="ipo-item-foot">
+                      {r.registrarName || r.registrar || 'Registrar —'}
+                      {r.issueSize ? ` · ${r.issueSize}` : ''}
+                    </p>
+                  )}
+
+                  <div className="ipo-item-actions">
+                    <Link to={`/live-ipos/${r.id}`} className="dash-btn sg-mini">
+                      <EyeOutlined /> Details
+                    </Link>
+                    {r.isMyIpo ? (
+                      <button type="button" className="dash-btn sg-mini" disabled>
+                        <CheckOutlined /> Added
+                      </button>
+                    ) : canAdd ? (
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn--primary sg-mini"
+                        disabled={addingId === r.id}
+                        onClick={() => addToMyIpos(r.id)}
+                      >
+                        <PlusOutlined /> {addingId === r.id ? 'Adding…' : 'Add to My IPOs'}
+                      </button>
+                    ) : (
+                      <Tooltip title="Closed and listed IPOs cannot be added to My IPOs">
+                        <span>
+                          <button type="button" className="dash-btn sg-mini" disabled>
+                            {r.status === 'LISTED' ? 'Listed' : 'Closed'}
+                          </button>
+                        </span>
+                      </Tooltip>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         )}
-        <Segmented
-          style={{ marginBottom: 8 }}
-          value={statusFilter}
-          onChange={setStatusFilter}
-          options={STATUS_FILTERS}
-        />
-        <Segmented
-          style={{ marginBottom: 16 }}
-          value={typeFilter}
-          onChange={setTypeFilter}
-          options={TYPE_FILTERS}
-        />
-        <Table
-          rowKey="id"
-          loading={loading || syncing}
-          columns={columns}
-          dataSource={filtered}
-          locale={{ emptyText: 'No live IPOs yet — click Refresh to sync' }}
-          {...tableDefaults}
-          pagination={{
-            ...tableDefaults.pagination,
-            pageSize: 50,
-            showTotal: (t) => `${t} records`,
-          }}
-          className="pro-table live-ipos-table"
-          scroll={{ x: 2100 }}
-        />
-      </ContentCard>
+      </section>
     </div>
   );
 }

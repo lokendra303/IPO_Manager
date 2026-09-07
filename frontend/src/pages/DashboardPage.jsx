@@ -1,36 +1,50 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Col, Row, Table, Tag, Button, Typography } from 'antd';
 import {
-  WalletOutlined,
-  RiseOutlined,
-  TeamOutlined,
   ArrowRightOutlined,
   BellOutlined,
   ClockCircleOutlined,
-  UserOutlined,
-  FallOutlined,
-  BankOutlined,
-  PercentageOutlined,
-  FundOutlined,
 } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
-import { formatCurrency, maskPan, pnlClassName } from '../utils/format';
-import PageHeader from '../components/PageHeader';
-import StatCard from '../components/StatCard';
-import ContentCard from '../components/ContentCard';
+import { formatCurrency, formatDateTime, maskPan } from '../utils/format';
 import PageLoading from '../components/PageLoading';
-import { tableDefaults } from '../utils/table';
+import { useAuth } from '../context/AuthContext';
 
-const typeColors = {
-  PROVIDER_IN: 'success',
-  DISTRIBUTE_OUT: 'warning',
-  RETURN_IN: 'processing',
-  PROVIDER_OUT: 'error',
-  ADJUSTMENT: 'default',
+const TYPE_LABEL = {
+  PROVIDER_IN: 'Provider in',
+  DISTRIBUTE_OUT: 'Distributed',
+  RETURN_IN: 'Returned',
+  PROVIDER_OUT: 'Provider out',
+  ADJUSTMENT: 'Adjustment',
 };
 
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function moneyTone(value) {
+  const n = Number(value || 0);
+  if (n > 0) return 'up';
+  if (n < 0) return 'down';
+  return 'neutral';
+}
+
+function Kpi({ to, label, value, hint, tone = 'neutral' }) {
+  const body = (
+    <article className={`dash-kpi dash-kpi--${tone}`}>
+      <span className="dash-kpi-label">{label}</span>
+      <strong className="dash-kpi-value">{value}</strong>
+      {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+    </article>
+  );
+  return to ? <Link to={to} className="dash-kpi-a">{body}</Link> : body;
+}
+
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [wallet, setWallet] = useState(null);
   const [summary, setSummary] = useState(null);
   const [txns, setTxns] = useState([]);
@@ -51,7 +65,7 @@ export default function DashboardPage() {
       .then(([w, s, t, issues, pnl, d]) => {
         setWallet(w.data);
         setSummary(s.data);
-        setTxns(t.data.slice(0, 8));
+        setTxns((t.data || []).slice(0, 6));
         setOpenIssueCount(issues.data.openCount ?? 0);
         setPnlTotals(pnl.data);
         setDash(d.data);
@@ -85,322 +99,214 @@ export default function DashboardPage() {
     { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
   );
 
-  const txnCols = [
-    { title: 'Date', dataIndex: 'txn_date', render: (v) => new Date(v).toLocaleString('en-IN') },
-    { title: 'Type', dataIndex: 'type', render: (t) => <Tag color={typeColors[t]}>{t.replace(/_/g, ' ')}</Tag> },
-    {
-      title: 'Amount',
-      dataIndex: 'amount',
-      render: (v) => (
-        <span className={Number(v) >= 0 ? 'amount-positive' : 'amount-negative'}>{formatCurrency(v)}</span>
-      ),
-    },
-    { title: 'Balance', dataIndex: 'balance_after', render: (v) => formatCurrency(v) },
-    { title: 'Notes', dataIndex: 'notes', ellipsis: true },
-  ];
-
-  const pendingCols = [
-    { title: 'Member', dataIndex: 'displayName' },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => maskPan(v) || '—' },
-    {
-      title: 'Pending return',
-      dataIndex: 'willReceiveFromTeam',
-      render: (v) => <span className="amount-negative">{formatCurrency(v)}</span>,
-    },
-    {
-      title: 'Sub-Group',
-      dataIndex: 'memberGroupName',
-      render: (v) => (v ? <Tag>{v}</Tag> : '—'),
-    },
-  ];
-
-  const openIpoCols = [
-    {
-      title: 'IPO',
-      dataIndex: 'name',
-      render: (v, r) => (
-        <Link to={`/ipos/${r.ipoId}`} style={{ fontWeight: 500 }}>
-          {v}
-        </Link>
-      ),
-    },
-    {
-      title: 'Distributed',
-      dataIndex: 'totalDistributed',
-      render: (v) => formatCurrency(v),
-    },
-    {
-      title: 'Returned',
-      dataIndex: 'totalReturned',
-      render: (v) => formatCurrency(v),
-    },
-    {
-      title: 'Still with members',
-      dataIndex: 'pendingReturn',
-      render: (v) => (
-        <span className={Number(v) > 0 ? 'amount-negative' : ''}>{formatCurrency(v)}</span>
-      ),
-    },
-    {
-      title: 'Members',
-      dataIndex: 'applicationCount',
-      width: 88,
-      align: 'center',
-    },
-  ];
+  const gmp = dash?.currentGmp;
+  const gmpValue = gmp?.gmp != null ? `₹${gmp.gmp}` : '—';
+  const gmpHint = gmp?.name
+    ? `${gmp.name}${gmp.gmpPercentage != null ? ` · ${gmp.gmpPercentage}%` : ''}`
+    : 'Latest listed GMP';
 
   return (
-    <div>
-      <PageHeader
-        title="Dashboard"
-        subtitle="Overview of your wallet, team, and recent activity"
-      />
-      {openIssueCount > 0 && (
-        <Alert
-          type="warning"
-          showIcon
-          icon={<BellOutlined />}
-          message={`${openIssueCount} open member issue${openIssueCount === 1 ? '' : 's'} need attention`}
-          action={
-            <Link to="/notifications">
-              <Button size="small" type="primary">
-                View notifications
-              </Button>
-            </Link>
-          }
-          style={{ marginBottom: 16 }}
-        />
-      )}
-      {totalPendingReturn > 0 && (
-        <Alert
-          type="error"
-          showIcon
-          icon={<ClockCircleOutlined />}
-          message={`${formatCurrency(totalPendingReturn)} pending return from ${pendingReturnAppCount} application${
-            pendingReturnAppCount === 1 ? '' : 's'
-          } (${pendingReturns.length} member${pendingReturns.length === 1 ? '' : 's'}) — not yet received`}
-          action={
-            <Link to="/summary">
-              <Button size="small">View summary</Button>
-            </Link>
-          }
-          style={{ marginBottom: 24 }}
-        />
-      )}
-      {dash && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={12} sm={8} lg={4}>
-            <Link to="/live-ipos"><StatCard title="Live IPOs" value={dash.liveIpos ?? 0} icon={<FundOutlined />} variant="info" /></Link>
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <Link to="/my-ipos"><StatCard title="My IPOs" value={dash.myIpos ?? 0} icon={<BankOutlined />} variant="primary" /></Link>
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard title="Open IPOs" value={dash.openIpoCount ?? dash.liveOpen ?? 0} icon={<ClockCircleOutlined />} variant="warning" />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard title="Team applications" value={dash.teamApplications ?? 0} icon={<TeamOutlined />} variant="default" />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard title="Allotment pending" value={dash.pendingAllotments ?? 0} icon={<ClockCircleOutlined />} variant="warning" />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard title="Allotted" value={dash.allotted ?? 0} icon={<RiseOutlined />} variant="success" />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard title="Not allotted" value={dash.notAllotted ?? 0} icon={<FallOutlined />} variant="danger" />
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <StatCard
-              title="Current GMP"
-              value={dash.currentGmp?.gmp != null ? `₹${dash.currentGmp.gmp}` : '—'}
-              icon={<PercentageOutlined />}
-              variant="info"
-            />
-          </Col>
-          <Col xs={12} sm={8} lg={6}>
-            <StatCard
-              title="Expected profit"
-              value={formatCurrency(dash.expectedProfit ?? 0)}
-              icon={<RiseOutlined />}
-              variant="success"
-              valueClassName={pnlClassName(dash.expectedProfit)}
-            />
-          </Col>
-        </Row>
-      )}
-      <ContentCard
-        title={`Open IPOs — distributed${openIpoRows.length ? ` (${openIpoRows.length})` : ''}`}
-        extra={(
-          <Link to="/summary" className="content-card-extra-link">
-            Full summary <ArrowRightOutlined />
-          </Link>
-        )}
-        padded
-        style={{ marginBottom: 24 }}
-      >
-        <Row gutter={[16, 16]} style={{ marginBottom: openIpoRows.length ? 16 : 0 }}>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Distributed (open IPOs)"
-              value={formatCurrency(openIpoTotals.totalDistributed)}
-              icon={<FundOutlined />}
-              variant="info"
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Returned"
-              value={formatCurrency(openIpoTotals.totalReturned)}
-              icon={<RiseOutlined />}
-              variant="success"
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <StatCard
-              title="Still with members"
-              value={formatCurrency(openIpoTotals.pendingReturn)}
-              icon={<ClockCircleOutlined />}
-              variant="warning"
-            />
-          </Col>
-        </Row>
-        {openIpoRows.length > 0 ? (
-          <Table
-            rowKey="ipoId"
-            columns={openIpoCols}
-            dataSource={openIpoRows}
-            pagination={false}
-            {...tableDefaults}
-            summary={() => (
-              <Table.Summary fixed>
-                <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
-                  <Table.Summary.Cell index={0}>TOTAL</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalDistributed)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.totalReturned)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{formatCurrency(openIpoTotals.pendingReturn)}</Table.Summary.Cell>
-                  <Table.Summary.Cell>{openIpoTotals.applicationCount}</Table.Summary.Cell>
-                </Table.Summary.Row>
-              </Table.Summary>
-            )}
-          />
-        ) : (
-          <Typography.Text type="secondary">No open IPOs right now.</Typography.Text>
-        )}
-      </ContentCard>
-      <ContentCard
-        title="P&L overview"
-        extra={(
-          <Link to="/profit-sharing" className="content-card-extra-link">
-            Profit sharing details <ArrowRightOutlined />
-          </Link>
-        )}
-        padded
-        className="dashboard-manager-card"
-        style={{ marginBottom: 24 }}
-      >
-        <div className="dashboard-stat-grid">
-          <StatCard
-            title="Wallet balance"
-            value={formatCurrency(wallet?.balance ?? 0)}
-            icon={<WalletOutlined />}
-            variant="primary"
-          />
-          <StatCard
-            title="Your net share"
-            value={formatCurrency(managerNet)}
-            icon={<UserOutlined />}
-            variant={managerNet >= 0 ? 'success' : 'danger'}
-            valueClassName={pnlClassName(managerNet)}
-          />
-          <StatCard
-            title="Your profit share"
-            value={formatCurrency(managerProfit)}
-            icon={<RiseOutlined />}
-            variant="success"
-            valueClassName="stat-card-value--profit"
-          />
-          <StatCard
-            title="Your loss share"
-            value={formatCurrency(managerLoss)}
-            icon={<FallOutlined />}
-            variant="danger"
-            valueClassName="stat-card-value--loss"
-          />
-          <StatCard
-            title="Gross IPO P&L"
-            value={formatCurrency(grossIpoPnL)}
-            icon={<PercentageOutlined />}
-            variant={grossIpoPnL >= 0 ? 'success' : 'danger'}
-            valueClassName={pnlClassName(grossIpoPnL)}
-          />
-          <StatCard
-            title="Provider share (given)"
-            value={formatCurrency(overall.providerShare ?? 0)}
-            icon={<BankOutlined />}
-            variant="info"
-          />
-          <StatCard
-            title="Member share (kept)"
-            value={formatCurrency(overall.memberShare ?? 0)}
-            icon={<TeamOutlined />}
-            variant="default"
-          />
-          <Link to="/members" className="stat-card-link">
-            <StatCard
-              title="Active members"
-              value={activeMembers}
-              icon={<TeamOutlined />}
-              variant="info"
-            />
-          </Link>
+    <div className="dash">
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">{greeting()}</p>
+          <h1>Dashboard</h1>
+          <p className="dash-lead">
+            {user?.tenantName ? `${user.tenantName} · ` : ''}
+            Money, allotment, and open IPOs in one place.
+          </p>
         </div>
-        {(overall.pendingCount > 0 || overall.distributionCount > 0) && (
-          <Typography.Text type="secondary" className="dashboard-stat-footnote">
-            P&L splits done: {overall.distributionCount ?? 0}
-            {(overall.pendingCount ?? 0) > 0 && (
-              <>
-                {' · '}
-                Pending split: {formatCurrency(overall.grossPending ?? 0)} ({overall.pendingCount} application
-                {overall.pendingCount === 1 ? '' : 's'})
-              </>
-            )}
-          </Typography.Text>
-        )}
-      </ContentCard>
-      {pendingReturns.length > 0 && (
-        <ContentCard
-          title="Pending fund returns"
-          extra={
-            <Link to="/summary">
-              <Button type="link" icon={<ArrowRightOutlined />}>
-                Full summary
-              </Button>
+        <div className="dash-head-actions">
+          <Link to="/live-ipos" className="dash-btn">Live IPOs</Link>
+          <Link to="/wallet" className="dash-btn">Wallet</Link>
+          <Link to="/summary" className="dash-btn dash-btn--primary">Summary</Link>
+        </div>
+      </header>
+
+      {(openIssueCount > 0 || totalPendingReturn > 0) && (
+        <div className="dash-alerts">
+          {openIssueCount > 0 && (
+            <Link to="/notifications" className="dash-alert dash-alert--warn">
+              <BellOutlined />
+              <span><strong>{openIssueCount}</strong> open member issue{openIssueCount === 1 ? '' : 's'}</span>
             </Link>
-          }
-          style={{ marginBottom: 24 }}
-        >
-          <Table
-            rowKey="memberId"
-            columns={pendingCols}
-            dataSource={pendingReturns.slice(0, 8)}
-            pagination={false}
-            {...tableDefaults}
-          />
-        </ContentCard>
+          )}
+          {totalPendingReturn > 0 && (
+            <Link to="/summary" className="dash-alert dash-alert--danger">
+              <ClockCircleOutlined />
+              <span>
+                <strong>{formatCurrency(totalPendingReturn)}</strong>
+                {' '}to collect from {pendingReturns.length} member{pendingReturns.length === 1 ? '' : 's'}
+                {' '}({pendingReturnAppCount} application{pendingReturnAppCount === 1 ? '' : 's'})
+              </span>
+            </Link>
+          )}
+        </div>
       )}
-      <ContentCard
-        title="Recent Wallet Transactions"
-        extra={
-          <Link to="/wallet">
-            <Button type="link" icon={<ArrowRightOutlined />}>
-              View all
-            </Button>
-          </Link>
-        }
-      >
-        <Table rowKey="id" columns={txnCols} dataSource={txns} pagination={false} {...tableDefaults} />
-      </ContentCard>
+
+      <section className="dash-money">
+        <Link to="/wallet" className="dash-money-cell dash-money-cell--main">
+          <span>Wallet balance</span>
+          <strong>{formatCurrency(wallet?.balance ?? 0)}</strong>
+          <em>Ready to distribute</em>
+        </Link>
+        <Link to="/profit-sharing" className={`dash-money-cell dash-money-cell--${moneyTone(managerNet)}`}>
+          <span>Your net share</span>
+          <strong>{formatCurrency(managerNet)}</strong>
+          <em>Profit {formatCurrency(managerProfit)} · Loss {formatCurrency(managerLoss)}</em>
+        </Link>
+        <Link to="/summary" className={`dash-money-cell ${totalPendingReturn > 0 ? 'dash-money-cell--warn' : ''}`}>
+          <span>Still with members</span>
+          <strong>{formatCurrency(totalPendingReturn)}</strong>
+          <em>{activeMembers} active member{activeMembers === 1 ? '' : 's'}</em>
+        </Link>
+      </section>
+
+      {dash && (
+        <section className="dash-card">
+          <header className="dash-card-head">
+            <h2>Today</h2>
+            <Link to="/my-ipos">My IPOs <ArrowRightOutlined /></Link>
+          </header>
+          <div className="dash-kpi-grid">
+            <Kpi to="/live-ipos" label="Live IPOs" value={dash.liveIpos ?? 0} tone="info" />
+            <Kpi to="/my-ipos" label="My IPOs" value={dash.myIpos ?? 0} tone="teal" />
+            <Kpi to="/my-ipos" label="My open IPOs" value={dash.openIpoCount ?? 0} tone="warn" />
+            <Kpi to="/members" label="Applications" value={dash.teamApplications ?? 0} />
+            <Kpi label="Allotment pending" value={dash.pendingAllotments ?? 0} tone="warn" />
+            <Kpi label="Allotted" value={dash.allotted ?? 0} tone="up" />
+            <Kpi label="Not allotted" value={dash.notAllotted ?? 0} tone="down" />
+            <Kpi to="/gmp" label="Current GMP" value={gmpValue} hint={gmpHint} tone="info" />
+          </div>
+        </section>
+      )}
+
+      <div className="dash-main">
+        <section className="dash-card">
+          <header className="dash-card-head">
+            <h2>Open IPOs</h2>
+            <Link to="/summary">Full summary <ArrowRightOutlined /></Link>
+          </header>
+          <div className="dash-inline-stats">
+            <div>
+              <span>Distributed</span>
+              <b>{formatCurrency(openIpoTotals.totalDistributed)}</b>
+            </div>
+            <div>
+              <span>Returned</span>
+              <b>{formatCurrency(openIpoTotals.totalReturned)}</b>
+            </div>
+            <div>
+              <span>With members</span>
+              <b className={openIpoTotals.pendingReturn > 0 ? 'is-down' : ''}>
+                {formatCurrency(openIpoTotals.pendingReturn)}
+              </b>
+            </div>
+          </div>
+          {openIpoRows.length === 0 ? (
+            <p className="dash-empty">No open IPOs. Distributed issues will show here.</p>
+          ) : (
+            <ul className="dash-list">
+              {openIpoRows.map((row) => (
+                <li key={row.ipoId}>
+                  <Link to={`/ipos/${row.ipoId}`} className="dash-list-row">
+                    <div>
+                      <strong>{row.name}</strong>
+                      <span>{row.applicationCount} member{row.applicationCount === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="dash-list-figures">
+                      <span>{formatCurrency(row.totalDistributed)}</span>
+                      <b className={Number(row.pendingReturn) > 0 ? 'is-down' : ''}>
+                        {formatCurrency(row.pendingReturn)} out
+                      </b>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="dash-card">
+          <header className="dash-card-head">
+            <h2>P&L</h2>
+            <Link to="/profit-sharing">Details <ArrowRightOutlined /></Link>
+          </header>
+          <div className="dash-pnl">
+            <div>
+              <span>Gross IPO</span>
+              <b className={`is-${moneyTone(grossIpoPnL)}`}>{formatCurrency(grossIpoPnL)}</b>
+            </div>
+            <div>
+              <span>Providers</span>
+              <b>{formatCurrency(overall.providerShare ?? 0)}</b>
+            </div>
+            <div>
+              <span>Members kept</span>
+              <b>{formatCurrency(overall.memberShare ?? 0)}</b>
+            </div>
+            <div>
+              <span>Expected</span>
+              <b className={`is-${moneyTone(dash?.expectedProfit)}`}>{formatCurrency(dash?.expectedProfit ?? 0)}</b>
+            </div>
+          </div>
+          {(overall.pendingCount > 0 || overall.distributionCount > 0) && (
+            <p className="dash-note">
+              Splits done: {overall.distributionCount ?? 0}
+              {(overall.pendingCount ?? 0) > 0 && (
+                <> · pending {formatCurrency(overall.grossPending ?? 0)} ({overall.pendingCount})</>
+              )}
+            </p>
+          )}
+        </section>
+      </div>
+
+      <div className="dash-main dash-main--bottom">
+        {pendingReturns.length > 0 && (
+          <section className="dash-card">
+            <header className="dash-card-head">
+              <h2>Pending returns</h2>
+              <Link to="/summary">All members <ArrowRightOutlined /></Link>
+            </header>
+            <ul className="dash-list">
+              {pendingReturns.slice(0, 8).map((row) => (
+                <li key={row.memberId} className="dash-list-row dash-list-row--static">
+                  <div>
+                    <strong>{row.displayName}</strong>
+                    <span>
+                      {maskPan(row.pan) || 'No PAN'}
+                      {row.memberGroupName ? ` · ${row.memberGroupName}` : ''}
+                    </span>
+                  </div>
+                  <b className="is-down">{formatCurrency(row.willReceiveFromTeam)}</b>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section className="dash-card">
+          <header className="dash-card-head">
+            <h2>Wallet activity</h2>
+            <Link to="/wallet">View all <ArrowRightOutlined /></Link>
+          </header>
+          {txns.length === 0 ? (
+            <p className="dash-empty">No transactions yet.</p>
+          ) : (
+            <ul className="dash-list">
+              {txns.map((row) => (
+                <li key={row.id} className="dash-list-row dash-list-row--static">
+                  <div>
+                    <strong>{TYPE_LABEL[row.type] || String(row.type || '').replace(/_/g, ' ')}</strong>
+                    <span>{formatDateTime(row.txn_date)}</span>
+                  </div>
+                  <b className={`is-${moneyTone(row.amount)}`}>{formatCurrency(row.amount)}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
