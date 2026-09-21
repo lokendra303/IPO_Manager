@@ -84,7 +84,7 @@ export default function MembersPage() {
   const [memberGroups, setMemberGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ACTIVE');
   const [needsShareOnly, setNeedsShareOnly] = useState(false);
   const [groupFilter, setGroupFilter] = useState(null);
   const [search, setSearch] = useState('');
@@ -98,24 +98,18 @@ export default function MembersPage() {
   const load = () => {
     setLoading(true);
     setLoadError(null);
-    Promise.allSettled([client.get('/members'), client.get('/member-groups')])
-      .then(([membersRes, groupsRes]) => {
-        if (membersRes.status === 'fulfilled') {
-          setMembers(Array.isArray(membersRes.value.data) ? membersRes.value.data : []);
-        } else {
-          setMembers([]);
-          setLoadError(getErrorMessage(membersRes.reason, 'Could not load members'));
-        }
-        if (groupsRes.status === 'fulfilled') {
-          setMemberGroups(Array.isArray(groupsRes.value.data) ? groupsRes.value.data : []);
-        } else {
-          setMemberGroups([]);
-          if (membersRes.status === 'fulfilled') {
-            message.warning('Sub-groups could not be loaded — members list is still available');
-          }
-        }
+    client.get('/members')
+      .then(({ data }) => setMembers(Array.isArray(data) ? data : []))
+      .catch((err) => {
+        setMembers([]);
+        setLoadError(getErrorMessage(err, 'Could not load members'));
       })
       .finally(() => setLoading(false));
+    client.get('/member-groups')
+      .then(({ data }) => setMemberGroups(Array.isArray(data) ? data : []))
+      .catch(() => {
+        setMemberGroups([]);
+      });
   };
 
   useEffect(load, []);
@@ -282,13 +276,6 @@ export default function MembersPage() {
 
       <section className="dash-kpi-grid mem-kpis">
         <Kpi
-          label="All"
-          value={uniqueMembers.length}
-          hint="Everyone on the team"
-          active={statusFilter === 'ALL' && !needsShareOnly}
-          onClick={() => setStatusKpi('ALL')}
-        />
-        <Kpi
           label="Active"
           value={activeCount}
           hint="Can receive IPOs"
@@ -303,6 +290,13 @@ export default function MembersPage() {
           tone="down"
           active={statusFilter === 'INACTIVE' && !needsShareOnly}
           onClick={() => setStatusKpi('INACTIVE')}
+        />
+        <Kpi
+          label="All"
+          value={uniqueMembers.length}
+          hint="Everyone on the team"
+          active={statusFilter === 'ALL' && !needsShareOnly}
+          onClick={() => setStatusKpi('ALL')}
         />
         <Kpi
           label="Need share %"
@@ -338,13 +332,6 @@ export default function MembersPage() {
             <div className="mem-chips" role="tablist" aria-label="Filter by status">
               <button
                 type="button"
-                className={`mem-chip${statusFilter === 'ALL' && !needsShareOnly ? ' is-on' : ''}`}
-                onClick={() => setStatusKpi('ALL')}
-              >
-                All ({uniqueMembers.length})
-              </button>
-              <button
-                type="button"
                 className={`mem-chip${statusFilter === 'ACTIVE' && !needsShareOnly ? ' is-on' : ''}`}
                 onClick={() => setStatusKpi('ACTIVE')}
               >
@@ -356,6 +343,13 @@ export default function MembersPage() {
                 onClick={() => setStatusKpi('INACTIVE')}
               >
                 Inactive ({inactiveCount})
+              </button>
+              <button
+                type="button"
+                className={`mem-chip${statusFilter === 'ALL' && !needsShareOnly ? ' is-on' : ''}`}
+                onClick={() => setStatusKpi('ALL')}
+              >
+                All ({uniqueMembers.length})
               </button>
               <button
                 type="button"

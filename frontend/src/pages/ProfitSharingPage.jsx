@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Table, Button, Form, InputNumber, Input, Select, message, Modal, Tag, Space, Divider, Segmented, Popconfirm, Typography, Dropdown, Alert, Checkbox,
@@ -12,6 +12,7 @@ import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
+import { isActiveMember, mergeMemberDirectories, groupBulkSelectOptions, groupedMemberSelectOptions, isGroupFullySelected, toggleGroupMemberIds, shareRuleLabel, shareRuleMemberIds, sharePackLabel, findShareRuleConflicts, formatShareRuleConflicts, ruleConflictsWithSelected } from '../utils/shareRules';
 
 const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
 
@@ -209,8 +210,11 @@ export default function ProfitSharingPage() {
   const [loading, setLoading] = useState(true);
   const [fundProviders, setFundProviders] = useState([]);
   const [ruleTemplates, setRuleTemplates] = useState([]);
+  const [shareRules, setShareRules] = useState([]);
+  const [sharePacks, setSharePacks] = useState([]);
   const [ipos, setIpos] = useState([]);
   const [members, setMembers] = useState([]);
+  const [memberGroups, setMemberGroups] = useState([]);
   const [report, setReport] = useState(null);
   const [pnlTotals, setPnlTotals] = useState(null);
   const [totalsView, setTotalsView] = useState('member');
@@ -228,42 +232,81 @@ export default function ProfitSharingPage() {
   const [ruleListEditOpen, setRuleListEditOpen] = useState(false);
   const [ruleListEdit, setRuleListEdit] = useState(null);
   const [ruleListForm] = Form.useForm();
+  const [packEditOpen, setPackEditOpen] = useState(false);
+  const [packEdit, setPackEdit] = useState(null);
+  const [packForm] = Form.useForm();
   const [bulkTemplateId, setBulkTemplateId] = useState(null);
   const [bulkTemplateIpoId, setBulkTemplateIpoId] = useState(null);
-  const [activeTabKey, setActiveTabKey] = useState('members');
+  const [activeTabKey, setActiveTabKey] = useState('rule-list');
   const [membersFilter, setMembersFilter] = useState('all');
+  const extrasLoadingRef = useRef(false);
+  const extrasLoadedRef = useRef(false);
 
   const renderAmt = (v) => <span className={pnlClassName(v)}>{formatCurrency(v)}</span>;
+
+  const loadCore = async () => {
+    const { data } = await client.get('/profit-shares/setup');
+    setMembers(mergeMemberDirectories(
+      Array.isArray(data?.members) ? data.members : [],
+      [],
+    ));
+    setMemberGroups(Array.isArray(data?.groups) ? data.groups : []);
+    setFundProviders(Array.isArray(data?.providers) ? data.providers : []);
+    setRuleTemplates(Array.isArray(data?.ruleTemplates) ? data.ruleTemplates : []);
+    setShareRules(Array.isArray(data?.rules) ? data.rules : []);
+    setSharePacks(Array.isArray(data?.packs) ? data.packs : []);
+    return data?.members;
+  };
+
+  const loadExtras = async ({ force = false } = {}) => {
+    if (!force && extrasLoadedRef.current) return;
+    if (extrasLoadingRef.current) return;
+    extrasLoadingRef.current = true;
+    try {
+      const [ipoRes, repRes, totalsRes] = await Promise.all([
+        client.get('/ipos', { params: { namesOnly: 1 } }).catch(() => ({ data: [] })),
+        client.get('/profit-shares/report').catch(() => ({ data: null })),
+        client.get('/profit-shares/totals').catch(() => ({ data: null })),
+      ]);
+      setIpos(Array.isArray(ipoRes.data) ? ipoRes.data : []);
+      if (repRes.data) setReport(repRes.data);
+      if (totalsRes.data) setPnlTotals(totalsRes.data);
+      extrasLoadedRef.current = true;
+    } finally {
+      extrasLoadingRef.current = false;
+    }
+  };
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [memRes, fpRes, ipoRes, repRes, totalsRes, templatesRes] = await Promise.all([
-        client.get('/profit-shares/members'),
-        client.get('/fund-providers'),
-        client.get('/ipos'),
-        client.get('/profit-shares/report'),
-        client.get('/profit-shares/totals'),
-        client.get('/profit-shares/rule-templates'),
-      ]);
-      setMembers(memRes.data);
-      setFundProviders(fpRes.data);
-      setRuleTemplates(templatesRes.data);
-      setIpos(ipoRes.data);
-      setReport(repRes.data);
-      setPnlTotals(totalsRes.data);
-      return memRes.data;
+      await loadCore();
+    } catch (err) {
+      message.error(getErrorMessage(err));
     } finally {
       if (!silent) setLoading(false);
     }
+    loadExtras({ force: true });
   };
 
   const refreshAfterRuleChange = async () => {
     setActiveTabKey('members');
-    await load({ silent: true });
+    await loadCore();
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (['totals', 'history', 'pending'].includes(activeTabKey)) {
+      loadExtras();
+    }
+  }, [activeTabKey]);
+
+  useEffect(() => {
+    if ((templateApplyOpen || ruleFormOpen) && !ipos.length) {
+      loadExtras();
+    }
+  }, [templateApplyOpen, ruleFormOpen, ipos.length]);
 
   useEffect(() => {
     const editId = location.state?.editMemberId;
@@ -280,10 +323,9 @@ export default function ProfitSharingPage() {
   useEffect(() => {
     const presetIpoId = location.state?.presetIpoId;
     if (!presetIpoId) return;
-    setBulkTemplateIpoId(Number(presetIpoId));
-    setActiveTabKey('members');
+    setActiveTabKey('rule-list');
     message.info(
-      `Configure share rules for ${location.state?.presetIpoName || 'this IPO'} — choose IPO scope when adding rules`
+      `Create or edit share rules, then select them on ${location.state?.presetIpoName || 'the IPO'} before distribute or P&L. Rules on one IPO cannot share a member.`
     );
     navigate(location.pathname, { replace: true, state: {} });
   }, [location.state?.presetIpoId]);
@@ -330,6 +372,40 @@ export default function ProfitSharingPage() {
       })),
     [ruleTemplates]
   );
+
+  const memberRuleMap = useMemo(() => {
+    const map = new Map();
+    for (const rule of shareRules) {
+      for (const memberId of shareRuleMemberIds(rule)) {
+        const list = map.get(memberId) || [];
+        list.push(rule);
+        map.set(memberId, list);
+      }
+    }
+    return map;
+  }, [shareRules]);
+
+  const activeMembers = useMemo(
+    () => members.filter(isActiveMember),
+    [members]
+  );
+
+  const editingRuleMemberIds = Form.useWatch('memberIds', ruleListForm) || [];
+  const memberSelectOptions = useMemo(
+    () => groupedMemberSelectOptions(members, editingRuleMemberIds, memberGroups),
+    [members, editingRuleMemberIds, memberGroups]
+  );
+  const memberGroupBulkOptions = useMemo(
+    () => groupBulkSelectOptions(members, memberGroups),
+    [members, memberGroups]
+  );
+  const editingPackRuleIds = Form.useWatch('ruleIds', packForm) || [];
+
+  const toggleRuleMembersByGroup = (groupMemberIds) => {
+    ruleListForm.setFieldsValue({
+      memberIds: toggleGroupMemberIds(editingRuleMemberIds, groupMemberIds),
+    });
+  };
 
   const getTemplateById = (templateId) => {
     const id = normalizeTemplateId(templateId);
@@ -460,6 +536,7 @@ export default function ProfitSharingPage() {
     ruleListForm.setFieldsValue({
       ruleName: '',
       fundProviderId: undefined,
+      memberIds: [],
       profitProviderPercent: 0,
       profitManagerPercent: 0,
       lossProviderPercent: 0,
@@ -473,6 +550,7 @@ export default function ProfitSharingPage() {
     ruleListForm.setFieldsValue({
       ruleName: row.ruleName,
       fundProviderId: row.fundProviderId,
+      memberIds: shareRuleMemberIds(row),
       profitProviderPercent: row.profitProviderPercent ?? 0,
       profitManagerPercent: row.profitManagerPercent ?? 0,
       lossProviderPercent: row.lossProviderPercent ?? 0,
@@ -486,11 +564,11 @@ export default function ProfitSharingPage() {
     setRuleSaving(true);
     try {
       if (ruleListEdit.mode === 'create') {
-        await client.post('/profit-shares/rule-templates', values);
-        message.success('Rule added to list');
+        await client.post('/profit-shares/rules', values);
+        message.success('Share rule created');
       } else {
-        await client.put(`/profit-shares/rule-templates/${ruleListEdit.id}`, values);
-        message.success('Rule updated');
+        await client.put(`/profit-shares/rules/${ruleListEdit.id}`, values);
+        message.success('Share rule updated');
       }
       setRuleListEditOpen(false);
       setRuleListEdit(null);
@@ -504,8 +582,64 @@ export default function ProfitSharingPage() {
 
   const onDeleteRuleTemplate = async (templateId) => {
     try {
-      await client.delete(`/profit-shares/rule-templates/${templateId}`);
-      message.success('Rule removed from list');
+      await client.delete(`/profit-shares/rules/${templateId}`);
+      message.success('Share rule deleted');
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    }
+  };
+
+  const openAddPack = () => {
+    if (!shareRules.length) {
+      message.warning('Create a share rule first, then group rules into a template');
+      return;
+    }
+    setPackEdit({ mode: 'create' });
+    packForm.setFieldsValue({ packName: '', ruleIds: [] });
+    setPackEditOpen(true);
+  };
+
+  const openEditPack = (row) => {
+    setPackEdit({ mode: 'edit', id: row.id, packName: row.packName });
+    packForm.setFieldsValue({
+      packName: row.packName,
+      ruleIds: row.ruleIds || [],
+    });
+    setPackEditOpen(true);
+  };
+
+  const onSavePack = async (values) => {
+    if (!packEdit) return;
+    const selected = shareRules.filter((r) => (values.ruleIds || []).includes(r.id));
+    const conflicts = findShareRuleConflicts(selected);
+    if (conflicts.length) {
+      message.error(formatShareRuleConflicts(conflicts));
+      return;
+    }
+    setRuleSaving(true);
+    try {
+      if (packEdit.mode === 'create') {
+        await client.post('/profit-shares/packs', values);
+        message.success('Share template created');
+      } else {
+        await client.put(`/profit-shares/packs/${packEdit.id}`, values);
+        message.success('Share template updated');
+      }
+      setPackEditOpen(false);
+      setPackEdit(null);
+      await refreshAfterRuleChange();
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const onDeletePack = async (packId) => {
+    try {
+      await client.delete(`/profit-shares/packs/${packId}`);
+      message.success('Share template deleted');
       await refreshAfterRuleChange();
     } catch (err) {
       message.error(getErrorMessage(err));
@@ -931,18 +1065,18 @@ export default function ProfitSharingPage() {
   if (loading) return <PageLoading />;
 
   const overall = pnlTotals?.overall || {};
-  const unconfiguredMembers = members.filter((m) => !m.hasShareRule);
+  const unconfiguredMembers = activeMembers.filter((m) => !(memberRuleMap.get(m.memberId) || []).length);
   const filteredMembers = membersFilter === 'needs-rule'
-    ? members.filter((m) => !m.hasShareRule)
-    : members;
+    ? unconfiguredMembers
+    : activeMembers;
   const selectedCount = normalizeMemberIds(selectedMemberIds).length;
   const pendingCount = report?.pending?.length || 0;
   const historyCount = report?.distributions?.length || 0;
-  const configuredCount = members.length - unconfiguredMembers.length;
+  const configuredCount = activeMembers.length - unconfiguredMembers.length;
 
   const tabs = [
-    { key: 'members', label: 'Members', count: members.length },
-    { key: 'rule-list', label: 'Rule list', count: ruleTemplates.length },
+    { key: 'rule-list', label: 'Templates', count: sharePacks.length || shareRules.length },
+    { key: 'members', label: 'Members', count: activeMembers.length },
     { key: 'totals', label: 'P&L totals' },
     { key: 'history', label: 'History', count: historyCount },
     { key: 'pending', label: 'Pending', count: pendingCount },
@@ -957,10 +1091,10 @@ export default function ProfitSharingPage() {
     <div className="pshare">
       <header className="dash-head">
         <div>
-          <p className="dash-hello">P&amp;L rules</p>
+          <p className="dash-hello">Share templates</p>
           <h1>Profit sharing</h1>
           <p className="dash-lead">
-            Set who keeps what on IPO profit and loss. Rules can cover all IPOs or one IPO.
+            A rule is a reusable deal: who is in it and what % they keep. Group rules into a template (no overlapping members). Each IPO picks one template.
           </p>
         </div>
         <div className="dash-head-actions">
@@ -968,13 +1102,28 @@ export default function ProfitSharingPage() {
           <button type="button" className="dash-btn" onClick={load}>
             <ReloadOutlined /> Refresh
           </button>
-          <button type="button" className="dash-btn dash-btn--primary" onClick={openAddRuleTemplate}>
+          <button type="button" className="dash-btn" onClick={openAddRuleTemplate}>
             <PlusOutlined /> Add rule
+          </button>
+          <button type="button" className="dash-btn dash-btn--primary" onClick={openAddPack}>
+            <PlusOutlined /> Add template
           </button>
         </div>
       </header>
 
-      {unconfiguredMembers.length > 0 && (
+      {shareRules.length === 0 && (
+        <button
+          type="button"
+          className="dash-alert dash-alert--warn"
+          onClick={() => { setActiveTabKey('rule-list'); openAddRuleTemplate(); }}
+        >
+          <WarningOutlined />
+          <span>
+            Create share rules (members + %), group them into a template, then pick that template on each IPO. A member cannot appear on two rules in the same template.
+          </span>
+        </button>
+      )}
+      {shareRules.length > 0 && unconfiguredMembers.length > 0 && (
         <button
           type="button"
           className="dash-alert dash-alert--warn"
@@ -982,7 +1131,7 @@ export default function ProfitSharingPage() {
         >
           <WarningOutlined />
           <span>
-            {unconfiguredMembers.length} member{unconfiguredMembers.length === 1 ? '' : 's'} still need a share rule before you can split P&amp;L.
+            {unconfiguredMembers.length} member{unconfiguredMembers.length === 1 ? '' : 's'} are not on any share rule.
           </span>
         </button>
       )}
@@ -1020,9 +1169,9 @@ export default function ProfitSharingPage() {
           onClick={() => goMembers('needs-rule')}
         />
         <Kpi
-          label="Rules set"
+          label="On a rule"
           value={configuredCount}
-          hint="Members with a share %"
+          hint="Members on a share rule"
           tone="teal"
           active={activeTabKey === 'members' && membersFilter === 'all'}
           onClick={() => goMembers('all')}
@@ -1036,9 +1185,9 @@ export default function ProfitSharingPage() {
           onClick={() => setActiveTabKey('pending')}
         />
         <Kpi
-          label="Rule templates"
-          value={ruleTemplates.length}
-          hint="Reusable share recipes"
+          label="Templates"
+          value={sharePacks.length}
+          hint="Groups of share rules"
           tone="info"
           active={activeTabKey === 'rule-list'}
           onClick={() => setActiveTabKey('rule-list')}
@@ -1063,74 +1212,13 @@ export default function ProfitSharingPage() {
 
       {activeTabKey === 'members' && (
         <>
-          {!templateRuleOptions.length && (
-            <Alert
-              type="warning"
-              showIcon
-              className="pshare-alert"
-              message="No share recipes yet"
-              description="Add a rule first (who gets provider % vs your % vs the member). Then apply it to people below."
-            />
-          )}
           <section className="dash-card pshare-apply">
             <div className="dash-card-head">
-              <h2>Apply a rule</h2>
+              <h2>Who is on which rule</h2>
             </div>
             <p className="pshare-apply-hint">
-              The fund provider sits inside the rule — that is who gets the provider cut on P&amp;L, not who receives IPO cash (use Sub-groups for bulk pay).
+              Members get P&amp;L only when they are on a rule inside the template selected for that IPO. A template can hold several rules if they do not share members.
             </p>
-            <div className="pshare-apply-row">
-              <Select
-                placeholder="Pick a rule"
-                className="pshare-apply-rule"
-                allowClear
-                value={bulkTemplateId}
-                onChange={(v) => setBulkTemplateId(normalizeTemplateId(v) ?? v)}
-                options={templateRuleOptions}
-                disabled={!templateRuleOptions.length}
-                size="large"
-                {...ruleSelectProps(ruleTemplates)}
-              />
-              <IpoScopeSelect
-                placeholder="All IPOs"
-                className="pshare-apply-ipo"
-                value={bulkTemplateIpoId}
-                onChange={setBulkTemplateIpoId}
-                options={ipoOptions}
-                size="large"
-              />
-            </div>
-            <div className="pshare-apply-actions">
-              {selectedCount > 0 && (
-                <span className="pshare-selected">{selectedCount} selected</span>
-              )}
-              {selectedCount > 0 && (
-                <button type="button" className="dash-btn" onClick={() => setSelectedMemberIds([])}>
-                  Clear
-                </button>
-              )}
-              <Button loading={ruleSaving} disabled={!bulkTemplateId} onClick={onApplyToNextMember}>
-                Next member without a rule
-              </Button>
-              <Button
-                loading={ruleSaving}
-                disabled={!bulkTemplateId || !selectedCount}
-                onClick={onApplySelectedOneByOne}
-              >
-                Apply one by one
-              </Button>
-              <Button
-                type="primary"
-                loading={ruleSaving}
-                disabled={!bulkTemplateId || !selectedCount}
-                onClick={onBulkApplyFromToolbar}
-              >
-                Bulk apply
-              </Button>
-              <Button disabled={!selectedCount} onClick={openBulkApplyForSelected}>
-                Options
-              </Button>
-            </div>
           </section>
 
           <div className="mem-chips pshare-chips">
@@ -1139,7 +1227,7 @@ export default function ProfitSharingPage() {
               className={`mem-chip${membersFilter === 'all' ? ' is-on' : ''}`}
               onClick={() => setMembersFilter('all')}
             >
-              All ({members.length})
+              All ({activeMembers.length})
             </button>
             <button
               type="button"
@@ -1152,53 +1240,35 @@ export default function ProfitSharingPage() {
               <button
                 type="button"
                 className="mem-chip"
-                onClick={() => {
-                  const visible = filteredMembers.map((m) => m.memberId);
-                  const allOn = visible.every((id) => selectedMemberIds.includes(id));
-                  setSelectedMemberIds(allOn ? [] : normalizeMemberIds(visible));
-                }}
+                onClick={() => setActiveTabKey('rule-list')}
               >
-                {filteredMembers.every((m) => selectedMemberIds.includes(m.memberId))
-                  ? 'Unselect visible'
-                  : 'Select visible'}
+                Manage on Share rules
               </button>
             )}
           </div>
 
           {filteredMembers.length === 0 ? (
             <div className="mem-empty">
-              <p>{membersFilter === 'needs-rule' ? 'Every member already has a share rule.' : 'No members yet.'}</p>
+              <p>{membersFilter === 'needs-rule' ? 'Every active member already has a share rule.' : 'No active members yet.'}</p>
             </div>
           ) : (
             <ul className="pshare-list">
               {filteredMembers.map((r) => {
-                const checked = selectedMemberIds.includes(r.memberId);
+                const onRules = memberRuleMap.get(r.memberId) || [];
                 return (
                   <li key={r.memberId}>
-                    <article className={`pshare-person${!r.hasShareRule ? ' needs-rule' : ''}${checked ? ' is-picked' : ''}`}>
-                      <Checkbox
-                        checked={checked}
-                        onChange={(e) => {
-                          setSelectedMemberIds((prev) => {
-                            const next = new Set(normalizeMemberIds(prev));
-                            if (e.target.checked) next.add(r.memberId);
-                            else next.delete(r.memberId);
-                            return [...next];
-                          });
-                        }}
-                      />
+                    <article className={`pshare-person${!(memberRuleMap.get(r.memberId) || []).length ? ' needs-rule' : ''}`}>
                       <span className={`mem-avatar mem-avatar--${avatarTone(r.memberId)}`}>
                         {initials(r.displayName)}
                       </span>
                       <div className="pshare-person-main">
                         <div className="pshare-person-top">
                           <strong>{r.displayName}</strong>
-                          {r.hasShareRule ? (
-                            <span className="mem-status is-on">{r.ruleCount} rule{r.ruleCount === 1 ? '' : 's'}</span>
+                          { (memberRuleMap.get(r.memberId) || []).length ? (
+                            <span className="mem-status is-on">{(memberRuleMap.get(r.memberId) || []).length} rule{(memberRuleMap.get(r.memberId) || []).length === 1 ? '' : 's'}</span>
                           ) : (
-                            <span className="mem-share-miss">Needs rule</span>
+                            <span className="mem-share-miss">Not on a rule</span>
                           )}
-                          {r.hasIpoSpecificRules ? <Tag color="purple">IPO override</Tag> : null}
                         </div>
                         <p className="mem-person-meta">
                           <span>{formatPan(r.pan) || 'No PAN'}</span>
@@ -1207,43 +1277,29 @@ export default function ProfitSharingPage() {
                             <span>Profile default: {r.memberFundProviderName}</span>
                           ) : null}
                         </p>
-                        {r.hasShareRule ? (
+                        {(memberRuleMap.get(r.memberId) || []).length ? (
                           <div className="pshare-person-splits">
-                            <SplitBar
-                              label="Profit"
-                              provider={r.effectiveProfitProviderPercent}
-                              manager={r.effectiveProfitManagerPercent}
-                            />
-                            <SplitBar
-                              label="Loss"
-                              provider={r.effectiveLossProviderPercent}
-                              manager={r.effectiveLossManagerPercent}
-                            />
+                            {(memberRuleMap.get(r.memberId) || []).map((rule) => (
+                              <Tag key={rule.id}>{shareRuleLabel(rule, { compact: true })}</Tag>
+                            ))}
                           </div>
                         ) : (
-                          <p className="pshare-person-empty">Apply a rule so this member can take a P&amp;L split.</p>
+                          <p className="pshare-person-empty">Add this member to a share rule, then pick that rule on the IPO.</p>
                         )}
                       </div>
                       <div className="pshare-person-actions">
-                        <Dropdown
-                          disabled={!templateRuleOptions.length || ruleSaving}
-                          menu={buildApplyRuleMenu(r.memberId, r.displayName)}
-                          trigger={['click']}
-                        >
-                          <Button size="small" type="primary" loading={ruleSaving}>
-                            Apply <DownOutlined />
-                          </Button>
-                        </Dropdown>
-                        <Button size="small" onClick={() => openCustomRuleForMember(r)}>
-                          Custom
-                        </Button>
                         <Button
                           size="small"
-                          icon={<UnorderedListOutlined />}
-                          onClick={() => openManageMember(r)}
-                          disabled={!r.ruleCount}
+                          type="primary"
+                          onClick={() => {
+                            if (onRules[0]) openEditRuleTemplate(onRules[0]);
+                            else {
+                              setActiveTabKey('rule-list');
+                              openAddRuleTemplate();
+                            }
+                          }}
                         >
-                          Manage
+                          {onRules.length ? 'Edit rule' : 'Add to rule'}
                         </Button>
                       </div>
                     </article>
@@ -1256,52 +1312,97 @@ export default function ProfitSharingPage() {
       )}
 
       {activeTabKey === 'rule-list' && (
+        <>
         <section className="dash-card">
           <div className="dash-card-head">
-            <h2>Share recipes</h2>
+            <h2>Share templates</h2>
+            <button type="button" className="dash-btn dash-btn--primary" onClick={openAddPack}>
+              <PlusOutlined /> Add template
+            </button>
+          </div>
+          {sharePacks.length === 0 ? (
+            <p className="dash-empty">No templates yet — group one or more share rules (no overlapping members). Each IPO picks one template.</p>
+          ) : (
+            <ul className="pshare-rules">
+              {sharePacks.map((p) => (
+                <li key={p.id} className="pshare-rule">
+                  <div className="pshare-rule-head">
+                    <div>
+                      <strong>{p.packName}</strong>
+                      <span>{sharePackLabel(p)}</span>
+                    </div>
+                    <Space size="small">
+                      <Button size="small" icon={<EditOutlined />} onClick={() => openEditPack(p)}>
+                        Edit
+                      </Button>
+                      <Popconfirm title="Delete this template? IPOs using it will need a new template." onConfirm={() => onDeletePack(p.id)}>
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    </Space>
+                  </div>
+                  {(p.rules || []).length > 0 ? (
+                    <p className="mem-person-meta" style={{ marginTop: 8 }}>
+                      {(p.rules || []).map((r) => r.ruleName || r.providerName).join(', ')}
+                    </p>
+                  ) : (
+                    <Tag color="warning">No rules selected</Tag>
+                  )}
+                  {p.hasConflicts ? (
+                    <Tag color="error" style={{ marginTop: 8 }}>Members overlap</Tag>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="dash-card">
+          <div className="dash-card-head">
+            <h2>Share rules</h2>
             <button type="button" className="dash-btn dash-btn--primary" onClick={openAddRuleTemplate}>
               <PlusOutlined /> Add rule
             </button>
           </div>
-          {ruleTemplates.length === 0 ? (
-            <p className="dash-empty">No rules yet — add one for each fund provider split you reuse.</p>
+          {shareRules.length === 0 ? (
+            <p className="dash-empty">No share rules yet — add a rule, pick members, then group it into a template for IPOs.</p>
           ) : (
             <ul className="pshare-rules">
-              {ruleTemplates.map((r) => (
+              {shareRules.map((r) => (
                 <li key={r.id} className="pshare-rule">
                   <div className="pshare-rule-head">
                     <div>
                       <strong>{r.ruleName || r.providerName}</strong>
-                      <span>{r.providerName || 'No provider'}</span>
+                      <span>{r.providerName || 'No provider'} · {r.memberCount || 0} member{(r.memberCount || 0) === 1 ? '' : 's'} · member keeps {r.profitMemberPercent ?? memberKeep(r.profitProviderPercent, r.profitManagerPercent)}%</span>
                     </div>
                     <Space size="small">
                       <Button size="small" icon={<EditOutlined />} onClick={() => openEditRuleTemplate(r)}>
                         Edit
                       </Button>
-                      <Popconfirm title="Delete this rule from the list?" onConfirm={() => onDeleteRuleTemplate(r.id)}>
+                      <Popconfirm title="Delete this share rule? IPOs using it will need a new rule." onConfirm={() => onDeleteRuleTemplate(r.id)}>
                         <Button size="small" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
                     </Space>
                   </div>
-                  {r.hasRule ? (
-                    <>
-                      <div className="pshare-rule-split">
-                        <span>On profit</span>
-                        <SplitBar provider={r.profitProviderPercent} manager={r.profitManagerPercent} />
-                      </div>
-                      <div className="pshare-rule-split">
-                        <span>On loss</span>
-                        <SplitBar provider={r.lossProviderPercent} manager={r.lossManagerPercent} />
-                      </div>
-                    </>
+                  <div className="pshare-rule-split">
+                    <span>On profit</span>
+                    <SplitBar provider={r.profitProviderPercent} manager={r.profitManagerPercent} />
+                  </div>
+                  <div className="pshare-rule-split">
+                    <span>On loss</span>
+                    <SplitBar provider={r.lossProviderPercent} manager={r.lossManagerPercent} />
+                  </div>
+                  {(r.members || []).length > 0 ? (
+                    <p className="mem-person-meta" style={{ marginTop: 8 }}>
+                      {(r.members || []).map((m) => m.displayName).join(', ')}
+                    </p>
                   ) : (
-                    <Tag color="warning">Percentages not set</Tag>
+                    <Tag color="warning">No members selected</Tag>
                   )}
                 </li>
               ))}
             </ul>
           )}
         </section>
+        </>
       )}
 
       {activeTabKey === 'totals' && (
@@ -1555,20 +1656,20 @@ export default function ProfitSharingPage() {
       </Modal>
 
       <Modal
-        title={ruleListEdit?.mode === 'edit' ? `Edit rule — ${ruleListEdit?.ruleName || ''}` : 'Add rule to list'}
+        title={ruleListEdit?.mode === 'edit' ? `Edit share rule — ${ruleListEdit?.ruleName || ''}` : 'Create share rule'}
         open={ruleListEditOpen}
         onCancel={() => { setRuleListEditOpen(false); setRuleListEdit(null); }}
         onOk={() => ruleListForm.submit()}
         confirmLoading={ruleSaving}
         destroyOnClose
-        width={480}
+        width={560}
       >
         <Form form={ruleListForm} layout="vertical" onFinish={onSaveRuleTemplate}>
           <Form.Item
             name="ruleName"
             label="Rule name"
             rules={[{ required: true, message: 'Enter a rule name' }]}
-            extra="Shown in the rule list and when applying to members (e.g. Sagar standard, Sagar HNI)."
+            extra="Shown when picking a rule on an IPO (e.g. Rinku 30%, Ungrouped 50%)."
           >
             <Input placeholder="Rule name" />
           </Form.Item>
@@ -1580,13 +1681,98 @@ export default function ProfitSharingPage() {
             <Select
               placeholder="Who receives the provider share?"
               options={providerOptions}
-              disabled={ruleListEdit?.mode === 'edit'}
             />
           </Form.Item>
+          <div>
+            <p className="ant-form-item-label" style={{ marginBottom: 4 }}>
+              <label>Members on this rule</label>
+            </p>
+            {memberGroupBulkOptions.length > 0 && (
+              <div className="mem-chips" style={{ marginBottom: 8 }}>
+                {memberGroupBulkOptions.map((opt) => {
+                  const on = isGroupFullySelected(editingRuleMemberIds, opt.ids);
+                  return (
+                    <button
+                      type="button"
+                      key={opt.key}
+                      className={`mem-chip${on ? ' is-on' : ''}`}
+                      onClick={() => toggleRuleMembersByGroup(opt.ids)}
+                    >
+                      {opt.label} ({opt.ids.length})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <Form.Item
+              name="memberIds"
+              extra="Tap a sub-group to add or remove everyone in it. Inactive members already on this rule stay visible."
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                placeholder="Select active members, or pick a sub-group above"
+                optionFilterProp="label"
+                options={memberSelectOptions}
+              />
+            </Form.Item>
+          </div>
           <Divider orientation="left" plain>When member has profit</Divider>
           <SharePercentForm form={ruleListForm} prefix="profit" />
           <Divider orientation="left" plain>When member has loss</Divider>
           <SharePercentForm form={ruleListForm} prefix="loss" />
+        </Form>
+      </Modal>
+
+      <Modal
+        title={packEdit?.mode === 'edit' ? `Edit template — ${packEdit?.packName || ''}` : 'Create share template'}
+        open={packEditOpen}
+        onCancel={() => { setPackEditOpen(false); setPackEdit(null); }}
+        onOk={() => packForm.submit()}
+        confirmLoading={ruleSaving}
+        destroyOnClose
+        width={560}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          Group one or more share rules. A member cannot appear on two rules in the same template. Each IPO picks this template instead of picking rules one by one.
+        </Typography.Paragraph>
+        <Form form={packForm} layout="vertical" onFinish={onSavePack}>
+          <Form.Item
+            name="packName"
+            label="Template name"
+            rules={[{ required: true, message: 'Enter a template name' }]}
+          >
+            <Input placeholder="e.g. Retail + HNI" />
+          </Form.Item>
+          <Form.Item
+            name="ruleIds"
+            label="Share rules"
+            rules={[
+              { required: true, type: 'array', min: 1, message: 'Select at least one share rule' },
+              {
+                validator: (_, ids) => {
+                  const selected = shareRules.filter((r) => (ids || []).includes(r.id));
+                  const conflicts = findShareRuleConflicts(selected);
+                  if (conflicts.length) return Promise.reject(new Error(formatShareRuleConflicts(conflicts)));
+                  return Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Pick rules that do not share members"
+              options={shareRules.map((r) => ({
+                value: r.id,
+                label: shareRuleLabel(r),
+                disabled: ruleConflictsWithSelected(r, editingPackRuleIds, shareRules),
+              }))}
+            />
+          </Form.Item>
         </Form>
       </Modal>
 

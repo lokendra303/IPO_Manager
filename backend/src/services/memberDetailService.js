@@ -1,6 +1,7 @@
 import { parsePositiveInt } from '../utils/validate.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
+import { calculateMultiRuleSplit } from './profitShareService.js';
+import { loadShareRulesByIpoIds, tryResolveShareRulesForMember } from './ipoShareRuleService.js';
 import { outstandingPrincipal, remainingPrincipal } from './pendingReturnUtils.js';
 import { getSubGroupPortalInfo } from './memberSubGroupInfo.js';
 
@@ -117,6 +118,12 @@ export async function getMemberDetail(pool, tenantId, memberId) {
   let totalManagerShare = 0;
   let pendingShareGross = 0;
 
+  const ipoRules = await loadShareRulesByIpoIds(
+    pool,
+    tenantId,
+    applications.map((app) => app.ipo_id)
+  );
+
   const ipoApplications = applications.map((app) => {
     const gross = app.allotment_status === 'ALLOTED' ? Number(app.profit_loss ?? 0) : 0;
     let memberShare = null;
@@ -135,8 +142,11 @@ export async function getMemberDetail(pool, tenantId, memberId) {
         totalMemberShare += memberShare;
         totalProviderShare += providerShare;
         totalManagerShare += managerShare;
-      } else if (rules.length) {
-        const applicableRules = resolveRulesForIpo(rules, app.ipo_id);
+      } else {
+        const { rules: applicableRules } = tryResolveShareRulesForMember(
+          ipoRules.get(Number(app.ipo_id)) || [],
+          id
+        );
         if (applicableRules.length) {
           const split = calculateMultiRuleSplit(gross, applicableRules);
           memberShare = split.memberAmount;

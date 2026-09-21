@@ -55,7 +55,7 @@ function InfoRow({ label, value, copyable }: { label: string; value: string; cop
 }
 
 export default function MembersScreen() {
-  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ACTIVE');
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -215,9 +215,9 @@ export default function MembersScreen() {
         value={statusFilter}
         onChange={setStatusFilter}
         options={[
-          { value: 'ALL', label: `All (${members.length})` },
           { value: 'ACTIVE', label: `Active (${activeCount})` },
           { value: 'INACTIVE', label: `Inactive (${inactiveCount})` },
+          { value: 'ALL', label: `All (${members.length})` },
         ]}
       />
       {(memberGroups.length > 0 || ungroupedCount > 0) && (

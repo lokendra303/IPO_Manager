@@ -1933,6 +1933,244 @@ async function applyGroupLeaderWalletsV55(conn) {
   }
 }
 
+async function applyIpoShareRulesV59(conn) {
+  if (!(await tableExists(conn, 'profit_share_rules'))) {
+    await conn.query(
+      `CREATE TABLE profit_share_rules (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        rule_name VARCHAR(100) NOT NULL,
+        fund_provider_id INT NOT NULL,
+        profit_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
+        INDEX idx_share_rules_tenant (tenant_id, sort_order)
+      )`
+    );
+    console.log('Created profit_share_rules');
+  }
+
+  if (!(await tableExists(conn, 'profit_share_rule_members'))) {
+    await conn.query(
+      `CREATE TABLE profit_share_rule_members (
+        rule_id INT NOT NULL,
+        member_id INT NOT NULL,
+        PRIMARY KEY (rule_id, member_id),
+        FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+        FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+        INDEX idx_share_rule_members_member (member_id)
+      )`
+    );
+    console.log('Created profit_share_rule_members');
+  }
+
+  if (await tableExists(conn, 'ipos') && !(await columnExists(conn, 'ipos', 'profit_share_rule_id'))) {
+    await conn.query(
+      'ALTER TABLE ipos ADD COLUMN profit_share_rule_id INT DEFAULT NULL'
+    );
+    console.log('Added ipos.profit_share_rule_id');
+  }
+
+  if (await tableExists(conn, 'ipos') && await columnExists(conn, 'ipos', 'profit_share_rule_id')) {
+    const [fkRows] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipos'
+         AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = 'fk_ipos_profit_share_rule'`
+    );
+    if (!fkRows.length) {
+      await conn.query(
+        `ALTER TABLE ipos
+         ADD CONSTRAINT fk_ipos_profit_share_rule
+         FOREIGN KEY (profit_share_rule_id) REFERENCES profit_share_rules(id) ON DELETE SET NULL`
+      );
+    }
+  }
+
+  if (
+    (await tableExists(conn, 'profit_share_rule_templates'))
+    && (await tableExists(conn, 'profit_share_rules'))
+  ) {
+    const [existing] = await conn.query('SELECT COUNT(*) AS c FROM profit_share_rules');
+    if (Number(existing[0].c) === 0) {
+      await conn.query(
+        `INSERT INTO profit_share_rules
+         (tenant_id, rule_name, fund_provider_id, profit_provider_percent, profit_manager_percent,
+          loss_provider_percent, loss_manager_percent, sort_order)
+         SELECT tenant_id, rule_name, fund_provider_id, profit_provider_percent, profit_manager_percent,
+                loss_provider_percent, loss_manager_percent, sort_order
+         FROM profit_share_rule_templates`
+      );
+      console.log('Copied profit_share_rule_templates into profit_share_rules');
+    }
+  }
+}
+
+async function applyIpoMultiShareRulesV60(conn) {
+  if (!(await tableExists(conn, 'ipo_profit_share_rules'))) {
+    await conn.query(
+      `CREATE TABLE ipo_profit_share_rules (
+        ipo_id INT NOT NULL,
+        rule_id INT NOT NULL,
+        PRIMARY KEY (ipo_id, rule_id),
+        FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
+        FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+        INDEX idx_ipo_share_rules_rule (rule_id)
+      )`
+    );
+    console.log('Created ipo_profit_share_rules');
+  }
+
+  if (
+    (await tableExists(conn, 'ipos'))
+    && (await tableExists(conn, 'ipo_profit_share_rules'))
+    && (await columnExists(conn, 'ipos', 'profit_share_rule_id'))
+  ) {
+    await conn.query(
+      `INSERT IGNORE INTO ipo_profit_share_rules (ipo_id, rule_id)
+       SELECT i.id, i.profit_share_rule_id
+       FROM ipos i
+       JOIN profit_share_rules r ON r.id = i.profit_share_rule_id
+       WHERE i.profit_share_rule_id IS NOT NULL`
+    );
+  }
+}
+
+async function applySharePacksV61(conn) {
+  if (!(await tableExists(conn, 'profit_share_packs'))) {
+    await conn.query(
+      `CREATE TABLE profit_share_packs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        pack_name VARCHAR(100) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        INDEX idx_share_packs_tenant (tenant_id, sort_order)
+      )`
+    );
+    console.log('Created profit_share_packs');
+  }
+
+  if (!(await tableExists(conn, 'profit_share_pack_rules'))) {
+    await conn.query(
+      `CREATE TABLE profit_share_pack_rules (
+        pack_id INT NOT NULL,
+        rule_id INT NOT NULL,
+        PRIMARY KEY (pack_id, rule_id),
+        FOREIGN KEY (pack_id) REFERENCES profit_share_packs(id) ON DELETE CASCADE,
+        FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+        INDEX idx_share_pack_rules_rule (rule_id)
+      )`
+    );
+    console.log('Created profit_share_pack_rules');
+  }
+
+  if (await tableExists(conn, 'ipos') && !(await columnExists(conn, 'ipos', 'profit_share_pack_id'))) {
+    await conn.query('ALTER TABLE ipos ADD COLUMN profit_share_pack_id INT DEFAULT NULL');
+    console.log('Added ipos.profit_share_pack_id');
+  }
+
+  if (await tableExists(conn, 'ipos') && await columnExists(conn, 'ipos', 'profit_share_pack_id')) {
+    const [fkRows] = await conn.query(
+      `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ipos'
+         AND CONSTRAINT_TYPE = 'FOREIGN KEY' AND CONSTRAINT_NAME = 'fk_ipos_profit_share_pack'`
+    );
+    if (!fkRows.length && (await tableExists(conn, 'profit_share_packs'))) {
+      await conn.query(
+        `ALTER TABLE ipos
+         ADD CONSTRAINT fk_ipos_profit_share_pack
+         FOREIGN KEY (profit_share_pack_id) REFERENCES profit_share_packs(id) ON DELETE SET NULL`
+      );
+    }
+  }
+
+  if (!(await tableExists(conn, 'profit_share_rules')) || !(await tableExists(conn, 'profit_share_packs'))) {
+    return;
+  }
+
+  const [rules] = await conn.query(
+    'SELECT id, tenant_id, rule_name FROM profit_share_rules ORDER BY tenant_id, sort_order, id'
+  );
+  const [existingPackRules] = await conn.query(
+    `SELECT p.tenant_id, p.id AS pack_id, pr.rule_id
+     FROM profit_share_packs p
+     JOIN profit_share_pack_rules pr ON pr.pack_id = p.id`
+  );
+  const soloByRule = new Map();
+  const packsByKey = new Map();
+  const rulesByPack = new Map();
+  for (const row of existingPackRules) {
+    const list = rulesByPack.get(row.pack_id) || [];
+    list.push(Number(row.rule_id));
+    rulesByPack.set(row.pack_id, list);
+  }
+  for (const [packId, ruleIds] of rulesByPack) {
+    const key = `${existingPackRules.find((r) => r.pack_id === packId)?.tenant_id}:${[...ruleIds].sort((a, b) => a - b).join(',')}`;
+    packsByKey.set(key, packId);
+    if (ruleIds.length === 1) soloByRule.set(ruleIds[0], packId);
+  }
+
+  async function insertPack(tenantId, name, ruleIds) {
+    const [result] = await conn.query(
+      'INSERT INTO profit_share_packs (tenant_id, pack_name, sort_order) VALUES (?, ?, 0)',
+      [tenantId, name]
+    );
+    if (ruleIds.length) {
+      await conn.query(
+        `INSERT INTO profit_share_pack_rules (pack_id, rule_id) VALUES ${ruleIds.map(() => '(?, ?)').join(',')}`,
+        ruleIds.flatMap((ruleId) => [result.insertId, ruleId])
+      );
+    }
+    const key = `${tenantId}:${[...ruleIds].sort((a, b) => a - b).join(',')}`;
+    packsByKey.set(key, result.insertId);
+    if (ruleIds.length === 1) soloByRule.set(ruleIds[0], result.insertId);
+    return result.insertId;
+  }
+
+  for (const rule of rules) {
+    if (soloByRule.has(rule.id)) continue;
+    await insertPack(rule.tenant_id, rule.rule_name, [rule.id]);
+  }
+
+  if (await tableExists(conn, 'ipo_profit_share_rules')) {
+    const [ipoLinks] = await conn.query(
+      `SELECT i.tenant_id, i.id AS ipo_id, ipr.rule_id, r.rule_name
+       FROM ipos i
+       JOIN ipo_profit_share_rules ipr ON ipr.ipo_id = i.id
+       JOIN profit_share_rules r ON r.id = ipr.rule_id
+       WHERE i.profit_share_pack_id IS NULL
+       ORDER BY i.id, ipr.rule_id`
+    );
+    const byIpo = new Map();
+    for (const row of ipoLinks) {
+      const list = byIpo.get(row.ipo_id) || { tenantId: row.tenant_id, rules: [] };
+      list.rules.push({ id: row.rule_id, name: row.rule_name });
+      byIpo.set(row.ipo_id, list);
+    }
+    for (const [ipoId, info] of byIpo) {
+      const ids = [...new Set(info.rules.map((r) => Number(r.id)))].sort((a, b) => a - b);
+      const key = `${info.tenantId}:${ids.join(',')}`;
+      let packId = packsByKey.get(key);
+      if (!packId) {
+        const name = info.rules.map((r) => r.name).filter(Boolean).join(' + ') || 'Share template';
+        packId = await insertPack(info.tenantId, name.slice(0, 100), ids);
+      }
+      await conn.query(
+        'UPDATE ipos SET profit_share_pack_id = ? WHERE id = ? AND tenant_id = ?',
+        [packId, ipoId, info.tenantId]
+      );
+    }
+  }
+}
+
 async function applyIpoCatalogV58(conn) {
   const sql = fs.readFileSync(path.join(__dirname, 'schema-ipo-catalog.sql'), 'utf8');
   await conn.query(sql);
@@ -2098,6 +2336,9 @@ async function migrate() {
   await applyFundAdjustPoolV56(conn);
   await applyIpoListingDateV57(conn);
   await applyIpoCatalogV58(conn);
+  await applyIpoShareRulesV59(conn);
+  await applyIpoMultiShareRulesV60(conn);
+  await applySharePacksV61(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

@@ -75,21 +75,11 @@ const MY_IPO_SELECT = `
     c.subscription_retail AS catalog_subscription_retail,
     c.subscription_total AS catalog_subscription_total,
     c.subscription_updated_at AS catalog_subscription_updated_at,
-    (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) AS application_count,
-    (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED')) AS allotted_count,
-    (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id AND a.allotment_status = 'NOT_ALLOTED') AS not_allotted_count,
-    (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id AND a.allotment_status IN ('PENDING', 'CHECKING', 'RETRY')) AS pending_allotment_count,
-    (
-      SELECT COALESCE(SUM(
-        CASE
-          WHEN a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND a.profit_loss IS NOT NULL THEN a.profit_loss
-          WHEN a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND c.gmp IS NOT NULL AND i.lot_size IS NOT NULL
-            THEN COALESCE(a.allotted_lots, 1) * i.lot_size * c.gmp
-          ELSE 0
-        END
-      ), 0)
-      FROM ipo_applications a WHERE a.ipo_id = i.id
-    ) AS expected_profit
+    COALESCE(stats.application_count, 0) AS application_count,
+    COALESCE(stats.allotted_count, 0) AS allotted_count,
+    COALESCE(stats.not_allotted_count, 0) AS not_allotted_count,
+    COALESCE(stats.pending_allotment_count, 0) AS pending_allotment_count,
+    COALESCE(stats.expected_profit, 0) AS expected_profit
 `;
 
 router.get('/', async (req, res, next) => {
@@ -106,9 +96,23 @@ router.get('/', async (req, res, next) => {
       `${MY_IPO_SELECT}
        FROM ipos i
        LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       LEFT JOIN (
+         SELECT ipo_id,
+           COUNT(*) AS application_count,
+           SUM(CASE WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 1 ELSE 0 END) AS allotted_count,
+           SUM(CASE WHEN allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS not_allotted_count,
+           SUM(CASE WHEN allotment_status IN ('PENDING', 'CHECKING', 'RETRY') THEN 1 ELSE 0 END) AS pending_allotment_count,
+           COALESCE(SUM(CASE
+             WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND profit_loss IS NOT NULL THEN profit_loss
+             ELSE 0
+           END), 0) AS expected_profit
+         FROM ipo_applications
+         WHERE tenant_id = ?
+         GROUP BY ipo_id
+       ) stats ON stats.ipo_id = i.id
        WHERE ${where.join(' AND ')}
        ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
-      params
+      [req.tenantId, ...params]
     );
     res.json({ success: true, data: rows.map(serializeMyIpo) });
   } catch (err) {

@@ -48,31 +48,41 @@ function normalizeUpi(upi) {
 
 
 
+const MEMBERS_LITE_SQL = `SELECT m.id, m.display_name, m.pan, m.status, m.member_group_id,
+              m.sort_order, m.relationship_note, mg.name AS member_group_name
+       FROM members m
+       LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+       WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`;
+
 router.get('/', async (req, res, next) => {
 
   try {
-
+    const lite = req.query.lite === '1' || req.query.lite === 'true';
     const [rows] = await pool.query(
-
-      `SELECT m.*,
+      lite
+        ? MEMBERS_LITE_SQL
+        : `SELECT m.*,
               fp.name AS fund_provider_name,
               mg.name AS member_group_name,
-              mps.id AS share_rule_id,
-              mps.fund_provider_id AS share_fund_provider_id,
-              mps.provider_percent AS share_profit_provider_percent,
-              mps.manager_percent AS share_profit_manager_percent,
-              mps.loss_provider_percent AS share_loss_provider_percent,
-              mps.loss_manager_percent AS share_loss_manager_percent,
+              r.id AS share_rule_id,
+              r.fund_provider_id AS share_fund_provider_id,
+              r.profit_provider_percent AS share_profit_provider_percent,
+              r.profit_manager_percent AS share_profit_manager_percent,
+              r.loss_provider_percent AS share_loss_provider_percent,
+              r.loss_manager_percent AS share_loss_manager_percent,
               fp2.name AS share_provider_name
        FROM members m
        LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
        LEFT JOIN member_groups mg ON mg.id = m.member_group_id
-       LEFT JOIN member_profit_shares mps ON mps.member_id = m.id AND mps.tenant_id = m.tenant_id
-       LEFT JOIN fund_providers fp2 ON fp2.id = mps.fund_provider_id
+       LEFT JOIN (
+         SELECT member_id, MIN(rule_id) AS rule_id
+         FROM profit_share_rule_members
+         GROUP BY member_id
+       ) pick ON pick.member_id = m.id
+       LEFT JOIN profit_share_rules r ON r.id = pick.rule_id AND r.tenant_id = m.tenant_id
+       LEFT JOIN fund_providers fp2 ON fp2.id = r.fund_provider_id
        WHERE m.tenant_id = ? ORDER BY m.sort_order, m.id`,
-
       [req.tenantId]
-
     );
 
     res.json(rows);

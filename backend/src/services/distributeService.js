@@ -10,6 +10,7 @@ import { debitWallet, debitWalletFromAccounts, ensureWallet, creditWallet } from
 import { assertAccountDebits, requireBankAccountId, syncOwnerWalletTotal } from './bankAccountService.js';
 import { dedupeIds, parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { assertIpoApplicationsEditable, revokeProfitShareDistribution } from './profitShareService.js';
+import { requireIpoShareRule, assertMembersOnIpoShareRule } from './ipoShareRuleService.js';
 
 /** Net provider capital available to deploy (principal − funds still with members). */
 export async function getProviderDeployCapacity(conn, tenantId) {
@@ -216,6 +217,8 @@ export async function distributeIpo(conn, {
     throw new AppError('Cannot distribute funds for a closed IPO. Reopen the IPO first.');
   }
 
+  await requireIpoShareRule(conn, tenantId, ipoIdNum);
+
   const { applications: appPlans, ledgers: ledgerPlans, bulkPayments: bulkPaymentPlans } = await buildDistributionPlan(conn, {
     tenantId,
     ipo,
@@ -225,6 +228,13 @@ export async function distributeIpo(conn, {
     memberCategories,
     groupBulks,
   });
+
+  await assertMembersOnIpoShareRule(
+    conn,
+    tenantId,
+    ipoIdNum,
+    appPlans.map((p) => p.memberId)
+  );
 
   const total = appPlans.reduce((s, p) => s + Number(p.amount), 0);
   const now = new Date();

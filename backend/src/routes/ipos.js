@@ -27,6 +27,15 @@ import {
   serializeAllowedCategories,
   validateAllowedCategories,
 } from '../constants/ipoCategories.js';
+import {
+  attachShareRulesToIpos,
+  resolveOptionalShareRuleId,
+  setIpoShareRules,
+  setIpoSharePack,
+} from '../services/ipoShareRuleService.js';
+import { listMemberGroups } from '../services/memberGroupService.js';
+import { ensureWallet } from '../services/walletService.js';
+import { listBankAccounts, getWalletBalancesByPurpose } from '../services/bankAccountService.js';
 
 function dateOnly(value) {
   return toDate(value);
@@ -55,6 +64,66 @@ function serializeIpo(row) {
   };
 }
 
+async function loadSerializedIpo(conn, tenantId, ipoId) {
+  const [rows] = await conn.query(
+    `SELECT i.* FROM ipos i WHERE i.id = ? AND i.tenant_id = ?`,
+    [ipoId, tenantId]
+  );
+  if (!rows.length) return null;
+  const [attached] = await attachShareRulesToIpos(conn, tenantId, [serializeIpo(rows[0])]);
+  return attached;
+}
+
+const IPO_DETAIL_SQL = `SELECT i.*,
+        c.gmp AS catalog_gmp,
+        c.gmp_percentage AS catalog_gmp_percentage,
+        c.estimated_listing_price AS catalog_estimated_listing_price,
+        c.gmp_updated_at AS catalog_gmp_updated_at,
+        c.status AS catalog_status,
+        c.open_date AS catalog_open_date,
+        c.close_date AS catalog_close_date,
+        c.allotment_date AS catalog_allotment_date,
+        c.listing_date AS catalog_listing_date,
+        c.subscription_qib AS catalog_subscription_qib,
+        c.subscription_nii AS catalog_subscription_nii,
+        c.subscription_retail AS catalog_subscription_retail,
+        c.subscription_total AS catalog_subscription_total,
+        c.registrar_name AS catalog_registrar_name
+       FROM ipos i
+       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.id = ? AND i.tenant_id = ?`;
+
+const IPO_APPLICATIONS_SQL = `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
+              mg.name AS member_group_name,
+              m.member_group_id,
+              pay.display_name AS paid_to_display_name,
+              a.paid_to_external_name,
+              psd.id AS profit_share_distribution_id,
+              psd.provider_amount AS share_provider_amount,
+              psd.manager_amount AS share_manager_amount,
+              psd.member_amount AS share_member_amount,
+              psd.distributed_at AS share_distributed_at,
+              psd.pnl_type AS share_pnl_type
+       FROM ipo_applications a
+       JOIN members m ON m.id = a.member_id
+       LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+       LEFT JOIN members pay ON pay.id = a.paid_to_member_id
+       LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
+       WHERE a.ipo_id = ? AND a.tenant_id = ?
+       ORDER BY mg.sort_order, mg.name, m.sort_order, m.id`;
+
+async function loadIpoDetail(conn, tenantId, ipoId) {
+  const [rows] = await conn.query(IPO_DETAIL_SQL, [ipoId, tenantId]);
+  if (!rows.length) return null;
+  const [attached] = await attachShareRulesToIpos(conn, tenantId, [serializeIpo(rows[0])]);
+  return attached;
+}
+
+async function loadIpoApplications(conn, tenantId, ipoId) {
+  const [rows] = await conn.query(IPO_APPLICATIONS_SQL, [ipoId, tenantId]);
+  return rows;
+}
+
 const router = Router();
 
 
@@ -62,8 +131,22 @@ const router = Router();
 router.get('/', async (req, res, next) => {
 
   try {
+    const namesOnly = req.query.namesOnly === '1' || req.query.namesOnly === 'true';
     const invalidOnly = req.query.invalidOnly === '1' || req.query.invalidOnly === 'true';
     const includeInvalid = req.query.includeInvalid === '1' || req.query.includeInvalid === 'true';
+
+    if (namesOnly) {
+      let invalidFilter = 'AND COALESCE(is_invalid, 0) = 0';
+      if (invalidOnly) invalidFilter = 'AND COALESCE(is_invalid, 0) = 1';
+      else if (includeInvalid) invalidFilter = '';
+      const [rows] = await pool.query(
+        `SELECT id, name FROM ipos
+         WHERE tenant_id = ? ${invalidFilter}
+         ORDER BY name, id`,
+        [req.tenantId]
+      );
+      return res.json(rows);
+    }
 
     let invalidFilter = 'AND COALESCE(i.is_invalid, 0) = 0';
     if (invalidOnly) invalidFilter = 'AND COALESCE(i.is_invalid, 0) = 1';
@@ -81,23 +164,25 @@ router.get('/', async (req, res, next) => {
         c.close_date AS catalog_close_date,
         c.allotment_date AS catalog_allotment_date,
         c.listing_date AS catalog_listing_date,
-
-        (SELECT COUNT(*) FROM ipo_applications a WHERE a.ipo_id = i.id) as application_count,
-
-        (SELECT COUNT(*) FROM ipo_applications a
-          WHERE a.ipo_id = i.id AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED')) as allotted_count,
-
-        (SELECT COUNT(*) FROM ipo_applications a
-          WHERE a.ipo_id = i.id
-            AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
-            AND a.allotment_status <> 'PENDING') as pending_return_count
-
+        COALESCE(stats.application_count, 0) AS application_count,
+        COALESCE(stats.allotted_count, 0) AS allotted_count,
+        COALESCE(stats.pending_return_count, 0) AS pending_return_count
        FROM ipos i
        LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       LEFT JOIN (
+         SELECT ipo_id,
+           COUNT(*) AS application_count,
+           SUM(CASE WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 1 ELSE 0 END) AS allotted_count,
+           SUM(CASE WHEN (trns_received IS NULL OR trns_received <> 'Received')
+                     AND allotment_status <> 'PENDING' THEN 1 ELSE 0 END) AS pending_return_count
+         FROM ipo_applications
+         WHERE tenant_id = ?
+         GROUP BY ipo_id
+       ) stats ON stats.ipo_id = i.id
        WHERE i.tenant_id = ? ${invalidFilter}
        ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
 
-      [req.tenantId]
+      [req.tenantId, req.tenantId]
 
     );
 
@@ -119,6 +204,7 @@ router.post('/', async (req, res, next) => {
 
     const {
       name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, registrar, ipoSegment, allowedCategories,
+      profitShareRuleId, profitShareRuleIds, profitSharePackId,
     } = req.body;
 
     if (!name?.trim()) throw new AppError('IPO name is required');
@@ -148,24 +234,32 @@ router.post('/', async (req, res, next) => {
       throw new AppError('IPO segment must be SME or MAINBOARD');
     }
     const categoriesJson = serializeAllowedCategories(allowedCategories);
-
-
+    const shareRuleIds = profitShareRuleIds !== undefined
+      ? profitShareRuleIds
+      : (profitShareRuleId ? [profitShareRuleId] : []);
+    const shareRuleId = shareRuleIds.length
+      ? await resolveOptionalShareRuleId(pool, req.tenantId, shareRuleIds[0])
+      : null;
 
     const [result] = await pool.query(
 
-      `INSERT INTO ipos (tenant_id, name, lot_amount_rii, lot_amount_hni, lot_amount, status, open_date, last_apply_date, registrar, ipo_segment, allowed_categories)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ipos (tenant_id, name, lot_amount_rii, lot_amount_hni, lot_amount, status, open_date, last_apply_date, registrar, ipo_segment, allowed_categories, profit_share_rule_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
       [
         req.tenantId, name.trim(), lotRii, lotHni, lotRii, status || 'OPEN', openDate || null, lastApplyDate || null,
-        registrar || null, segment, categoriesJson,
+        registrar || null, segment, categoriesJson, shareRuleId,
       ]
 
     );
 
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [result.insertId]);
+    if (profitSharePackId !== undefined) {
+      await setIpoSharePack(pool, req.tenantId, result.insertId, profitSharePackId || null);
+    } else if (shareRuleIds.length) {
+      await setIpoShareRules(pool, req.tenantId, result.insertId, shareRuleIds);
+    }
 
-    res.status(201).json(serializeIpo(rows[0]));
+    res.status(201).json(await loadSerializedIpo(pool, req.tenantId, result.insertId));
 
   } catch (err) {
 
@@ -228,47 +322,56 @@ router.post('/adjust-combine', async (req, res, next) => {
   }
 });
 
-router.get('/:id', async (req, res, next) => {
-
+router.get('/:id/setup', async (req, res, next) => {
   try {
-
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
-
-    const [rows] = await pool.query(
-
-      `SELECT i.*,
-        c.gmp AS catalog_gmp,
-        c.gmp_percentage AS catalog_gmp_percentage,
-        c.estimated_listing_price AS catalog_estimated_listing_price,
-        c.gmp_updated_at AS catalog_gmp_updated_at,
-        c.status AS catalog_status,
-        c.open_date AS catalog_open_date,
-        c.close_date AS catalog_close_date,
-        c.allotment_date AS catalog_allotment_date,
-        c.listing_date AS catalog_listing_date,
-        c.subscription_qib AS catalog_subscription_qib,
-        c.subscription_nii AS catalog_subscription_nii,
-        c.subscription_retail AS catalog_subscription_retail,
-        c.subscription_total AS catalog_subscription_total,
-        c.registrar_name AS catalog_registrar_name
-       FROM ipos i
-       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
-       WHERE i.id = ? AND i.tenant_id = ?`,
-
-      [ipoId, req.tenantId]
-
-    );
-
-    if (!rows.length) throw new AppError('IPO not found', 404);
-
-    res.json(serializeIpo(rows[0]));
-
+    const conn = await pool.getConnection();
+    try {
+      const ipo = await loadIpoDetail(conn, req.tenantId, ipoId);
+      if (!ipo) throw new AppError('IPO not found', 404);
+      const applications = await loadIpoApplications(conn, req.tenantId, ipoId);
+      const [members] = await conn.query(
+        `SELECT m.id, m.display_name, m.pan, m.status, m.member_group_id,
+                m.sort_order, m.relationship_note, mg.name AS member_group_name
+         FROM members m
+         LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+         WHERE m.tenant_id = ? AND m.status = 'ACTIVE'
+         ORDER BY m.sort_order, m.id`,
+        [req.tenantId]
+      );
+      const groups = await listMemberGroups(conn, req.tenantId);
+      await ensureWallet(conn, req.tenantId);
+      const accounts = await listBankAccounts(conn, req.tenantId);
+      const balances = await getWalletBalancesByPurpose(conn, req.tenantId);
+      res.json({
+        ipo,
+        applications,
+        members,
+        groups,
+        wallet: {
+          balance: balances.totalBalance,
+          providerBalance: balances.providerBalance,
+          managerBalance: balances.managerBalance,
+          accounts,
+        },
+      });
+    } finally {
+      conn.release();
+    }
   } catch (err) {
-
     next(err);
-
   }
+});
 
+router.get('/:id', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const ipo = await loadIpoDetail(pool, req.tenantId, ipoId);
+    if (!ipo) throw new AppError('IPO not found', 404);
+    res.json(ipo);
+  } catch (err) {
+    next(err);
+  }
 });
 
 
@@ -281,6 +384,7 @@ router.patch('/:id', async (req, res, next) => {
 
     const {
       name, lotAmount, lotAmountRii, lotAmountHni, status, openDate, lastApplyDate, listingDate, registrar, ipoSegment, allowedCategories,
+      profitShareRuleId, profitShareRuleIds, profitSharePackId,
     } = req.body;
 
     const [existing] = await pool.query(
@@ -392,17 +496,34 @@ router.patch('/:id', async (req, res, next) => {
       }
     }
 
-    if (!fields.length) throw new AppError('No fields to update');
+    if (profitSharePackId !== undefined) {
+      await setIpoSharePack(pool, req.tenantId, ipoId, profitSharePackId || null);
+    } else if (profitShareRuleIds !== undefined || profitShareRuleId !== undefined) {
+      const nextIds = profitShareRuleIds !== undefined
+        ? profitShareRuleIds
+        : (profitShareRuleId ? [profitShareRuleId] : []);
+      await setIpoShareRules(pool, req.tenantId, ipoId, nextIds);
+      await pool.query(
+        'UPDATE ipos SET profit_share_pack_id = NULL WHERE id = ? AND tenant_id = ?',
+        [ipoId, req.tenantId]
+      );
+    }
 
+    if (
+      !fields.length
+      && profitShareRuleIds === undefined
+      && profitShareRuleId === undefined
+      && profitSharePackId === undefined
+    ) {
+      throw new AppError('No fields to update');
+    }
 
+    if (fields.length) {
+      values.push(ipoId, req.tenantId);
+      await pool.query(`UPDATE ipos SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`, values);
+    }
 
-    values.push(ipoId, req.tenantId);
-
-    await pool.query(`UPDATE ipos SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`, values);
-
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-
-    res.json(serializeIpo(rows[0]));
+    res.json(await loadSerializedIpo(pool, req.tenantId, ipoId));
 
   } catch (err) {
 
@@ -428,8 +549,7 @@ router.post('/:id/close', async (req, res, next) => {
       'UPDATE ipos SET status = ? WHERE id = ? AND tenant_id = ?',
       ['CLOSED', ipoId, req.tenantId]
     );
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(serializeIpo(rows[0]));
+    res.json(await loadSerializedIpo(pool, req.tenantId, ipoId));
   } catch (err) {
     next(err);
   }
@@ -451,8 +571,7 @@ router.post('/:id/reopen', async (req, res, next) => {
       'UPDATE ipos SET status = ? WHERE id = ? AND tenant_id = ?',
       ['OPEN', ipoId, req.tenantId]
     );
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(serializeIpo(rows[0]));
+    res.json(await loadSerializedIpo(pool, req.tenantId, ipoId));
   } catch (err) {
     next(err);
   }
@@ -474,8 +593,7 @@ router.post('/:id/invalidate', async (req, res, next) => {
       'UPDATE ipos SET is_invalid = 1, invalidated_at = NOW() WHERE id = ? AND tenant_id = ?',
       [ipoId, req.tenantId]
     );
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(serializeIpo(rows[0]));
+    res.json(await loadSerializedIpo(pool, req.tenantId, ipoId));
   } catch (err) {
     next(err);
   }
@@ -497,8 +615,7 @@ router.post('/:id/restore', async (req, res, next) => {
       'UPDATE ipos SET is_invalid = 0, invalidated_at = NULL WHERE id = ? AND tenant_id = ?',
       [ipoId, req.tenantId]
     );
-    const [rows] = await pool.query('SELECT * FROM ipos WHERE id = ?', [ipoId]);
-    res.json(serializeIpo(rows[0]));
+    res.json(await loadSerializedIpo(pool, req.tenantId, ipoId));
   } catch (err) {
     next(err);
   }
@@ -547,57 +664,14 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 router.get('/:id/applications', async (req, res, next) => {
-
   try {
-
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
-
     const [ipo] = await pool.query('SELECT id FROM ipos WHERE id = ? AND tenant_id = ?', [ipoId, req.tenantId]);
-
     if (!ipo.length) throw new AppError('IPO not found', 404);
-
-
-
-    const [rows] = await pool.query(
-
-      `SELECT a.*, m.display_name, m.pan, m.status as member_status, m.relationship_note,
-              mg.name AS member_group_name,
-              m.member_group_id,
-              pay.display_name AS paid_to_display_name,
-              a.paid_to_external_name,
-              psd.id AS profit_share_distribution_id,
-              psd.provider_amount AS share_provider_amount,
-              psd.manager_amount AS share_manager_amount,
-              psd.member_amount AS share_member_amount,
-              psd.distributed_at AS share_distributed_at,
-              psd.pnl_type AS share_pnl_type
-
-       FROM ipo_applications a
-
-       JOIN members m ON m.id = a.member_id
-
-       LEFT JOIN member_groups mg ON mg.id = m.member_group_id
-
-       LEFT JOIN members pay ON pay.id = a.paid_to_member_id
-
-       LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
-
-       WHERE a.ipo_id = ? AND a.tenant_id = ?
-
-       ORDER BY mg.sort_order, mg.name, m.sort_order, m.id`,
-
-      [ipoId, req.tenantId]
-
-    );
-
-    res.json(rows);
-
+    res.json(await loadIpoApplications(pool, req.tenantId, ipoId));
   } catch (err) {
-
     next(err);
-
   }
-
 });
 
 
@@ -928,7 +1002,7 @@ router.post('/:id/add-to-my-ipos', async (req, res, next) => {
     res.status(result.alreadyAdded ? 200 : 201).json({
       success: true,
       alreadyAdded: result.alreadyAdded,
-      ipo: serializeIpo(result.ipo),
+      ipo: (await attachShareRulesToIpos(pool, req.tenantId, [serializeIpo(result.ipo)]))[0],
     });
   } catch (err) {
     next(err);

@@ -5,6 +5,12 @@ import {
   formatPeriodLabel,
   resolvePeriodIpoIds,
 } from './profitAnalysisFilters.js';
+import {
+  getShareRulesForIpo,
+  loadShareRulesByIpoIds,
+  tryResolveShareRulesForMember,
+  requireIpoShareRule,
+} from './ipoShareRuleService.js';
 
 export function validatePercents(providerPercent, managerPercent, label = 'Share') {
   const p = Number(providerPercent);
@@ -401,8 +407,10 @@ function summarizeMemberShareRules(rules) {
 /** All members with share rules — two queries instead of N+1 per member. */
 export async function listMembersWithShareRules(conn, tenantId) {
   const [members] = await conn.query(
-    `SELECT m.id, m.display_name, m.pan, m.status, fp.name AS member_fund_provider_name
+    `SELECT m.id, m.display_name, m.pan, m.status, m.member_group_id,
+            mg.name AS member_group_name, fp.name AS member_fund_provider_name
      FROM members m
+     LEFT JOIN member_groups mg ON mg.id = m.member_group_id
      LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
      WHERE m.tenant_id = ?
      ORDER BY m.sort_order, m.id`,
@@ -434,6 +442,9 @@ export async function listMembersWithShareRules(conn, tenantId) {
       displayName: m.display_name,
       pan: m.pan,
       status: m.status,
+      memberGroupId: m.member_group_id ?? null,
+      memberGroupName: m.member_group_name || null,
+      member_group_id: m.member_group_id ?? null,
       memberFundProviderName: m.member_fund_provider_name || null,
       ...summary,
     };
@@ -667,8 +678,8 @@ export async function resolveApplicationProfitSplit(conn, tenantId, app) {
     return { managerAmount: 0, providerAmount: 0, memberAmount: 0 };
   }
 
-  const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
-  const rules = resolveRulesForIpo(allRules, app.ipo_id);
+  const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
+  const { rules } = tryResolveShareRulesForMember(ipoRules, app.member_id);
   if (!rules.length) {
     return { managerAmount: 0, providerAmount: 0, memberAmount: gross };
   }
@@ -727,12 +738,11 @@ async function getDistributionForApplication(conn, tenantId, applicationId) {
   return rows[0] || null;
 }
 
-export async function distributionNeedsUpdate(conn, tenantId, app, distribution) {
+export function distributionNeedsUpdateFromRules(app, distribution, ipoRules) {
   const gross = Number(app.profit_loss);
   if (!amountsMatch(distribution.gross_profit_loss, gross)) return true;
 
-  const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
-  const rules = resolveRulesForIpo(allRules, app.ipo_id);
+  const { rules } = tryResolveShareRulesForMember(ipoRules, app.member_id);
   if (!rules.length) return false;
 
   const split = calculateMultiRuleSplit(gross, rules);
@@ -741,6 +751,11 @@ export async function distributionNeedsUpdate(conn, tenantId, app, distribution)
     || !amountsMatch(distribution.manager_amount, split.totalManager)
     || !amountsMatch(distribution.member_amount, split.memberAmount)
   );
+}
+
+export async function distributionNeedsUpdate(conn, tenantId, app, distribution) {
+  const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
+  return distributionNeedsUpdateFromRules(app, distribution, ipoRules);
 }
 
 /** Undo wallet/provider entries and remove a profit share distribution. */
@@ -906,6 +921,9 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
   if (ipoId && (await isIpoFinancialsFrozen(conn, tenantId, ipoId))) {
     throw new AppError('Cannot distribute P&L for a closed IPO. Reopen the IPO first.');
   }
+  if (ipoId) {
+    await requireIpoShareRule(conn, tenantId, ipoId);
+  }
 
   let query = `
     SELECT a.*, i.name as ipo_name, m.display_name, i.status AS ipo_status
@@ -941,8 +959,8 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
       await revokeProfitShareDistribution(conn, { tenantId, applicationId: app.id, userId });
     }
 
-    const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
-    const rules = resolveRulesForIpo(allRules, app.ipo_id);
+    const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
+    const { rules, error } = tryResolveShareRulesForMember(ipoRules, app.member_id);
 
     const gross = Number(app.profit_loss);
     if (gross === 0) {
@@ -956,12 +974,11 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
     }
 
     if (!rules.length) {
-      const ipoHint = app.ipo_name ? ` for ${app.ipo_name}` : '';
       results.push({
         applicationId: app.id,
         memberName: app.display_name,
         skipped: true,
-        reason: `No share rules for this member${ipoHint} (Profit Sharing)`,
+        reason: error || 'Select a share rule for this IPO',
       });
       continue;
     }
@@ -1090,13 +1107,9 @@ export async function previewProfitShares(conn, tenantId, { ipoId, applicationId
 
   for (const app of apps) {
     const gross = Number(app.profit_loss);
-    const { rules: allRules } = await getMemberShareRules(conn, tenantId, app.member_id);
-    const rules = resolveRulesForIpo(allRules, app.ipo_id);
-    let configWarning = null;
-    if (!rules.length) {
-      const ipoHint = app.ipo_name ? ` for ${app.ipo_name}` : '';
-      configWarning = `Add share rule for this member${ipoHint} under Profit Sharing`;
-    }
+    const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
+    const { rules, error } = tryResolveShareRulesForMember(ipoRules, app.member_id);
+    let configWarning = error;
     let split;
     try {
       split = calculateMultiRuleSplit(gross, rules);
@@ -1199,27 +1212,36 @@ export async function getProfitShareReport(pool, tenantId) {
     [tenantId]
   );
 
+  const appIds = [...new Set(distributions.map((d) => d.ipo_application_id).filter(Boolean))];
+  const appsById = new Map();
+  if (appIds.length) {
+    const [apps] = await pool.query(
+      `SELECT id, ipo_id, member_id, profit_loss
+       FROM ipo_applications
+       WHERE tenant_id = ? AND id IN (${appIds.map(() => '?').join(',')})`,
+      [tenantId, ...appIds]
+    );
+    for (const app of apps) appsById.set(app.id, app);
+  }
+
+  const ipoIds = [...new Set([...appsById.values()].map((a) => a.ipo_id))];
   const conn = await pool.getConnection();
-  const enrichedDistributions = [];
+  let rulesByIpo = new Map();
   try {
-    for (const d of distributions) {
-      const [appRows] = await conn.query(
-        `SELECT a.* FROM ipo_applications a WHERE a.id = ? AND a.tenant_id = ?`,
-        [d.ipo_application_id, tenantId]
-      );
-      const app = appRows[0];
-      const needsResplit = app
-        ? await distributionNeedsUpdate(conn, tenantId, app, d)
-        : false;
-      enrichedDistributions.push({
-        ...d,
-        ruleLines: linesByDist[d.id] || [],
-        needsResplit,
-      });
-    }
+    rulesByIpo = await loadShareRulesByIpoIds(conn, tenantId, ipoIds);
   } finally {
     conn.release();
   }
+
+  const enrichedDistributions = distributions.map((d) => {
+    const app = appsById.get(d.ipo_application_id);
+    const ipoRules = app ? (rulesByIpo.get(Number(app.ipo_id)) || []) : [];
+    return {
+      ...d,
+      ruleLines: linesByDist[d.id] || [],
+      needsResplit: app ? distributionNeedsUpdateFromRules(app, d, ipoRules) : false,
+    };
+  });
 
   return {
     distributions: enrichedDistributions,

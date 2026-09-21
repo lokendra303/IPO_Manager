@@ -83,18 +83,37 @@ async function repairGroupLeaderPaidTo(conn, tenantId, groupId = null) {
   );
 }
 
+function emptyIpoTotals() {
+  return {
+    ipoSent: 0,
+    ipoReturned: 0,
+    ipoStillOut: 0,
+    pendingAllotmentOut: 0,
+    applicationCount: 0,
+    unsettledCount: 0,
+    pendingAllotmentCount: 0,
+  };
+}
+
+function ipoTotalsFromAgg(row) {
+  if (!row) return emptyIpoTotals();
+  const ipoReturned = round2(row.ipo_returned);
+  const ipoStillOut = round2(row.ipo_still_out);
+  return {
+    ipoSent: round2(ipoStillOut + ipoReturned),
+    ipoReturned,
+    ipoStillOut,
+    pendingAllotmentOut: round2(row.pending_allotment_out),
+    applicationCount: Number(row.application_count || 0),
+    unsettledCount: Number(row.unsettled_count || 0),
+    pendingAllotmentCount: Number(row.pending_allotment_count || 0),
+  };
+}
+
 async function getIpoDerivedTotals(conn, tenantId, group) {
   const pay = paidToLeaderSql(group, 'a');
   if (!group.owner_member_id && !group.owner_external_name) {
-    return {
-      ipoSent: 0,
-      ipoReturned: 0,
-      ipoStillOut: 0,
-      pendingAllotmentOut: 0,
-      applicationCount: 0,
-      unsettledCount: 0,
-      pendingAllotmentCount: 0,
-    };
+    return emptyIpoTotals();
   }
 
   // Effective capital with this leader (no double-count after fund adjust):
@@ -145,18 +164,7 @@ async function getIpoDerivedTotals(conn, tenantId, group) {
     [tenantId, group.id, ...pay.params]
   );
 
-  const ipoReturned = round2(row.ipo_returned);
-  const ipoStillOut = round2(row.ipo_still_out);
-  return {
-    // Effective given = still with leader + already returned (adjust moves amount to the new IPO app)
-    ipoSent: round2(ipoStillOut + ipoReturned),
-    ipoReturned,
-    ipoStillOut,
-    pendingAllotmentOut: round2(row.pending_allotment_out),
-    applicationCount: Number(row.application_count || 0),
-    unsettledCount: Number(row.unsettled_count || 0),
-    pendingAllotmentCount: Number(row.pending_allotment_count || 0),
-  };
+  return ipoTotalsFromAgg(row);
 }
 
 async function getManualTotals(conn, tenantId, groupId) {
@@ -216,19 +224,85 @@ export async function listGroupLeaderWallets(conn, tenantId) {
 
   const [groups] = await conn.query(
     `SELECT g.*, m.display_name AS owner_display_name, m.pan AS owner_pan,
-            (SELECT COUNT(*) FROM members mm WHERE mm.member_group_id = g.id AND mm.tenant_id = g.tenant_id) AS member_count
+            COALESCE(mc.member_count, 0) AS member_count
      FROM member_groups g
      LEFT JOIN members m ON m.id = g.owner_member_id
+     LEFT JOIN (
+       SELECT member_group_id, COUNT(*) AS member_count
+       FROM members WHERE tenant_id = ?
+       GROUP BY member_group_id
+     ) mc ON mc.member_group_id = g.id
      WHERE g.tenant_id = ?
      ORDER BY g.sort_order, g.name`,
+    [tenantId, tenantId]
+  );
+
+  const [ipoRows] = await conn.query(
+    `SELECT m.member_group_id AS group_id,
+            COUNT(a.id) AS application_count,
+            COALESCE(SUM(
+              CASE
+                WHEN a.trns_received = 'Received'
+                THEN GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
+                ELSE 0
+              END
+            ), 0) AS ipo_returned,
+            COALESCE(SUM(
+              CASE
+                WHEN a.trns_received = 'Received' THEN 0
+                ELSE GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
+              END
+            ), 0) AS ipo_still_out,
+            COALESCE(SUM(
+              CASE
+                WHEN a.trns_received = 'Received' THEN 0
+                WHEN a.allotment_status = 'PENDING'
+                THEN GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
+                ELSE 0
+              END
+            ), 0) AS pending_allotment_out,
+            SUM(CASE WHEN a.trns_received = 'Received' THEN 0 ELSE 1 END) AS unsettled_count,
+            SUM(
+              CASE
+                WHEN a.trns_received <> 'Received' AND a.allotment_status = 'PENDING' THEN 1
+                ELSE 0
+              END
+            ) AS pending_allotment_count
+     FROM ipo_applications a
+     JOIN members m ON m.id = a.member_id AND m.tenant_id = a.tenant_id
+     JOIN member_groups g ON g.id = m.member_group_id AND g.tenant_id = a.tenant_id
+     WHERE a.tenant_id = ?
+       AND (
+         (g.owner_member_id IS NOT NULL AND a.paid_to_member_id = g.owner_member_id)
+         OR (
+           g.owner_member_id IS NULL
+           AND g.owner_external_name IS NOT NULL
+           AND g.owner_external_name <> ''
+           AND a.paid_to_external_name = g.owner_external_name
+         )
+       )
+     GROUP BY m.member_group_id`,
     [tenantId]
   );
 
-  const rows = [];
-  for (const g of groups) {
+  const [manualRows] = await conn.query(
+    `SELECT member_group_id,
+            COALESCE(SUM(CASE WHEN type = 'SENT' THEN amount ELSE 0 END), 0) AS manual_sent,
+            COALESCE(SUM(CASE WHEN type = 'RECEIVED' THEN amount ELSE 0 END), 0) AS manual_received,
+            COALESCE(SUM(CASE WHEN type = 'ADJUSTMENT' THEN amount ELSE 0 END), 0) AS manual_adjustment
+     FROM group_leader_transactions
+     WHERE tenant_id = ?
+     GROUP BY member_group_id`,
+    [tenantId]
+  );
+
+  const ipoByGroup = new Map(ipoRows.map((r) => [Number(r.group_id), r]));
+  const manualByGroup = new Map(manualRows.map((r) => [Number(r.member_group_id), r]));
+
+  return groups.map((g) => {
     const leaderName = ownerLabel(g);
     if (!leaderName) {
-      rows.push({
+      return {
         groupId: g.id,
         groupName: g.name,
         leaderName: null,
@@ -258,13 +332,17 @@ export async function listGroupLeaderWallets(conn, tenantId) {
         applicationCount: 0,
         unsettledCount: 0,
         hasOwner: false,
-      });
-      continue;
+      };
     }
-    const ipo = await getIpoDerivedTotals(conn, tenantId, g);
-    const manual = await getManualTotals(conn, tenantId, g.id);
+    const ipo = ipoTotalsFromAgg(ipoByGroup.get(Number(g.id)));
+    const man = manualByGroup.get(Number(g.id));
+    const manual = {
+      manualSent: round2(man?.manual_sent),
+      manualReceived: round2(man?.manual_received),
+      manualAdjustment: round2(man?.manual_adjustment),
+    };
     const bal = composeBalances(ipo, manual);
-    rows.push({
+    return {
       groupId: g.id,
       groupName: g.name,
       leaderName,
@@ -274,9 +352,8 @@ export async function listGroupLeaderWallets(conn, tenantId) {
       memberCount: Number(g.member_count || 0),
       hasOwner: true,
       ...bal,
-    });
-  }
-  return rows;
+    };
+  });
 }
 
 export async function getGroupLeaderWalletDetail(conn, tenantId, groupId) {
@@ -632,6 +709,7 @@ export async function getGroupLeaderWalletsOverview(conn, tenantId) {
       cashPendingVsIpoPending: round2(cashPending - ipoPending),
     },
     leaderWallets: leadersWithOwner,
+    allWallets: groups,
     ledger: ledgerRows.map((t) => ({
       id: t.id,
       groupId: t.member_group_id,

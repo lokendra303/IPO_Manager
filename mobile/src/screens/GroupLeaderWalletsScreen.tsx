@@ -63,12 +63,9 @@ export default function GroupLeaderWalletsScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [listRes, ovRes] = await Promise.all([
-        client.get('/group-leader-wallets'),
-        client.get('/group-leader-wallets/overview'),
-      ]);
-      setRows(listRes.data || []);
-      setOverview(ovRes.data || null);
+      const { data } = await client.get('/group-leader-wallets/overview');
+      setOverview(data || null);
+      setRows(data?.allWallets || []);
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err));
     } finally {

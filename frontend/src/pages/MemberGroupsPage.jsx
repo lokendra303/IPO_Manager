@@ -99,17 +99,16 @@ export default function MemberGroupsPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([client.get('/member-groups'), client.get('/members')])
-      .then(([g, m]) => {
-        setGroups(Array.isArray(g.data) ? g.data : []);
-        setAllMembers(Array.isArray(m.data) ? m.data : []);
-      })
+    client.get('/member-groups')
+      .then((g) => setGroups(Array.isArray(g.data) ? g.data : []))
       .catch((err) => {
         message.error(getErrorMessage(err, 'Could not load sub-groups'));
         setGroups([]);
-        setAllMembers([]);
       })
       .finally(() => setLoading(false));
+    client.get('/members', { params: { lite: 1 } })
+      .then((m) => setAllMembers(Array.isArray(m.data) ? m.data : []))
+      .catch(() => setAllMembers([]));
   };
 
   useEffect(load, []);

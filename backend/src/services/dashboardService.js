@@ -6,69 +6,172 @@ import { PENDING_FUND_TOTAL_SQL, PENDING_RETURN_PRINCIPAL_SQL } from './pendingR
  */
 export async function getManagerDashboard(pool, tenantId) {
   const conn = await pool.getConnection();
+  let wallet;
   try {
-    const wallet = await ensureWallet(conn, tenantId);
+    wallet = await ensureWallet(conn, tenantId);
+  } finally {
+    conn.release();
+  }
 
-    const [[memberCount]] = await conn.query(
-      `SELECT COUNT(*) AS cnt FROM members WHERE tenant_id = ? AND status = 'ACTIVE'`,
-      [tenantId]
-    );
-
-    const [[issueCount]] = await conn.query(
-      `SELECT COUNT(*) AS openCount FROM member_issues WHERE tenant_id = ? AND status = 'OPEN'`,
-      [tenantId]
-    );
-
-    const [[share]] = await conn.query(
-      `SELECT COALESCE(SUM(manager_amount), 0) AS managerShare
-       FROM profit_share_distributions WHERE tenant_id = ?`,
-      [tenantId]
-    );
-
-    const [pending] = await conn.query(
-      `SELECT m.id AS memberId, m.display_name AS displayName, m.pan,
-              COALESCE(p.pending_return, 0) AS willReceiveFromTeam
-       FROM members m
-       INNER JOIN (
-         SELECT a.member_id,
-                SUM(${PENDING_FUND_TOTAL_SQL}) AS pending_return
+  const [
+      [[memberCount]],
+      [[issueCount]],
+      [[share]],
+      [[pendingSplit]],
+      [[grossIpo]],
+      [[pendingTotals]],
+      [pending],
+      [openIpos],
+      [txns],
+      [[ipoStats]],
+      [[appStats]],
+      liveStatsResult,
+      gmpResult,
+      expectedResult,
+    ] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*) AS cnt FROM members WHERE tenant_id = ? AND status = 'ACTIVE'`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS openCount FROM member_issues WHERE tenant_id = ? AND status = 'OPEN'`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT
+           COUNT(*) AS distributionCount,
+           COALESCE(SUM(manager_amount), 0) AS managerShare,
+           COALESCE(SUM(CASE WHEN pnl_type = 'PROFIT' THEN manager_amount ELSE 0 END), 0) AS managerProfit,
+           COALESCE(SUM(CASE WHEN pnl_type = 'LOSS' THEN manager_amount ELSE 0 END), 0) AS managerLoss,
+           COALESCE(SUM(provider_amount), 0) AS providerShare,
+           COALESCE(SUM(member_amount), 0) AS memberShare,
+           COALESCE(SUM(gross_profit_loss), 0) AS grossDistributed
+         FROM profit_share_distributions WHERE tenant_id = ?`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS pendingCount, COALESCE(SUM(a.profit_loss), 0) AS grossPending
          FROM ipo_applications a
+         LEFT JOIN profit_share_distributions psd ON psd.ipo_application_id = a.id
          WHERE a.tenant_id = ?
-         GROUP BY a.member_id
-         HAVING pending_return > 0.005
-       ) p ON p.member_id = m.id
-       WHERE m.tenant_id = ?
-       ORDER BY willReceiveFromTeam DESC
-       LIMIT 8`,
-      [tenantId, tenantId]
-    );
+           AND a.allotment_status = 'ALLOTED'
+           AND a.withdrawal_money IS NOT NULL
+           AND a.profit_loss IS NOT NULL
+           AND psd.id IS NULL`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT COALESCE(SUM(profit_loss), 0) AS grossIpoPnL
+         FROM ipo_applications
+         WHERE tenant_id = ?
+           AND allotment_status = 'ALLOTED'
+           AND withdrawal_money IS NOT NULL
+           AND profit_loss IS NOT NULL`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(${PENDING_FUND_TOTAL_SQL}), 0) AS totalPendingReturn,
+           SUM(CASE WHEN ${PENDING_FUND_TOTAL_SQL} > 0.005 THEN 1 ELSE 0 END) AS pendingReturnApplicationCount,
+           COUNT(DISTINCT CASE WHEN ${PENDING_FUND_TOTAL_SQL} > 0.005 THEN a.member_id END) AS pendingReturnMemberCount
+         FROM ipo_applications a
+         WHERE a.tenant_id = ?`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT m.id AS memberId, m.display_name AS displayName, m.pan,
+                COALESCE(p.pending_return, 0) AS willReceiveFromTeam
+         FROM members m
+         INNER JOIN (
+           SELECT a.member_id,
+                  SUM(${PENDING_FUND_TOTAL_SQL}) AS pending_return
+           FROM ipo_applications a
+           WHERE a.tenant_id = ?
+           GROUP BY a.member_id
+           HAVING pending_return > 0.005
+         ) p ON p.member_id = m.id
+         WHERE m.tenant_id = ?
+         ORDER BY willReceiveFromTeam DESC
+         LIMIT 8`,
+        [tenantId, tenantId]
+      ),
+      pool.query(
+        `SELECT
+           i.id AS ipo_id,
+           i.name,
+           COUNT(a.id) AS application_count,
+           COALESCE(SUM(a.amount), 0) AS total_distributed,
+           COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
+           COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return
+         FROM ipos i
+         LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id
+         WHERE i.tenant_id = ?
+           AND i.status = 'OPEN'
+           AND COALESCE(i.is_invalid, 0) = 0
+         GROUP BY i.id, i.name, i.open_date, i.created_at
+         ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT wt.id, wt.type, wt.amount, wt.balance_after, wt.txn_date, wt.notes
+         FROM wallet_transactions wt
+         WHERE wt.tenant_id = ?
+         ORDER BY wt.txn_date DESC, wt.id DESC
+         LIMIT 8`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT
+           COUNT(*) AS myIpos,
+           SUM(CASE WHEN i.status = 'OPEN' AND COALESCE(i.is_invalid, 0) = 0 THEN 1 ELSE 0 END) AS openIpos
+         FROM ipos i WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT
+           COUNT(*) AS teamApplications,
+           SUM(CASE WHEN allotment_status IN ('PENDING', 'CHECKING', 'RETRY') THEN 1 ELSE 0 END) AS pendingAllotments,
+           SUM(CASE WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 1 ELSE 0 END) AS allotted,
+           SUM(CASE WHEN allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS notAllotted
+         FROM ipo_applications WHERE tenant_id = ?`,
+        [tenantId]
+      ),
+      pool.query(
+        `SELECT
+           COUNT(*) AS liveIpos,
+           SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS liveOpen,
+           SUM(CASE WHEN status = 'UPCOMING' THEN 1 ELSE 0 END) AS liveUpcoming
+         FROM ipo_catalog`
+      ).catch(() => [[{ liveIpos: 0, liveOpen: 0, liveUpcoming: 0 }]]),
+      pool.query(
+        `SELECT c.name, c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at
+         FROM ipos i
+         JOIN ipo_catalog c ON c.id = i.catalog_id
+         WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0 AND c.gmp IS NOT NULL
+         ORDER BY c.gmp_updated_at DESC, i.id DESC
+         LIMIT 1`,
+        [tenantId]
+      ).catch(() => [[null]]),
+      pool.query(
+        `SELECT COALESCE(SUM(
+           CASE
+             WHEN a.profit_loss IS NOT NULL AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN a.profit_loss
+             WHEN a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND c.gmp IS NOT NULL AND i.lot_size IS NOT NULL
+               THEN COALESCE(a.allotted_lots, 1) * i.lot_size * c.gmp
+             ELSE 0
+           END
+         ), 0) AS expectedProfit
+         FROM ipo_applications a
+         JOIN ipos i ON i.id = a.ipo_id
+         LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+         WHERE a.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
+        [tenantId]
+      ).catch(() => [[{ expectedProfit: 0 }]]),
+    ]);
 
-    const [openIpos] = await conn.query(
-      `SELECT
-         i.id AS ipo_id,
-         i.name,
-         COUNT(a.id) AS application_count,
-         COALESCE(SUM(a.amount), 0) AS total_distributed,
-         COALESCE(SUM(CASE WHEN a.trns_received = 'Received' THEN a.amount ELSE 0 END), 0) AS total_returned,
-         COALESCE(SUM(${PENDING_RETURN_PRINCIPAL_SQL}), 0) AS pending_return
-       FROM ipos i
-       LEFT JOIN ipo_applications a ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id
-       WHERE i.tenant_id = ?
-         AND i.status = 'OPEN'
-         AND COALESCE(i.is_invalid, 0) = 0
-       GROUP BY i.id, i.name, i.open_date, i.created_at
-       ORDER BY COALESCE(i.open_date, DATE(i.created_at)) DESC, i.id DESC`,
-      [tenantId]
-    );
-
-    const [txns] = await conn.query(
-      `SELECT wt.id, wt.type, wt.amount, wt.balance_after, wt.txn_date, wt.notes
-       FROM wallet_transactions wt
-       WHERE wt.tenant_id = ?
-       ORDER BY wt.txn_date DESC, wt.id DESC
-       LIMIT 8`,
-      [tenantId]
-    );
+    const liveStats = liveStatsResult[0]?.[0] || { liveIpos: 0, liveOpen: 0, liveUpcoming: 0 };
+    const gmpRow = gmpResult[0]?.[0] || null;
+    const expected = expectedResult[0]?.[0] || { expectedProfit: 0 };
 
     const openIpoRows = openIpos.map((row) => ({
       ipoId: row.ipo_id,
@@ -96,63 +199,26 @@ export async function getManagerDashboard(pool, tenantId) {
       }
     );
 
-    const [[ipoStats]] = await conn.query(
-      `SELECT
-         COUNT(*) AS myIpos,
-         SUM(CASE WHEN i.status = 'OPEN' AND COALESCE(i.is_invalid, 0) = 0 THEN 1 ELSE 0 END) AS openIpos
-       FROM ipos i WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
-      [tenantId]
-    );
-
-    const [[appStats]] = await conn.query(
-      `SELECT
-         COUNT(*) AS teamApplications,
-         SUM(CASE WHEN allotment_status IN ('PENDING', 'CHECKING', 'RETRY') THEN 1 ELSE 0 END) AS pendingAllotments,
-         SUM(CASE WHEN allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 1 ELSE 0 END) AS allotted,
-         SUM(CASE WHEN allotment_status = 'NOT_ALLOTED' THEN 1 ELSE 0 END) AS notAllotted
-       FROM ipo_applications WHERE tenant_id = ?`,
-      [tenantId]
-    );
-
-    const [[liveStats]] = await conn.query(
-      `SELECT
-         COUNT(*) AS liveIpos,
-         SUM(CASE WHEN status = 'OPEN' THEN 1 ELSE 0 END) AS liveOpen,
-         SUM(CASE WHEN status = 'UPCOMING' THEN 1 ELSE 0 END) AS liveUpcoming
-       FROM ipo_catalog`
-    ).catch(() => [[{ liveIpos: 0, liveOpen: 0, liveUpcoming: 0 }]]);
-
-    const [[gmpRow]] = await conn.query(
-      `SELECT c.name, c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at
-       FROM ipos i
-       JOIN ipo_catalog c ON c.id = i.catalog_id
-       WHERE i.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0 AND c.gmp IS NOT NULL
-       ORDER BY c.gmp_updated_at DESC, i.id DESC
-       LIMIT 1`,
-      [tenantId]
-    ).catch(() => [[null]]);
-
-    const [[expected]] = await conn.query(
-      `SELECT COALESCE(SUM(
-         CASE
-           WHEN a.profit_loss IS NOT NULL AND a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN a.profit_loss
-           WHEN a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED') AND c.gmp IS NOT NULL AND i.lot_size IS NOT NULL
-             THEN COALESCE(a.allotted_lots, 1) * i.lot_size * c.gmp
-           ELSE 0
-         END
-       ), 0) AS expectedProfit
-       FROM ipo_applications a
-       JOIN ipos i ON i.id = a.ipo_id
-       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
-       WHERE a.tenant_id = ? AND COALESCE(i.is_invalid, 0) = 0`,
-      [tenantId]
-    ).catch(() => [[{ expectedProfit: 0 }]]);
-
     return {
       walletBalance: Number(wallet.balance),
       activeMembers: Number(memberCount.cnt),
       managerShare: Number(share.managerShare),
       openIssueCount: Number(issueCount.openCount),
+      totalPendingReturn: Number(pendingTotals?.totalPendingReturn || 0),
+      pendingReturnApplicationCount: Number(pendingTotals?.pendingReturnApplicationCount || 0),
+      pendingReturnMemberCount: Number(pendingTotals?.pendingReturnMemberCount || 0),
+      pnl: {
+        grossIpoPnL: Number(grossIpo?.grossIpoPnL || 0),
+        providerShare: Number(share.providerShare),
+        managerShare: Number(share.managerShare),
+        memberShare: Number(share.memberShare),
+        managerProfit: Number(share.managerProfit),
+        managerLoss: Number(share.managerLoss),
+        distributionCount: Number(share.distributionCount),
+        pendingCount: Number(pendingSplit?.pendingCount || 0),
+        grossPending: Number(pendingSplit?.grossPending || 0),
+        grossDistributed: Number(share.grossDistributed),
+      },
       openIpos: openIpoRows,
       openIpoTotals,
       pendingReturns: pending.map((row) => ({
@@ -191,7 +257,4 @@ export async function getManagerDashboard(pool, tenantId) {
           }
         : null,
     };
-  } finally {
-    conn.release();
-  }
 }

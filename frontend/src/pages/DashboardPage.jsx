@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRightOutlined,
   BellOutlined,
@@ -45,59 +45,36 @@ function Kpi({ to, label, value, hint, tone = 'neutral' }) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [wallet, setWallet] = useState(null);
-  const [summary, setSummary] = useState(null);
-  const [txns, setTxns] = useState([]);
-  const [openIssueCount, setOpenIssueCount] = useState(0);
-  const [pnlTotals, setPnlTotals] = useState(null);
   const [dash, setDash] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      client.get('/wallet'),
-      client.get('/summary'),
-      client.get('/wallet/transactions'),
-      client.get('/member-issues/count'),
-      client.get('/profit-shares/totals').catch(() => ({ data: null })),
-      client.get('/dashboard').catch(() => ({ data: null })),
-    ])
-      .then(([w, s, t, issues, pnl, d]) => {
-        setWallet(w.data);
-        setSummary(s.data);
-        setTxns((t.data || []).slice(0, 6));
-        setOpenIssueCount(issues.data.openCount ?? 0);
-        setPnlTotals(pnl.data);
-        setDash(d.data);
-      })
+    client.get('/dashboard')
+      .then(({ data }) => setDash(data))
       .finally(() => setLoading(false));
   }, []);
 
-  const pendingReturns = useMemo(
-    () => (summary?.rows ?? []).filter((r) => Number(r.willReceiveFromTeam) > 0),
-    [summary]
-  );
-  const totalPendingReturn = pendingReturns.reduce((s, r) => s + Number(r.willReceiveFromTeam), 0);
-  const pendingReturnAppCount = summary?.totals?.pendingReturnApplicationCount ?? 0;
-
   if (loading) return <PageLoading />;
 
-  const overall = pnlTotals?.overall ?? {};
-  const managerNet = overall.managerShare ?? 0;
+  const overall = dash?.pnl || {};
+  const managerNet = overall.managerShare ?? dash?.managerShare ?? 0;
   const managerProfit = overall.managerProfit ?? 0;
   const managerLoss = overall.managerLoss ?? 0;
-  const grossIpoPnL = overall.grossIpoPnL ?? summary?.totals?.totalIpoProfit ?? 0;
-  const activeMembers = summary?.rows?.filter((r) => r.status === 'ACTIVE').length ?? 0;
-  const openIpoRows = (summary?.ipoSummary?.rows ?? []).filter((r) => r.status === 'OPEN');
-  const openIpoTotals = openIpoRows.reduce(
-    (acc, r) => ({
-      totalDistributed: acc.totalDistributed + Number(r.totalDistributed || 0),
-      totalReturned: acc.totalReturned + Number(r.totalReturned || 0),
-      pendingReturn: acc.pendingReturn + Number(r.pendingReturn || 0),
-      applicationCount: acc.applicationCount + Number(r.applicationCount || 0),
-    }),
-    { totalDistributed: 0, totalReturned: 0, pendingReturn: 0, applicationCount: 0 }
-  );
+  const grossIpoPnL = overall.grossIpoPnL ?? 0;
+  const activeMembers = dash?.activeMembers ?? 0;
+  const openIssueCount = dash?.openIssueCount ?? 0;
+  const pendingReturns = dash?.pendingReturns ?? [];
+  const totalPendingReturn = Number(dash?.totalPendingReturn ?? pendingReturns.reduce((s, r) => s + Number(r.willReceiveFromTeam || 0), 0));
+  const pendingReturnAppCount = dash?.pendingReturnApplicationCount ?? 0;
+  const openIpoRows = dash?.openIpos ?? [];
+  const openIpoTotals = dash?.openIpoTotals ?? {
+    totalDistributed: 0,
+    totalReturned: 0,
+    pendingReturn: 0,
+    applicationCount: 0,
+  };
+  const txns = dash?.recentTransactions ?? [];
+  const walletBalance = dash?.walletBalance ?? 0;
 
   const gmp = dash?.currentGmp;
   const gmpValue = gmp?.gmp != null ? `₹${gmp.gmp}` : '—';
@@ -147,7 +124,7 @@ export default function DashboardPage() {
       <section className="dash-money">
         <Link to="/wallet" className="dash-money-cell dash-money-cell--main">
           <span>Wallet balance</span>
-          <strong>{formatCurrency(wallet?.balance ?? 0)}</strong>
+          <strong>{formatCurrency(walletBalance)}</strong>
           <em>Ready to distribute</em>
         </Link>
         <Link to="/profit-sharing" className={`dash-money-cell dash-money-cell--${moneyTone(managerNet)}`}>
@@ -269,7 +246,7 @@ export default function DashboardPage() {
               <Link to="/summary">All members <ArrowRightOutlined /></Link>
             </header>
             <ul className="dash-list">
-              {pendingReturns.slice(0, 8).map((row) => (
+              {pendingReturns.map((row) => (
                 <li key={row.memberId} className="dash-list-row dash-list-row--static">
                   <div>
                     <strong>{row.displayName}</strong>

@@ -161,6 +161,8 @@ CREATE TABLE IF NOT EXISTS ipos (
   open_date DATE DEFAULT NULL,
   last_apply_date DATE DEFAULT NULL,
   listing_date DATE DEFAULT NULL,
+  profit_share_rule_id INT DEFAULT NULL,
+  profit_share_pack_id INT DEFAULT NULL,
   ipo_segment ENUM('SME', 'MAINBOARD') NOT NULL DEFAULT 'MAINBOARD',
   allowed_categories LONGTEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

@@ -19,6 +19,7 @@ import { getErrorMessage } from '../utils/errors';
 import { openActionSheet } from '../utils/actionSheet';
 import { colors, radii, spacing } from '../theme';
 import { ui } from '../styles/ui';
+import { isActiveMember, membersForRulePicker, mergeMemberDirectories, groupBulkSelectOptions, isGroupFullySelected, toggleGroupMemberIds, shareRuleLabel, shareRuleMemberIds, sharePackLabel, findShareRuleConflicts, formatShareRuleConflicts, nextShareRuleIdsWithoutConflict } from '../utils/shareRules';
 
 type Tab = 'totals' | 'rules' | 'members' | 'history' | 'pending';
 type TotalsView = 'member' | 'provider' | 'manager';
@@ -28,10 +29,16 @@ const EMPTY_RULE_FORM = {
   ruleName: '',
   fundProviderId: '',
   ipoId: '',
+  memberIds: [] as number[],
   profitProviderPercent: '0',
   profitManagerPercent: '0',
   lossProviderPercent: '0',
   lossManagerPercent: '0',
+};
+
+const EMPTY_PACK_FORM = {
+  packName: '',
+  ruleIds: [] as number[],
 };
 
 function pctSummary(prov: number, mgr: number) {
@@ -67,6 +74,8 @@ type CoreCache = {
   members: any[];
   providers: any[];
   templates: any[];
+  groups: any[];
+  packs: any[];
 };
 
 export default function ProfitSharingScreen() {
@@ -79,12 +88,14 @@ export default function ProfitSharingScreen() {
   const [totals, setTotals] = useState<any>(null);
   const [report, setReport] = useState<any>(null);
   const [templates, setTemplates] = useState<any[]>([]);
+  const [packs, setPacks] = useState<any[]>([]);
+  const [memberGroups, setMemberGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingTotals, setLoadingTotals] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [totalsLoaded, setTotalsLoaded] = useState(false);
   const [reportLoaded, setReportLoaded] = useState(false);
-  const [tab, setTab] = useState<Tab>('members');
+  const [tab, setTab] = useState<Tab>('rules');
   const [totalsView, setTotalsView] = useState<TotalsView>('member');
   const [membersFilter, setMembersFilter] = useState<MembersFilter>('all');
   const [selectedMemberIds, setSelectedMemberIds] = useState<number[]>([]);
@@ -104,6 +115,10 @@ export default function ProfitSharingScreen() {
   const [templateEdit, setTemplateEdit] = useState<any>(null);
   const [templateForm, setTemplateForm] = useState<any>(EMPTY_RULE_FORM);
 
+  const [packModalOpen, setPackModalOpen] = useState(false);
+  const [packEdit, setPackEdit] = useState<any>(null);
+  const [packForm, setPackForm] = useState<any>(EMPTY_PACK_FORM);
+
   const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [applyMemberIds, setApplyMemberIds] = useState<number[]>([]);
   const [applyTemplateId, setApplyTemplateId] = useState<number | null>(null);
@@ -113,15 +128,22 @@ export default function ProfitSharingScreen() {
     setMembers(core.members);
     setProviders(core.providers);
     setTemplates(core.templates);
+    setPacks(core.packs || []);
+    setMemberGroups(core.groups || []);
   };
 
   const loadCore = async () => {
-    const [m, p, tpl] = await Promise.all([
-      client.get('/profit-shares/members'),
-      client.get('/fund-providers'),
-      client.get('/profit-shares/rule-templates'),
-    ]);
-    const core: CoreCache = { members: m.data, providers: p.data, templates: tpl.data };
+    const { data } = await client.get('/profit-shares/setup');
+    const core: CoreCache = {
+      members: mergeMemberDirectories(
+        Array.isArray(data?.members) ? data.members : [],
+        [],
+      ),
+      providers: Array.isArray(data?.providers) ? data.providers : [],
+      templates: Array.isArray(data?.rules) ? data.rules : [],
+      groups: Array.isArray(data?.groups) ? data.groups : [],
+      packs: Array.isArray(data?.packs) ? data.packs : [],
+    };
     applyCore(core);
   };
 
@@ -156,7 +178,7 @@ export default function ProfitSharingScreen() {
   const loadIpos = async () => {
     if (ipos.length) return;
     try {
-      const { data } = await client.get('/ipos');
+      const { data } = await client.get('/ipos', { params: { namesOnly: 1 } });
       setIpos(data);
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not load IPOs'));
@@ -167,13 +189,13 @@ export default function ProfitSharingScreen() {
     setLoading(true);
     try {
       await loadCore();
-      await Promise.all([loadTotals(true), loadReport(true)]);
-      await loadIpos();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Could not load profit sharing'));
     } finally {
       setLoading(false);
     }
+    loadTotals(true);
+    loadReport(true);
   };
 
   const reloadAfterChange = async () => {
@@ -231,21 +253,41 @@ export default function ProfitSharingScreen() {
     if (Number.isInteger(id) && id > 0) {
       setBulkIpoId(id);
     }
-    setTab('members');
+    setTab('rules');
     Alert.alert(
-      'IPO share rules',
-      `Set share rules scoped to ${presetIpoName || 'this IPO'} when adding or applying member rules.`
+      'Share rule for IPO',
+      `Create or edit share rules, then select them on ${presetIpoName || 'the IPO'} before distribute or P&L. Rules on one IPO cannot share a member.`
     );
   }, [presetIpoId, presetIpoName]);
 
   const overall = totals?.overall ?? {};
   const distributions = report?.distributions ?? [];
   const pending = report?.pending ?? [];
-  const unconfiguredMembers = members.filter((m) => !m.hasShareRule);
-  const filteredMembers = membersFilter === 'needs-rule' ? unconfiguredMembers : members;
+  const memberRuleMap = useMemo(() => {
+    const map = new Map<number, any[]>();
+    for (const rule of templates) {
+      for (const memberId of shareRuleMemberIds(rule)) {
+        const list = map.get(memberId) || [];
+        list.push(rule);
+        map.set(memberId, list);
+      }
+    }
+    return map;
+  }, [templates]);
+  const activeMembers = useMemo(() => members.filter(isActiveMember), [members]);
+  const pickerMembers = useMemo(
+    () => membersForRulePicker(members, templateForm.memberIds || []),
+    [members, templateForm.memberIds]
+  );
+  const memberGroupBulkOptions = useMemo(
+    () => groupBulkSelectOptions(members, memberGroups),
+    [members, memberGroups]
+  );
+  const unconfiguredMembers = activeMembers.filter((m) => !(memberRuleMap.get(m.memberId) || []).length);
+  const filteredMembers = membersFilter === 'needs-rule' ? unconfiguredMembers : activeMembers;
 
   const templateOptions = useMemo(
-    () => templates.filter((t) => t.hasRule).map((t) => ({ value: t.id, label: `${t.ruleName} (${t.providerName})` })),
+    () => templates.map((t) => ({ value: t.id, label: shareRuleLabel(t, true) })),
     [templates]
   );
 
@@ -450,12 +492,13 @@ export default function ProfitSharingScreen() {
         ? {
             ruleName: template.ruleName,
             fundProviderId: String(template.fundProviderId),
+            memberIds: shareRuleMemberIds(template),
             profitProviderPercent: String(template.profitProviderPercent ?? 0),
             profitManagerPercent: String(template.profitManagerPercent ?? 0),
             lossProviderPercent: String(template.lossProviderPercent ?? 0),
             lossManagerPercent: String(template.lossManagerPercent ?? 0),
           }
-        : { ...EMPTY_RULE_FORM }
+        : { ...EMPTY_RULE_FORM, memberIds: [] }
     );
     setTemplateModalOpen(true);
   };
@@ -470,19 +513,20 @@ export default function ProfitSharingScreen() {
       const payload = {
         ruleName: templateForm.ruleName.trim(),
         fundProviderId: Number(templateForm.fundProviderId),
+        memberIds: templateForm.memberIds || [],
         profitProviderPercent: Number(templateForm.profitProviderPercent ?? 0),
         profitManagerPercent: Number(templateForm.profitManagerPercent ?? 0),
         lossProviderPercent: Number(templateForm.lossProviderPercent ?? 0),
         lossManagerPercent: Number(templateForm.lossManagerPercent ?? 0),
       };
       if (templateEdit?.id) {
-        await client.put(`/profit-shares/rule-templates/${templateEdit.id}`, payload);
+        await client.put(`/profit-shares/rules/${templateEdit.id}`, payload);
       } else {
-        await client.post('/profit-shares/rule-templates', payload);
+        await client.post('/profit-shares/rules', payload);
       }
       setTemplateModalOpen(false);
       await reloadAfterChange();
-      Alert.alert('Success', templateEdit ? 'Rule updated' : 'Rule added to list');
+      Alert.alert('Success', templateEdit ? 'Share rule updated' : 'Share rule created');
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Save failed'));
     } finally {
@@ -492,15 +536,90 @@ export default function ProfitSharingScreen() {
 
   const onDeleteTemplate = async (templateId: number) => {
     try {
-      await client.delete(`/profit-shares/rule-templates/${templateId}`);
+      await client.delete(`/profit-shares/rules/${templateId}`);
       await reloadAfterChange();
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err));
     }
   };
 
+  const openPackModal = (pack?: any) => {
+    if (!pack && !templates.length) {
+      Alert.alert('Create a share rule first', 'Add a rule, then group rules into a template');
+      return;
+    }
+    setPackEdit(pack || null);
+    setPackForm(
+      pack
+        ? { packName: pack.packName || '', ruleIds: pack.ruleIds || [] }
+        : { ...EMPTY_PACK_FORM }
+    );
+    setPackModalOpen(true);
+  };
+
+  const onSavePack = async () => {
+    if (!packForm.packName?.trim()) {
+      Alert.alert('Error', 'Template name is required');
+      return;
+    }
+    if (!packForm.ruleIds?.length) {
+      Alert.alert('Error', 'Select at least one share rule');
+      return;
+    }
+    const selected = templates.filter((r: any) => packForm.ruleIds.includes(Number(r.id)));
+    const conflicts = findShareRuleConflicts(selected);
+    if (conflicts.length) {
+      Alert.alert('Rules contradict', formatShareRuleConflicts(conflicts));
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = { packName: packForm.packName.trim(), ruleIds: packForm.ruleIds };
+      if (packEdit?.id) {
+        await client.put(`/profit-shares/packs/${packEdit.id}`, payload);
+      } else {
+        await client.post('/profit-shares/packs', payload);
+      }
+      setPackModalOpen(false);
+      await reloadAfterChange();
+      Alert.alert('Success', packEdit ? 'Share template updated' : 'Share template created');
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Save failed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onDeletePack = async (packId: number) => {
+    try {
+      await client.delete(`/profit-shares/packs/${packId}`);
+      await reloadAfterChange();
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    }
+  };
+
+  const openPackMore = (p: any) => {
+    openActionSheet(p.packName, [
+      { text: 'Edit', onPress: () => openPackModal(p) },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert('Delete template?', 'IPOs using it will need a new template.', [
+            { text: 'Cancel' },
+            { text: 'Delete', style: 'destructive', onPress: () => onDeletePack(p.id) },
+          ]),
+      },
+    ], sharePackLabel(p));
+  };
+
   const openHeaderMore = () => {
-    openActionSheet('Profit Sharing', [{ text: 'Refresh', onPress: load }]);
+    openActionSheet('Profit Sharing', [
+      { text: 'Refresh', onPress: load },
+      { text: 'Add template', onPress: () => openPackModal() },
+      { text: 'Add rule', onPress: () => openTemplateModal() },
+    ]);
   };
 
   const openMemberMore = (m: any) => {
@@ -577,7 +696,7 @@ export default function ProfitSharingScreen() {
     <Screen>
       <PageHeader
         title="Profit Sharing"
-        subtitle={`${members.length} members · ${distributions.length} splits`}
+        subtitle={`${activeMembers.length} active members · ${distributions.length} splits`}
         extra={
           <Button compact mode="text" onPress={openHeaderMore}>
             More
@@ -587,7 +706,7 @@ export default function ProfitSharingScreen() {
 
       {unconfiguredMembers.length > 0 && (
         <Banner variant="warn">
-          {`${unconfiguredMembers.length} member(s) need share rules.`}
+          {`${unconfiguredMembers.length} member(s) are not on any share rule.`}
         </Banner>
       )}
 
@@ -612,9 +731,9 @@ export default function ProfitSharingScreen() {
         onChange={setTab}
         scrollable
         options={[
+          { value: 'rules', label: `Templates (${packs.length})` },
           { value: 'totals', label: 'P&L totals' },
-          { value: 'rules', label: `Rules (${templates.length})` },
-          { value: 'members', label: `Members (${members.length})` },
+          { value: 'members', label: `Members (${activeMembers.length})` },
           { value: 'history', label: `History (${distributions.length})` },
           { value: 'pending', label: `Pending (${pending.length})` },
         ]}
@@ -698,23 +817,43 @@ export default function ProfitSharingScreen() {
       )}
 
       {tab === 'rules' && (
+        <>
         <ContentCard
-          title="Share rule list"
+          title="Share templates"
+          extra={<Button compact mode="contained" onPress={() => openPackModal()}>Add template</Button>}
+        >
+          {packs.length === 0 ? (
+            <Text style={ui.muted}>No templates yet — group one or more share rules (no overlapping members). Each IPO picks one template.</Text>
+          ) : (
+            packs.map((p) => (
+              <View key={p.id} style={styles.compactRow}>
+                <View style={styles.compactRowMain}>
+                  <ListRow
+                    title={p.packName}
+                    subtitle={sharePackLabel(p)}
+                    onPress={() => openPackMore(p)}
+                  />
+                </View>
+                <Pressable hitSlop={12} onPress={() => openPackMore(p)} style={styles.moreBtn}>
+                  <Text style={styles.moreText}>···</Text>
+                </Pressable>
+              </View>
+            ))
+          )}
+        </ContentCard>
+        <ContentCard
+          title="Share rules"
           extra={<Button compact mode="contained" onPress={() => openTemplateModal()}>Add rule</Button>}
         >
           {templates.length === 0 ? (
-            <Text style={ui.muted}>No rules yet — add one to apply to members</Text>
+            <Text style={ui.muted}>No share rules yet — add a rule, pick members, then group it into a template for IPOs.</Text>
           ) : (
             templates.map((t) => (
               <View key={t.id} style={styles.compactRow}>
                 <View style={styles.compactRowMain}>
                   <ListRow
                     title={t.ruleName}
-                    subtitle={
-                      t.hasRule
-                        ? `${t.providerName} · ${t.profitProviderPercent}/${t.profitManagerPercent}% profit`
-                        : 'Not configured'
-                    }
+                    subtitle={shareRuleLabel(t)}
                     onPress={() => openTemplateMore(t)}
                   />
                 </View>
@@ -725,112 +864,61 @@ export default function ProfitSharingScreen() {
             ))
           )}
         </ContentCard>
+        </>
       )}
 
       {tab === 'members' && (
-        <ContentCard title="Member share rules">
-          {templateOptions.length > 0 && (
-            <View style={ui.bulkBar}>
-              <Text style={ui.sectionLabel}>Quick apply rule</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={ui.chipRow}>
-                  {templateOptions.map((opt) => (
-                    <Pressable
-                      key={opt.value}
-                      style={[ui.chip, bulkTemplateId === opt.value && ui.chipActive]}
-                      onPress={() => setBulkTemplateId(opt.value)}
-                    >
-                      <Text style={[ui.chipText, bulkTemplateId === opt.value && ui.chipTextActive]}>{opt.label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </ScrollView>
-              <Text style={ui.sectionLabel}>IPO scope for apply (optional)</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={ui.chipRow}>
-                  <Pressable
-                    style={[ui.chip, bulkIpoId == null && ui.chipActive]}
-                    onPress={() => setBulkIpoId(null)}
-                  >
-                    <Text style={[ui.chipText, bulkIpoId == null && ui.chipTextActive]}>All IPOs</Text>
-                  </Pressable>
-                  {ipos.map((ipo) => (
-                    <Pressable
-                      key={ipo.id}
-                      style={[ui.chip, bulkIpoId === ipo.id && ui.chipActive]}
-                      onPress={() => setBulkIpoId(ipo.id)}
-                    >
-                      <Text style={[ui.chipText, bulkIpoId === ipo.id && ui.chipTextActive]} numberOfLines={1}>
-                        {ipo.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </ScrollView>
-              {selectedMemberIds.length > 0 && bulkTemplateId && (
-                <Button mode="contained" loading={saving} onPress={() => openApplyTemplate(selectedMemberIds)}>
-                  Apply to {selectedMemberIds.length} selected
-                </Button>
-              )}
-            </View>
-          )}
-
+        <ContentCard title="Who is on which rule">
+          <Text style={ui.muted}>Members get P&L only when they are on a rule inside the template selected for that IPO. A template can hold several rules if they do not share members.</Text>
           <FilterChips
             value={membersFilter}
             onChange={setMembersFilter}
             scrollable={false}
             options={[
-              { value: 'all', label: `All (${members.length})` },
+              { value: 'all', label: `All (${activeMembers.length})` },
               { value: 'needs-rule', label: `Need rule (${unconfiguredMembers.length})` },
             ]}
           />
 
-          {filteredMembers.map((m) => (
-            <View key={m.memberId} style={[styles.compactRow, !m.hasShareRule && styles.compactRowWarn]}>
-              <Checkbox
-                status={selectedMemberIds.includes(m.memberId) ? 'checked' : 'unchecked'}
-                onPress={() =>
-                  setSelectedMemberIds((prev) =>
-                    prev.includes(m.memberId) ? prev.filter((id) => id !== m.memberId) : [...prev, m.memberId]
-                  )
-                }
-              />
+          {filteredMembers.map((m) => {
+            const onRules = memberRuleMap.get(m.memberId) || [];
+            return (
+            <View key={m.memberId} style={[styles.compactRow, !onRules.length && styles.compactRowWarn]}>
               <View style={styles.compactRowMain}>
                 <ListRow
                   title={m.displayName}
                   subtitle={[
                     formatPan(m.pan),
-                    m.hasShareRule ? pctSummary(m.effectiveProfitProviderPercent, m.effectiveProfitManagerPercent) : null,
+                    onRules.length ? onRules.map((r: any) => r.ruleName).join(', ') : 'Not on a rule',
                   ].filter(Boolean).join(' · ')}
                   right={
-                    m.hasShareRule ? (
-                      <Tag
-                        label={
-                          m.activeRuleCount != null
-                            ? `${m.activeRuleCount} active`
-                            : `${m.ruleCount} rules`
-                        }
-                        color="#059669"
-                      />
+                    onRules.length ? (
+                      <Tag label={`${onRules.length} rule${onRules.length === 1 ? '' : 's'}`} color="#059669" />
                     ) : (
                       <Tag label="Need rule" color="#d97706" />
                     )
                   }
                 />
                 <View style={styles.memberRowActions}>
-                <Button compact mode="outlined" onPress={() => openManageMember(m)} style={styles.primaryBtn}>
-                  Rules
-                </Button>
-                <Button compact mode="contained" onPress={() => openApplyTemplate([m.memberId])} style={styles.primaryBtn}>
-                  Apply rule
+                <Button
+                  compact
+                  mode="contained"
+                  onPress={() => {
+                    if (onRules[0]) openTemplateModal(onRules[0]);
+                    else {
+                      setTab('rules');
+                      openTemplateModal();
+                    }
+                  }}
+                  style={styles.primaryBtn}
+                >
+                  {onRules.length ? 'Edit rule' : 'Add to rule'}
                 </Button>
                 </View>
               </View>
-              <Pressable hitSlop={12} onPress={() => openMemberMore(m)} style={styles.moreBtn}>
-                <Text style={styles.moreText}>···</Text>
-              </Pressable>
             </View>
-          ))}
+            );
+          })}
         </ContentCard>
       )}
 
@@ -1001,12 +1089,93 @@ export default function ProfitSharingScreen() {
       <Modal visible={templateModalOpen} animationType="slide" onRequestClose={() => setTemplateModalOpen(false)}>
         <SafeAreaView style={ui.modal}>
           <View style={ui.modalHeader}>
-            <Text style={ui.modalTitle}>{templateEdit ? 'Edit rule template' : 'Add rule to list'}</Text>
+            <Text style={ui.modalTitle}>{templateEdit ? 'Edit share rule' : 'Create share rule'}</Text>
             <Button mode="text" onPress={() => setTemplateModalOpen(false)}>Cancel</Button>
           </View>
           <ScrollView contentContainerStyle={ui.modalBody} keyboardShouldPersistTaps="handled">
             <RuleFormFields form={templateForm} setForm={setTemplateForm} providers={providers} ipos={[]} showIpo={false} />
+            <Text style={ui.sectionLabel}>Active members on this rule</Text>
+            {memberGroupBulkOptions.length > 0 && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                {memberGroupBulkOptions.map((opt) => {
+                  const on = isGroupFullySelected(templateForm.memberIds || [], opt.ids);
+                  return (
+                    <Pressable
+                      key={opt.key}
+                      style={[ui.accountOption, on && ui.accountOptionActive, { paddingVertical: 8, paddingHorizontal: 12 }]}
+                      onPress={() =>
+                        setTemplateForm({
+                          ...templateForm,
+                          memberIds: toggleGroupMemberIds(templateForm.memberIds || [], opt.ids),
+                        })
+                      }
+                    >
+                      <Text>{opt.label} ({opt.ids.length})</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+            {pickerMembers.map((m) => {
+              const selected = (templateForm.memberIds || []).includes(m.memberId);
+              return (
+                <Checkbox.Item
+                  key={m.memberId}
+                  label={isActiveMember(m) ? m.displayName : `${m.displayName} (inactive)`}
+                  status={selected ? 'checked' : 'unchecked'}
+                  onPress={() => {
+                    const current = templateForm.memberIds || [];
+                    setTemplateForm({
+                      ...templateForm,
+                      memberIds: selected
+                        ? current.filter((id: number) => id !== m.memberId)
+                        : [...current, m.memberId],
+                    });
+                  }}
+                />
+              );
+            })}
             <Button mode="contained" loading={saving} onPress={onSaveTemplate}>Save</Button>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal visible={packModalOpen} animationType="slide" onRequestClose={() => setPackModalOpen(false)}>
+        <SafeAreaView style={ui.modal}>
+          <View style={ui.modalHeader}>
+            <Text style={ui.modalTitle}>{packEdit ? 'Edit template' : 'Create share template'}</Text>
+            <Button mode="text" onPress={() => setPackModalOpen(false)}>Cancel</Button>
+          </View>
+          <ScrollView contentContainerStyle={ui.modalBody} keyboardShouldPersistTaps="handled">
+            <TextInput
+              label="Template name"
+              value={packForm.packName || ''}
+              onChangeText={(v) => setPackForm({ ...packForm, packName: v })}
+              mode="outlined"
+              style={ui.input}
+            />
+            <Text style={ui.sectionLabel}>Share rules</Text>
+            <Text style={ui.muted}>Pick rules that do not share members. Each IPO will use this whole template.</Text>
+            {templates.map((r: any) => {
+              const selectedIds = (packForm.ruleIds || []).map(Number);
+              const checked = selectedIds.includes(Number(r.id));
+              return (
+                <Checkbox.Item
+                  key={r.id}
+                  label={shareRuleLabel(r, true)}
+                  status={checked ? 'checked' : 'unchecked'}
+                  onPress={() => {
+                    const { ids, error } = nextShareRuleIdsWithoutConflict(selectedIds, Number(r.id), templates);
+                    if (error) {
+                      Alert.alert('Rules contradict', error);
+                      return;
+                    }
+                    setPackForm({ ...packForm, ruleIds: ids });
+                  }}
+                />
+              );
+            })}
+            <Button mode="contained" loading={saving} onPress={onSavePack}>Save template</Button>
           </ScrollView>
         </SafeAreaView>
       </Modal>

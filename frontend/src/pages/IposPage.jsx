@@ -25,6 +25,7 @@ import { formatCurrency } from '../utils/format';
 import { formatGmp } from '../utils/liveIpo';
 import { getErrorMessage } from '../utils/errors';
 import ModalDatePicker from '../components/ModalDatePicker';
+import { sharePackLabel } from '../utils/shareRules';
 
 function toDateParam(v) {
   if (!v) return null;
@@ -197,20 +198,19 @@ export default function IposPage() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [registrarOptions, setRegistrarOptions] = useState([]);
+  const [sharePacks, setSharePacks] = useState([]);
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState('ALL');
+  const [tab, setTab] = useState('OPEN');
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      client.get('/ipos'),
-      client.get('/ipos', { params: { invalidOnly: 1 } }),
-    ])
-      .then(([active, invalid]) => {
-        setIpos(Array.isArray(active.data) ? active.data : []);
-        setInvalidIpos(Array.isArray(invalid.data) ? invalid.data : []);
+    client.get('/ipos', { params: { includeInvalid: 1 } })
+      .then(({ data }) => {
+        const list = Array.isArray(data) ? data : [];
+        setIpos(list.filter((r) => !r.is_invalid));
+        setInvalidIpos(list.filter((r) => !!r.is_invalid));
       })
       .catch((err) => message.error(getErrorMessage(err, 'Could not load IPOs')))
       .finally(() => setLoading(false));
@@ -245,6 +245,7 @@ export default function IposPage() {
         lastApplyDate: toDateParam(values.lastApplyDate),
         allowedCategories,
       };
+      if (values.profitSharePackId) payload.profitSharePackId = values.profitSharePackId;
       if (values.enableHni && values.lotAmountHni != null && values.lotAmountHni !== '') {
         payload.lotAmountHni = values.lotAmountHni;
       }
@@ -306,6 +307,11 @@ export default function IposPage() {
     form.resetFields();
     form.setFieldsValue({ ipoSegment: 'MAINBOARD', enableHni: false });
     setModalOpen(true);
+    if (!sharePacks.length) {
+      client.get('/profit-shares/packs').then(({ data }) => {
+        setSharePacks(Array.isArray(data) ? data : []);
+      }).catch(() => {});
+    }
   };
 
   return (
@@ -331,14 +337,6 @@ export default function IposPage() {
 
       <section className="dash-kpi-grid mem-kpis">
         <Kpi
-          label="All"
-          value={ipos.length}
-          hint="On My IPOs"
-          tone="teal"
-          active={tab === 'ALL'}
-          onClick={() => setTab('ALL')}
-        />
-        <Kpi
           label="Open"
           value={openCount}
           hint="Can take applications"
@@ -352,6 +350,14 @@ export default function IposPage() {
           hint="Finished issues"
           active={tab === 'CLOSED'}
           onClick={() => setTab('CLOSED')}
+        />
+        <Kpi
+          label="All"
+          value={ipos.length}
+          hint="On My IPOs"
+          tone="teal"
+          active={tab === 'ALL'}
+          onClick={() => setTab('ALL')}
         />
         <Kpi
           label="Invalid"
@@ -439,6 +445,22 @@ export default function IposPage() {
                 </Form.Item>
               ) : null
             }
+          </Form.Item>
+          <Form.Item
+            name="profitSharePackId"
+            label="Share template"
+            extra="Optional now. Group rules into a template on Profit sharing, then pick it here."
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="Select later on the IPO page"
+              options={sharePacks.map((p) => ({
+                value: p.id,
+                label: sharePackLabel(p),
+              }))}
+            />
           </Form.Item>
           <Form.Item name="registrar" label="Allotment registrar (optional)">
             <Select allowClear placeholder="KFintech, Link Intime, etc." options={registrarOptions} />

@@ -111,13 +111,10 @@ export default function GroupLeaderWalletsPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      client.get('/group-leader-wallets'),
-      client.get('/group-leader-wallets/overview'),
-    ])
-      .then(([listRes, ovRes]) => {
-        setRows(listRes.data || []);
-        setOverview(ovRes.data || null);
+    client.get('/group-leader-wallets/overview')
+      .then((ov) => {
+        setOverview(ov.data || null);
+        setRows(ov.data?.allWallets || []);
       })
       .catch((err) => message.error(getErrorMessage(err)))
       .finally(() => setLoading(false));
@@ -125,7 +122,7 @@ export default function GroupLeaderWalletsPage() {
 
   useEffect(() => {
     load();
-    client.get('/ipos').then((r) => setIpos(r.data || [])).catch(() => {});
+    client.get('/ipos', { params: { namesOnly: 1 } }).then((r) => setIpos(r.data || [])).catch(() => {});
   }, []);
 
   const openDetail = async (groupId) => {

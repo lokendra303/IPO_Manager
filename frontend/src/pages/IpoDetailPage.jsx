@@ -30,6 +30,12 @@ import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
 import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, ipoListingDate, remarksOrMemberSendNote } from '../utils/ipoProfit';
 import { applyAllotmentResult, sameAllotmentId, allotmentCheckAccess } from '../utils/allotmentAutoCheck';
+import {
+  assignedSharePackId,
+  assignedShareRuleIds,
+  sharePackLabel,
+  shareRuleMemberIds,
+} from '../utils/shareRules';
 
 function toDateParam(v) {
   if (!v) return null;
@@ -154,29 +160,29 @@ export default function IpoDetailPage() {
   const [receivingByGroup, setReceivingByGroup] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ipoSummary, setIpoSummary] = useState(null);
+  const [shareRules, setShareRules] = useState([]);
+  const [sharePacks, setSharePacks] = useState([]);
+  const [shareRuleSaving, setShareRuleSaving] = useState(false);
 
   const load = async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [ipoRes, appsRes, membersRes, walletRes, groupsRes, summaryRes] = await Promise.all([
-        client.get(`/ipos/${id}`),
-        client.get(`/ipos/${id}/applications`),
-        client.get('/members'),
-        client.get('/wallet'),
-        client.get('/member-groups'),
-        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
-      ]);
-      setIpo(normalizeIpo(ipoRes.data));
-      setApplications(appsRes.data);
-      setIpoSummary(summaryRes.data);
-      const activeMembers = membersRes.data.filter((m) => m.status === 'ACTIVE');
-      const uniqueActive = [...new Map(activeMembers.map((m) => [m.id, m])).values()];
-      setMembers(uniqueActive);
-      setMemberGroups(groupsRes.data);
-      const accts = (walletRes.data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
-      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
+      const { data } = await client.get(`/ipos/${id}/setup`);
+      setIpo(normalizeIpo(data.ipo));
+      setApplications(data.applications || []);
+      setMemberGroups(Array.isArray(data.groups) ? data.groups : []);
+      const activeMembers = (data.members || []).filter((m) => m.status === 'ACTIVE');
+      setMembers([...new Map(activeMembers.map((m) => [m.id, m])).values()]);
+      const accts = (data.wallet?.accounts || []).filter((a) => a.purpose !== 'MANAGER');
+      setWallet(Number(data.wallet?.providerBalance ?? data.wallet?.balance ?? 0));
       setBankAccounts(accts);
+      client.get('/profit-shares/packs').then(({ data: packs }) => {
+        const list = Array.isArray(packs) ? packs : [];
+        setSharePacks(list);
+        setShareRules(list.flatMap((p) => p.rules || []));
+      }).catch(() => {});
+      client.get(`/summary/ipos/${id}`).then(({ data: summary }) => setIpoSummary(summary)).catch(() => {});
     } catch (err) {
       setLoadError(getErrorMessage(err));
       setIpo(null);
@@ -188,16 +194,15 @@ export default function IpoDetailPage() {
   const refreshReceiveData = async () => {
     setRefreshing(true);
     try {
-      const [appsRes, walletRes, summaryRes] = await Promise.all([
+      const [appsRes, walletRes] = await Promise.all([
         client.get(`/ipos/${id}/applications`),
         client.get('/wallet'),
-        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
       ]);
       setApplications(appsRes.data);
-      setIpoSummary(summaryRes.data);
       const accts = (walletRes.data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
       setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
+      client.get(`/summary/ipos/${id}`).then(({ data }) => setIpoSummary(data)).catch(() => {});
     } catch (err) {
       message.error(getErrorMessage(err, 'Failed to refresh'));
     } finally {
@@ -211,7 +216,22 @@ export default function IpoDetailPage() {
   }, [id]);
 
   const appliedMemberIds = new Set(applications.map((a) => a.member_id));
-  const availableMembers = members.filter((m) => !appliedMemberIds.has(m.id));
+  const ipoShareRuleIds = assignedShareRuleIds(ipo);
+  const ipoSharePackId = assignedSharePackId(ipo);
+  const selectedPack = sharePacks.find((p) => Number(p.id) === ipoSharePackId) || null;
+  const selectedShareRules = selectedPack?.rules?.length
+    ? selectedPack.rules
+    : (ipo?.profitShareRules?.length
+      ? ipo.profitShareRules
+      : shareRules.filter((r) => ipoShareRuleIds.includes(Number(r.id))));
+  const hasShareRule = selectedShareRules.length > 0;
+  const ruleMemberIdSet = new Set(selectedShareRules.flatMap(shareRuleMemberIds));
+  const availableMembers = members.filter((m) => {
+    if (appliedMemberIds.has(m.id)) return false;
+    if (hasShareRule && !ruleMemberIdSet.has(m.id)) return false;
+    return true;
+  });
+  const membersOffRuleOnIpo = applications.filter((a) => hasShareRule && !ruleMemberIdSet.has(a.member_id));
   const isMemberAvailable = (memberId) => availableMembers.some((m) => m.id === memberId);
   const getGroupMemberDistributeReason = (m) => {
     if (m.status === 'INACTIVE' || !members.some((am) => am.id === m.id)) return 'inactive';
@@ -531,6 +551,20 @@ export default function IpoDetailPage() {
     }
   };
 
+  const onAssignSharePack = async (packId) => {
+    const nextId = packId == null || packId === '' ? null : Number(packId);
+    setShareRuleSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, { profitSharePackId: nextId });
+      setIpo(normalizeIpo(data));
+      message.success(nextId ? 'Share template updated for this IPO' : 'Share template cleared');
+    } catch (err) {
+      message.error(getErrorMessage(err));
+    } finally {
+      setShareRuleSaving(false);
+    }
+  };
+
   const onPreviewProfitShare = async () => {
     setProfitLoading(true);
     try {
@@ -653,6 +687,12 @@ export default function IpoDetailPage() {
       }
     }
 
+    const savingPnl = updates.some((u) => u.withdrawalMoney !== undefined || u.profitLoss !== undefined);
+    if (savingPnl && !hasShareRule) {
+      message.error('Select a share template for this IPO before saving P&L');
+      return;
+    }
+
     try {
       const { data } = await client.patch('/ipo-applications/bulk', { updates });
       const auto = data.autoDistributions || [];
@@ -669,7 +709,7 @@ export default function IpoDetailPage() {
       }
       if (needRules.length) {
         message.warning(
-          `${needRules.length} member(s) need share rules under Profit Sharing before auto split can run.`,
+          `${needRules.length} member(s) need to be on a selected share rule for this IPO before auto split can run.`,
           6
         );
       }
@@ -1559,15 +1599,19 @@ export default function IpoDetailPage() {
                   ? 'Invalid IPO — restore to main list before distributing'
                   : isClosed
                   ? 'IPO is closed — reopen to distribute funds to more members'
-                  : !availableMembers.length
-                    ? 'All active members already have an application for this IPO'
+                  : !hasShareRule
+                    ? 'Select a share template for this IPO first'
+                    : !availableMembers.length
+                    ? selectedShareRules.length
+                      ? 'No remaining members on the selected share rules'
+                      : 'All active members already have an application for this IPO'
                     : 'Distribute lot amount from wallet to selected members'
               }
             >
               <Button
                 type="primary"
                 onClick={openDistribute}
-                disabled={!availableMembers.length || isFrozen}
+                disabled={!availableMembers.length || isFrozen || !hasShareRule}
               >
                 Distribute Funds
               </Button>
@@ -1627,13 +1671,13 @@ export default function IpoDetailPage() {
               to="/profit-sharing"
               state={{ presetIpoId: Number(id), presetIpoName: ipo?.name }}
             >
-              <Button icon={<TeamOutlined />}>Share rules for this IPO</Button>
+              <Button icon={<TeamOutlined />}>Share template for this IPO</Button>
             </Link>
             <Button
               icon={<PercentageOutlined />}
               onClick={onPreviewProfitShare}
               loading={profitLoading}
-              disabled={isFrozen}
+              disabled={isFrozen || !hasShareRule}
             >
               Split / re-split P&L
             </Button>
@@ -1737,6 +1781,50 @@ export default function IpoDetailPage() {
           description="This IPO is hidden from the main list. You can still view records here. Restore it to distribute funds or use it normally."
         />
       )}
+
+      <ContentCard title="Share template" padded style={{ marginBottom: 16 }}>
+        <Space direction="vertical" style={{ width: '100%' }} size="small">
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder="Select a share template (required for distribute and P&L)"
+            value={ipoSharePackId}
+            onChange={onAssignSharePack}
+            loading={shareRuleSaving}
+            disabled={isFrozen}
+            allowClear
+            style={{ maxWidth: 560, width: '100%' }}
+            options={sharePacks.map((p) => ({
+              value: p.id,
+              label: sharePackLabel(p),
+            }))}
+          />
+          {!hasShareRule && (
+            <Alert
+              type="error"
+              showIcon
+              message="Select a share template for this IPO"
+              description="Create templates on Profit sharing by grouping rules with no overlapping members. Distribute and P&L stay locked until this IPO has a template."
+            />
+          )}
+          {hasShareRule && (
+            <Typography.Text type="secondary">
+              {selectedPack?.packName ? `${selectedPack.packName} · ` : ''}
+              {selectedShareRules.length} rule{selectedShareRules.length === 1 ? '' : 's'}
+              {' · '}{ruleMemberIdSet.size} unique member{ruleMemberIdSet.size === 1 ? '' : 's'}
+              {selectedShareRules.length === 1
+                ? ` · member keeps ${selectedShareRules[0].profitMemberPercent}%`
+                : ` · ${selectedShareRules.map((r) => `${r.ruleName} ${r.profitMemberPercent}%`).join(' · ')}`}
+              {membersOffRuleOnIpo.length
+                ? ` · ${membersOffRuleOnIpo.length} application(s) on this IPO are not on a selected rule`
+                : ''}
+            </Typography.Text>
+          )}
+          <Link to="/profit-sharing" state={{ presetIpoId: Number(id), presetIpoName: ipo?.name }}>
+            Manage templates
+          </Link>
+        </Space>
+      </ContentCard>
 
       {ipo?.gmp != null && (
         <ContentCard title="GMP" padded style={{ marginBottom: 16 }}>
@@ -2025,8 +2113,8 @@ export default function IpoDetailPage() {
             type="error"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Share rules required"
-            description="Some members need at least one valid share rule under Profit Sharing before confirming."
+            message="Share template required"
+            description="Select a share template for this IPO and make sure each member is on exactly one rule in it."
           />
         )}
         <Table

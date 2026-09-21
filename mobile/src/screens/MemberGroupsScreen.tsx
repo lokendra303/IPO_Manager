@@ -76,7 +76,10 @@ export default function MemberGroupsScreen() {
   const [viewOwnerExternalPan, setViewOwnerExternalPan] = useState('');
 
   const fetcher = useCallback(async (): Promise<MemberGroupsCache> => {
-    const [g, m] = await Promise.all([client.get('/member-groups'), client.get('/members')]);
+    const [g, m] = await Promise.all([
+      client.get('/member-groups'),
+      client.get('/members', { params: { lite: 1 } }),
+    ]);
     return { groups: g.data, allMembers: m.data };
   }, []);
   const { data, loading, refresh } = useQuery(fetcher);

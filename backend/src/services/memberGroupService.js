@@ -13,12 +13,18 @@ export async function listMemberGroups(pool, tenantId) {
     `SELECT g.*,
             o.display_name AS owner_member_display_name,
             o.pan AS owner_member_pan,
-            (SELECT COUNT(*) FROM members m WHERE m.member_group_id = g.id AND m.tenant_id = g.tenant_id) AS member_count
+            COALESCE(mc.member_count, 0) AS member_count
      FROM member_groups g
      LEFT JOIN members o ON o.id = g.owner_member_id
+     LEFT JOIN (
+       SELECT member_group_id, COUNT(*) AS member_count
+       FROM members
+       WHERE tenant_id = ?
+       GROUP BY member_group_id
+     ) mc ON mc.member_group_id = g.id
      WHERE g.tenant_id = ?
      ORDER BY g.sort_order, g.name, g.id`,
-    [tenantId]
+    [tenantId, tenantId]
   );
 
   const [members] = await pool.query(

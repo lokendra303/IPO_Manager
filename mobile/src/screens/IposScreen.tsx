@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import { Button, Checkbox, TextInput } from 'react-native-paper';
 import client from '../api/client';
@@ -15,6 +15,7 @@ import SlideModal from '../components/SlideModal';
 import FilterChips from '../components/FilterChips';
 import { fetchRegistrarOptions, type RegistrarOption } from '../utils/allotmentCheck';
 import { ui } from '../styles/ui';
+import { sharePackLabel } from '../utils/shareRules';
 import { useQuery } from '../hooks/useQuery';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, radii, spacing } from '../theme';
@@ -23,6 +24,8 @@ export default function IposScreen() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<any>({ ipoSegment: 'MAINBOARD', enableHni: false });
   const [registrarOptions, setRegistrarOptions] = useState<RegistrarOption[]>([]);
+  const [sharePacks, setSharePacks] = useState<any[]>([]);
+  const [tab, setTab] = useState<'ALL' | 'OPEN' | 'CLOSED'>('OPEN');
 
   useEffect(() => {
     fetchRegistrarOptions(client).then(setRegistrarOptions);
@@ -40,6 +43,13 @@ export default function IposScreen() {
 
   const list = data?.active ?? [];
   const invalidList = data?.invalid ?? [];
+  const openCount = list.filter((i: any) => i.status === 'OPEN').length;
+  const closedCount = list.length - openCount;
+  const visible = useMemo(() => {
+    if (tab === 'OPEN') return list.filter((i: any) => i.status === 'OPEN');
+    if (tab === 'CLOSED') return list.filter((i: any) => i.status !== 'OPEN');
+    return list;
+  }, [list, tab]);
 
   const onCreate = async () => {
     try {
@@ -54,6 +64,7 @@ export default function IposScreen() {
       if (form.openDate?.trim()) payload.openDate = form.openDate.trim();
       if (form.lastApplyDate?.trim()) payload.lastApplyDate = form.lastApplyDate.trim();
       if (form.enableHni && form.lotAmountHni) payload.lotAmountHni = Number(form.lotAmountHni);
+      if (form.profitSharePackId) payload.profitSharePackId = Number(form.profitSharePackId);
       const { data: created } = await client.post('/ipos', payload);
       setModalOpen(false);
       await refresh();
@@ -193,7 +204,7 @@ export default function IposScreen() {
     <Screen>
       <PageHeader
         title="IPOs"
-        subtitle={`${list.length} active`}
+        subtitle={`${visible.length} ${tab === 'ALL' ? 'active' : tab.toLowerCase()}`}
         extra={
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button compact mode="outlined" onPress={() => router.push('/(manager)/adjust-combine')}>
@@ -205,6 +216,11 @@ export default function IposScreen() {
               onPress={() => {
                 setForm({ ipoSegment: 'MAINBOARD', enableHni: false });
                 setModalOpen(true);
+                if (!sharePacks.length) {
+                  client.get('/profit-shares/packs')
+                    .then(({ data }) => setSharePacks(Array.isArray(data) ? data : []))
+                    .catch(() => {});
+                }
               }}
             >
               New
@@ -213,10 +229,22 @@ export default function IposScreen() {
         }
       />
 
-      {list.length === 0 ? (
-        <Text style={ui.muted}>No IPOs yet — tap New to create one.</Text>
+      <FilterChips
+        value={tab}
+        onChange={(v) => setTab((v as 'ALL' | 'OPEN' | 'CLOSED') || 'OPEN')}
+        options={[
+          { value: 'OPEN', label: `Open (${openCount})` },
+          { value: 'CLOSED', label: `Closed (${closedCount})` },
+          { value: 'ALL', label: `All (${list.length})` },
+        ]}
+      />
+
+      {visible.length === 0 ? (
+        <Text style={ui.muted}>
+          {list.length === 0 ? 'No IPOs yet — tap New to create one.' : 'No IPOs match this filter.'}
+        </Text>
       ) : (
-        <View style={styles.list}>{list.map((r) => renderIpoCard(r))}</View>
+        <View style={styles.list}>{visible.map((r) => renderIpoCard(r))}</View>
       )}
 
       {invalidList.length > 0 && (
@@ -263,6 +291,19 @@ export default function IposScreen() {
             ...registrarOptions.map((o) => ({ value: o.value, label: o.label })),
           ]}
         />
+        <Text style={ui.sectionLabel}>Share template (optional now)</Text>
+        <Text style={ui.muted}>Pick one template. Group rules on Profit sharing so members do not overlap.</Text>
+        {sharePacks.map((p: any) => {
+          const checked = Number(form.profitSharePackId) === Number(p.id);
+          return (
+            <Checkbox.Item
+              key={p.id}
+              label={sharePackLabel(p)}
+              status={checked ? 'checked' : 'unchecked'}
+              onPress={() => setForm({ ...form, profitSharePackId: checked ? undefined : p.id })}
+            />
+          );
+        })}
         <Checkbox.Item
           label="Enable HNI"
           status={form.enableHni ? 'checked' : 'unchecked'}

@@ -44,7 +44,7 @@ router.get('/transactions', async (req, res, next) => {
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw)
       ? Math.min(Math.max(Math.trunc(limitRaw), 1), 500)
-      : 500;
+      : 80;
     const [rows] = await pool.query(
       `SELECT wt.*, mba.label as bank_account_label, mba.purpose as bank_account_purpose
        FROM wallet_transactions wt

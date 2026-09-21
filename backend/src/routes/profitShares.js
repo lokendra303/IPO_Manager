@@ -29,6 +29,19 @@ import {
   resolveOptionalIpoId,
 } from '../services/profitShareService.js';
 import { parseProfitAnalysisFilters } from '../services/profitAnalysisFilters.js';
+import {
+  listShareRules,
+  getShareRule,
+  createShareRule,
+  updateShareRule,
+  deleteShareRule,
+  setShareRuleMembers,
+  listSharePacks,
+  getSharePack,
+  createSharePack,
+  updateSharePack,
+  deleteSharePack,
+} from '../services/ipoShareRuleService.js';
 
 const router = Router();
 
@@ -44,6 +57,36 @@ function parseSharePercents(body) {
     lossManagerPercent,
   };
 }
+
+/** One round-trip for the Profit sharing page (rules, templates, members). */
+router.get('/setup', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const members = await listMembersWithShareRules(conn, req.tenantId);
+    const rules = await listShareRules(conn, req.tenantId);
+    const packs = await listSharePacks(conn, req.tenantId, rules);
+    const ruleTemplates = await listRuleTemplates(conn, req.tenantId);
+    const [providers] = await conn.query(
+      'SELECT id, name FROM fund_providers WHERE tenant_id = ? ORDER BY name',
+      [req.tenantId]
+    );
+    let groups = [];
+    try {
+      const [rows] = await conn.query(
+        'SELECT id, name FROM member_groups WHERE tenant_id = ? ORDER BY name',
+        [req.tenantId]
+      );
+      groups = rows;
+    } catch {
+      groups = [];
+    }
+    res.json({ members, rules, packs, ruleTemplates, providers, groups });
+  } catch (err) {
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
 
 /** Named share rule templates (Rule list — multiple rules allowed) */
 router.get('/rule-templates', async (req, res, next) => {
@@ -133,6 +176,203 @@ router.get('/rule-templates/:templateId', async (req, res, next) => {
       const row = await getRuleTemplate(conn, req.tenantId, templateId);
       if (!row) throw new AppError('Rule template not found', 404);
       res.json(row);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Named IPO share rules (members + fixed %). */
+router.get('/rules', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const rows = await listShareRules(conn, req.tenantId);
+      res.json(rows);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/rules', async (req, res, next) => {
+  try {
+    const percents = parseSharePercents(req.body);
+    validateProfitLossPercents(percents);
+    const conn = await pool.getConnection();
+    try {
+      const created = await createShareRule(conn, req.tenantId, {
+        ruleName: req.body.ruleName,
+        fundProviderId: req.body.fundProviderId,
+        sortOrder: req.body.sortOrder,
+        memberIds: req.body.memberIds,
+        ...percents,
+      });
+      res.status(201).json(created);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/rules/:ruleId', async (req, res, next) => {
+  try {
+    const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
+    const conn = await pool.getConnection();
+    try {
+      const row = await getShareRule(conn, req.tenantId, ruleId);
+      if (!row) throw new AppError('Share rule not found', 404);
+      res.json(row);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/rules/:ruleId', async (req, res, next) => {
+  try {
+    const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
+    const percents = parseSharePercents(req.body);
+    const payload = {
+      ruleName: req.body.ruleName,
+      fundProviderId: req.body.fundProviderId,
+      sortOrder: req.body.sortOrder,
+      memberIds: req.body.memberIds,
+    };
+    if (
+      req.body.profitProviderPercent !== undefined
+      || req.body.profitManagerPercent !== undefined
+      || req.body.lossProviderPercent !== undefined
+      || req.body.lossManagerPercent !== undefined
+      || req.body.providerPercent !== undefined
+      || req.body.managerPercent !== undefined
+    ) {
+      validateProfitLossPercents(percents);
+      Object.assign(payload, percents);
+    }
+    const conn = await pool.getConnection();
+    try {
+      const updated = await updateShareRule(conn, req.tenantId, ruleId, payload);
+      res.json(updated);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/rules/:ruleId/members', async (req, res, next) => {
+  try {
+    const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
+    const conn = await pool.getConnection();
+    try {
+      const updated = await setShareRuleMembers(conn, req.tenantId, ruleId, req.body.memberIds);
+      res.json(updated);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/rules/:ruleId', async (req, res, next) => {
+  try {
+    const ruleId = parsePositiveInt(req.params.ruleId, 'rule id');
+    const conn = await pool.getConnection();
+    try {
+      await deleteShareRule(conn, req.tenantId, ruleId);
+      res.json({ ok: true });
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/packs', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      res.json(await listSharePacks(conn, req.tenantId));
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/packs', async (req, res, next) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const created = await createSharePack(conn, req.tenantId, {
+        packName: req.body.packName || req.body.ruleName,
+        ruleIds: req.body.ruleIds || req.body.profitShareRuleIds,
+        sortOrder: req.body.sortOrder,
+      });
+      res.status(201).json(created);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/packs/:packId', async (req, res, next) => {
+  try {
+    const packId = parsePositiveInt(req.params.packId, 'template id');
+    const conn = await pool.getConnection();
+    try {
+      const row = await getSharePack(conn, req.tenantId, packId);
+      if (!row) throw new AppError('Share template not found', 404);
+      res.json(row);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/packs/:packId', async (req, res, next) => {
+  try {
+    const packId = parsePositiveInt(req.params.packId, 'template id');
+    const conn = await pool.getConnection();
+    try {
+      const updated = await updateSharePack(conn, req.tenantId, packId, {
+        packName: req.body.packName ?? req.body.ruleName,
+        ruleIds: req.body.ruleIds ?? req.body.profitShareRuleIds,
+        sortOrder: req.body.sortOrder,
+      });
+      res.json(updated);
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/packs/:packId', async (req, res, next) => {
+  try {
+    const packId = parsePositiveInt(req.params.packId, 'template id');
+    const conn = await pool.getConnection();
+    try {
+      await deleteSharePack(conn, req.tenantId, packId);
+      res.json({ ok: true });
     } finally {
       conn.release();
     }

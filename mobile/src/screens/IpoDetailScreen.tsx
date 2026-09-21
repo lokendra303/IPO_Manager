@@ -16,6 +16,7 @@ import AllotmentCheckModal from '../components/AllotmentCheckModal';
 import Banner from '../components/Banner';
 import InfoCard from '../components/InfoCard';
 import { ui } from '../styles/ui';
+import { shareRuleMemberIds, assignedShareRuleIds, assignedSharePackId, sharePackLabel } from '../utils/shareRules';
 import {
   categoryCompactOptionsForIpo,
   categoryOptionsForIpo,
@@ -102,6 +103,9 @@ export default function IpoDetailScreen() {
   const [undistributingAppId, setUndistributingAppId] = useState<number | null>(null);
   const [undoingAppId, setUndoingAppId] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [shareRules, setShareRules] = useState<any[]>([]);
+  const [sharePacks, setSharePacks] = useState<any[]>([]);
+  const [shareRuleSaving, setShareRuleSaving] = useState(false);
 
   const [distributeOpen, setDistributeOpen] = useState(false);
   const [distributing, setDistributing] = useState(false);
@@ -120,24 +124,22 @@ export default function IpoDetailScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      const [ipoRes, appsRes, membersRes, walletRes, groupsRes, summaryRes] = await Promise.all([
-        client.get(`/ipos/${id}`),
-        client.get(`/ipos/${id}/applications`),
-        client.get('/members'),
-        client.get('/wallet'),
-        client.get('/member-groups'),
-        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
-      ]);
-      setIpo(ipoRes.data);
-      setApplications(appsRes.data);
-      setIpoSummary(summaryRes.data);
-      const activeMembers = membersRes.data.filter((m: any) => m.status === 'ACTIVE');
+      const { data } = await client.get(`/ipos/${id}/setup`);
+      setIpo(data.ipo);
+      setApplications(data.applications || []);
+      setMemberGroups(Array.isArray(data.groups) ? data.groups : []);
+      const activeMembers = (data.members || []).filter((m: any) => m.status === 'ACTIVE');
       setMembers([...new Map(activeMembers.map((m: any) => [m.id, m])).values()]);
-      setMemberGroups(groupsRes.data);
-      const accts = (walletRes.data.accounts || []).filter((a: any) => a.purpose !== 'MANAGER');
-      setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
+      const accts = (data.wallet?.accounts || []).filter((a: any) => a.purpose !== 'MANAGER');
+      setWallet(Number(data.wallet?.providerBalance ?? data.wallet?.balance ?? 0));
       setBankAccounts(accts);
       setReceiveAccountId(accts.find((a: any) => a.is_default)?.id ?? accts[0]?.id ?? null);
+      client.get('/profit-shares/packs').then(({ data: packs }) => {
+        const list = Array.isArray(packs) ? packs : [];
+        setSharePacks(list);
+        setShareRules(list.flatMap((p: any) => p.rules || []));
+      }).catch(() => {});
+      client.get(`/summary/ipos/${id}`).then(({ data: summary }) => setIpoSummary(summary)).catch(() => {});
     } catch (err) {
       setLoadError(getErrorMessage(err));
       setIpo(null);
@@ -150,16 +152,15 @@ export default function IpoDetailScreen() {
     if (!id) return;
     setRefreshing(true);
     try {
-      const [appsRes, walletRes, summaryRes] = await Promise.all([
+      const [appsRes, walletRes] = await Promise.all([
         client.get(`/ipos/${id}/applications`),
         client.get('/wallet'),
-        client.get(`/summary/ipos/${id}`).catch(() => ({ data: null })),
       ]);
       setApplications(appsRes.data);
-      setIpoSummary(summaryRes.data);
       const accts = (walletRes.data.accounts || []).filter((a: any) => a.purpose !== 'MANAGER');
       setWallet(Number(walletRes.data.providerBalance ?? walletRes.data.balance));
       setBankAccounts(accts);
+      client.get(`/summary/ipos/${id}`).then(({ data }) => setIpoSummary(data)).catch(() => {});
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err, 'Failed to refresh'));
     } finally {
@@ -177,7 +178,21 @@ export default function IpoDetailScreen() {
   const isFrozen = isClosed || isInvalid;
   const activeAccounts = bankAccounts.filter((a) => a.is_active);
   const appliedMemberIds = new Set(applications.map((a) => a.member_id));
-  const availableMembers = members.filter((m) => !appliedMemberIds.has(m.id));
+  const ipoShareRuleIds = assignedShareRuleIds(ipo);
+  const ipoSharePackId = assignedSharePackId(ipo);
+  const selectedPack = sharePacks.find((p) => Number(p.id) === ipoSharePackId) || null;
+  const selectedShareRules = selectedPack?.rules?.length
+    ? selectedPack.rules
+    : (ipo?.profitShareRules?.length
+      ? ipo.profitShareRules
+      : shareRules.filter((r: any) => ipoShareRuleIds.includes(Number(r.id))));
+  const hasShareRule = selectedShareRules.length > 0;
+  const ruleMemberIdSet = new Set(selectedShareRules.flatMap(shareRuleMemberIds));
+  const availableMembers = members.filter((m) => {
+    if (appliedMemberIds.has(m.id)) return false;
+    if (hasShareRule && !ruleMemberIdSet.has(m.id)) return false;
+    return true;
+  });
   const isMemberAvailable = (memberId: number) => availableMembers.some((m) => m.id === memberId);
   const getGroupMemberDistributeReason = (m: any): 'inactive' | 'applied' | null => {
     if (m.status === 'INACTIVE' || !members.some((am) => am.id === m.id)) return 'inactive';
@@ -534,6 +549,10 @@ export default function IpoDetailScreen() {
   };
 
   const openDistribute = async () => {
+    if (!hasShareRule) {
+      Alert.alert('Share template required', 'Select a share template for this IPO first');
+      return;
+    }
     setSelectedIds([]);
     setSelectedGroupBulkIds([]);
     setStep(0);
@@ -590,6 +609,12 @@ export default function IpoDetailScreen() {
         Alert.alert('Error', 'Application amount must be greater than zero');
         return;
       }
+    }
+
+    const savingPnl = updates.some((u: any) => u.withdrawalMoney !== undefined || u.profitLoss !== undefined);
+    if (savingPnl && !hasShareRule) {
+      Alert.alert('Share template required', 'Select a share template for this IPO before saving P&L');
+      return;
     }
 
     try {
@@ -1028,7 +1053,24 @@ export default function IpoDetailScreen() {
     }
   };
 
+  const onAssignSharePack = async (packId: number | null) => {
+    if (isFrozen) return;
+    setShareRuleSaving(true);
+    try {
+      const { data } = await client.patch(`/ipos/${id}`, { profitSharePackId: packId });
+      setIpo(data);
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    } finally {
+      setShareRuleSaving(false);
+    }
+  };
+
   const onPreviewProfitShare = async () => {
+    if (!hasShareRule) {
+      Alert.alert('Share template required', 'Select a share template for this IPO first');
+      return;
+    }
     setProfitLoading(true);
     try {
       const { data } = await client.post('/profit-shares/preview', { ipoId: Number(id) });
@@ -1118,6 +1160,47 @@ export default function IpoDetailScreen() {
         <Banner variant="warn">Hidden from main list. Use More to restore or delete.</Banner>
       )}
 
+      <ContentCard title="Share template">
+        {!hasShareRule && (
+          <Banner variant="warn">Select a share template before distribute or P&L. Group rules on Profit sharing so members do not overlap.</Banner>
+        )}
+        {shareRuleSaving ? <Text style={ui.muted}>Saving…</Text> : null}
+        {sharePacks.map((p: any) => {
+          const checked = ipoSharePackId === Number(p.id);
+          return (
+            <Pressable
+              key={p.id}
+              style={[ui.accountOption, checked && ui.accountOptionActive]}
+              disabled={isFrozen}
+              onPress={() => onAssignSharePack(checked ? null : Number(p.id))}
+            >
+              <Text>{sharePackLabel(p)}</Text>
+            </Pressable>
+          );
+        })}
+        {hasShareRule ? (
+          <Text style={ui.muted}>
+            {selectedPack?.packName ? `${selectedPack.packName} · ` : ''}
+            {selectedShareRules.length} rule{selectedShareRules.length === 1 ? '' : 's'} · {ruleMemberIdSet.size} unique members
+            {selectedShareRules.length === 1
+              ? ` · member keeps ${selectedShareRules[0].profitMemberPercent}%`
+              : ''}
+          </Text>
+        ) : null}
+        <Button
+          compact
+          mode="text"
+          onPress={() =>
+            router.push({
+              pathname: '/(manager)/profit-sharing',
+              params: { presetIpoId: String(id), presetIpoName: ipo?.name || '' },
+            })
+          }
+        >
+          Manage templates
+        </Button>
+      </ContentCard>
+
       {displaySummary && (
         <ContentCard title="IPO Summary">
           <StatGrid>
@@ -1170,7 +1253,7 @@ export default function IpoDetailScreen() {
       <ContentCard title="Actions">
         <View style={styles.primaryActions}>
           {!isFrozen && (
-            <Button mode="contained" disabled={!availableMembers.length} onPress={openDistribute} style={styles.primaryBtn}>
+            <Button mode="contained" disabled={!availableMembers.length || !hasShareRule} onPress={openDistribute} style={styles.primaryBtn}>
               Distribute
             </Button>
           )}
@@ -1226,10 +1309,17 @@ export default function IpoDetailScreen() {
               }
             }
             if (!isFrozen) {
-              buttons.push({ text: 'Distribute P&L', onPress: onPreviewProfitShare });
+              if (!hasShareRule) {
+                buttons.push({
+                  text: 'Distribute P&L (select a share template first)',
+                  onPress: () => Alert.alert('Share template required', 'Select a share template for this IPO first'),
+                });
+              } else {
+                buttons.push({ text: 'Distribute P&L', onPress: onPreviewProfitShare });
+              }
             }
             buttons.push({
-              text: 'Share rules',
+              text: 'Share template',
               onPress: () =>
                 router.push({
                   pathname: '/(manager)/profit-sharing',

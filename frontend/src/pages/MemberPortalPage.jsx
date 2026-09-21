@@ -75,30 +75,31 @@ export default function MemberPortalPage() {
 
   const load = () => {
     setLoadError(null);
-    return Promise.allSettled([
-      client.get('/member-portal/dashboard'),
-      client.get('/member-portal/issues'),
-      client.get('/member-portal/attention'),
-      client.get('/member-portal/fund-return-claims'),
-    ]).then(([dashRes, issuesRes, attRes, claimsRes]) => {
-      if (dashRes.status === 'fulfilled') {
-        setDashboard(dashRes.value.data);
+    const extras = () => {
+      client.get('/member-portal/issues').then(({ data }) => {
+        setIssues(Array.isArray(data) ? data : []);
+      }).catch(() => setIssues([]));
+      client.get('/member-portal/fund-return-claims').then(({ data }) => {
+        setFundClaims(Array.isArray(data) ? data : []);
+      }).catch(() => setFundClaims([]));
+    };
+    return client.get('/member-portal/dashboard')
+      .then(({ data }) => {
+        setDashboard(data);
+        if (Array.isArray(data?.attention)) setAttention(data.attention);
         profileForm.setFieldsValue({
-          email: dashRes.value.data?.member?.email || '',
-          upi: dashRes.value.data?.member?.upi || '',
+          email: data?.member?.email || '',
+          upi: data?.member?.upi || '',
         });
-      } else {
+        extras();
+      })
+      .catch((err) => {
         setDashboard(null);
-        setLoadError(getErrorMessage(dashRes.reason, 'Could not load your portal'));
-      }
-      if (issuesRes.status === 'fulfilled') {
-        setIssues(Array.isArray(issuesRes.value.data) ? issuesRes.value.data : []);
-      } else setIssues([]);
-      if (attRes.status === 'fulfilled') setAttention(attRes.value.data || []);
-      else setAttention([]);
-      if (claimsRes.status === 'fulfilled') setFundClaims(claimsRes.value.data || []);
-      else setFundClaims([]);
-    });
+        setLoadError(getErrorMessage(err, 'Could not load your portal'));
+        setIssues([]);
+        setAttention([]);
+        setFundClaims([]);
+      });
   };
 
   useEffect(() => {

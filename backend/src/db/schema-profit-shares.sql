@@ -1,3 +1,59 @@
+-- Named IPO share rules (grouped into templates for IPO assignment)
+CREATE TABLE IF NOT EXISTS profit_share_rules (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  rule_name VARCHAR(100) NOT NULL,
+  fund_provider_id INT NOT NULL,
+  profit_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  profit_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  loss_provider_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  loss_manager_percent DECIMAL(5, 2) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE CASCADE,
+  INDEX idx_share_rules_tenant (tenant_id, sort_order)
+);
+
+CREATE TABLE IF NOT EXISTS profit_share_rule_members (
+  rule_id INT NOT NULL,
+  member_id INT NOT NULL,
+  PRIMARY KEY (rule_id, member_id),
+  FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+  FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+  INDEX idx_share_rule_members_member (member_id)
+);
+
+CREATE TABLE IF NOT EXISTS ipo_profit_share_rules (
+  ipo_id INT NOT NULL,
+  rule_id INT NOT NULL,
+  PRIMARY KEY (ipo_id, rule_id),
+  FOREIGN KEY (ipo_id) REFERENCES ipos(id) ON DELETE CASCADE,
+  FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+  INDEX idx_ipo_share_rules_rule (rule_id)
+);
+
+CREATE TABLE IF NOT EXISTS profit_share_packs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  pack_name VARCHAR(100) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT NULL,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  INDEX idx_share_packs_tenant (tenant_id, sort_order)
+);
+
+CREATE TABLE IF NOT EXISTS profit_share_pack_rules (
+  pack_id INT NOT NULL,
+  rule_id INT NOT NULL,
+  PRIMARY KEY (pack_id, rule_id),
+  FOREIGN KEY (pack_id) REFERENCES profit_share_packs(id) ON DELETE CASCADE,
+  FOREIGN KEY (rule_id) REFERENCES profit_share_rules(id) ON DELETE CASCADE,
+  INDEX idx_share_pack_rules_rule (rule_id)
+);
+
 -- Reusable named share rules (multiple per tenant; apply to members from Rule list)
 CREATE TABLE IF NOT EXISTS profit_share_rule_templates (
   id INT AUTO_INCREMENT PRIMARY KEY,

@@ -55,20 +55,19 @@ export default function WalletPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
-      client.get('/wallet'),
-      client.get('/bank-accounts'),
-      client.get('/wallet/transactions'),
-    ])
-      .then(([w, accts, t]) => {
+    client.get('/wallet')
+      .then((w) => {
         setBalance(w.data.balance);
         setProviderBalance(w.data.providerBalance ?? w.data.managerProfit?.providerBalance ?? 0);
         setManagerBalance(w.data.managerBalance ?? w.data.managerProfit?.managerBalance ?? 0);
         setManagerProfit(w.data.managerProfit || null);
-        setAccounts(accts.data.accounts || w.data.accounts || []);
-        setTxns(t.data);
+        setAccounts(w.data.accounts || []);
       })
+      .catch((err) => message.error(getErrorMessage(err, 'Could not load wallet')))
       .finally(() => setLoading(false));
+    client.get('/wallet/transactions', { params: { limit: 80 } })
+      .then((t) => setTxns(Array.isArray(t.data) ? t.data : []))
+      .catch(() => {});
   };
 
   useEffect(load, []);

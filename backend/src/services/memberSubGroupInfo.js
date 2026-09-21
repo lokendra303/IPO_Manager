@@ -1,49 +1,10 @@
 import { listGroupBulkTransactions } from './memberGroupService.js';
-import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
+import { calculateMultiRuleSplit } from './profitShareService.js';
+import { loadShareRulesByIpoIds, tryResolveShareRulesForMember } from './ipoShareRuleService.js';
 import { formatPan } from '../utils/validate.js';
 import { PENDING_FUND_TOTAL_SQL } from './pendingReturnUtils.js';
 
-function mapMemberRuleRow(row) {
-  return {
-    id: row.id,
-    ruleName: row.rule_name || `Rule ${row.id}`,
-    sortOrder: Number(row.sort_order ?? 0),
-    ipoId: row.ipo_id ?? null,
-    ipoName: row.ipo_name ?? null,
-    fundProviderId: row.fund_provider_id,
-    providerName: row.provider_name,
-    profitProviderPercent: Number(row.provider_percent),
-    profitManagerPercent: Number(row.manager_percent),
-    lossProviderPercent: Number(row.loss_provider_percent ?? 0),
-    lossManagerPercent: Number(row.loss_manager_percent ?? 0),
-  };
-}
-
-async function loadGroupMemberShareRules(pool, tenantId, memberIds) {
-  const map = new Map();
-  if (!memberIds.length) return map;
-
-  const placeholders = memberIds.map(() => '?').join(', ');
-  const [rows] = await pool.query(
-    `SELECT mps.*, fp.name AS provider_name, i.name AS ipo_name, mps.member_id
-     FROM member_profit_shares mps
-     LEFT JOIN fund_providers fp ON fp.id = mps.fund_provider_id
-     LEFT JOIN ipos i ON i.id = mps.ipo_id AND i.tenant_id = mps.tenant_id
-     WHERE mps.tenant_id = ? AND mps.member_id IN (${placeholders})
-     ORDER BY mps.member_id, mps.sort_order, mps.id`,
-    [tenantId, ...memberIds]
-  );
-
-  for (const row of rows) {
-    const memberId = row.member_id;
-    const list = map.get(memberId) ?? [];
-    list.push(mapMemberRuleRow(row));
-    map.set(memberId, list);
-  }
-  return map;
-}
-
-function computeAllottedAppShare(appRow, memberRules) {
+function computeAllottedAppShare(appRow, ipoRules) {
   const gross =
     appRow.allotment_status === 'ALLOTED' ? Number(appRow.profit_loss ?? 0) : 0;
   if (appRow.allotment_status !== 'ALLOTED' || appRow.profit_loss == null || gross === 0) {
@@ -60,18 +21,16 @@ function computeAllottedAppShare(appRow, memberRules) {
     };
   }
 
-  if (memberRules?.length) {
-    const applicableRules = resolveRulesForIpo(memberRules, appRow.ipo_id);
-    if (applicableRules.length) {
-      const split = calculateMultiRuleSplit(gross, applicableRules);
-      return {
-        gross,
-        memberShare: split.memberAmount,
-        managerShare: split.totalManager,
-        providerShare: split.totalProvider,
-        shareStatus: 'pending',
-      };
-    }
+  const { rules } = tryResolveShareRulesForMember(ipoRules || [], appRow.member_id);
+  if (rules.length) {
+    const split = calculateMultiRuleSplit(gross, rules);
+    return {
+      gross,
+      memberShare: split.memberAmount,
+      managerShare: split.totalManager,
+      providerShare: split.totalProvider,
+      shareStatus: 'pending',
+    };
   }
 
   return { gross, memberShare: null, managerShare: null, providerShare: null, shareStatus: null };
@@ -196,8 +155,11 @@ export async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGrou
     { iposApplied: 0, iposPending: 0, iposAlloted: 0, iposNotAlloted: 0 }
   );
 
-  const memberIds = members.map((m) => m.id);
-  const rulesByMemberId = await loadGroupMemberShareRules(pool, tenantId, memberIds);
+  const ipoRules = await loadShareRulesByIpoIds(
+    pool,
+    tenantId,
+    groupApps.map((row) => row.ipo_id)
+  );
 
   const memberPnL = new Map();
   let groupGrossIpoPnL = 0;
@@ -206,10 +168,9 @@ export async function getSubGroupPortalInfo(pool, tenantId, memberId, memberGrou
   let groupTotalProviderShare = 0;
 
   const enrichedGroupApps = groupApps.map((row) => {
-    const memberRules = rulesByMemberId.get(row.member_id) ?? [];
     const { gross, memberShare, managerShare, providerShare, shareStatus } = computeAllottedAppShare(
       row,
-      memberRules
+      ipoRules.get(Number(row.ipo_id)) || []
     );
 
     const agg = memberPnL.get(row.member_id) ?? {
