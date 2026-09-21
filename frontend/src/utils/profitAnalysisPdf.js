@@ -485,6 +485,12 @@ export function buildProfitAnalysisPdf(analysis, meta = {}) {
   return { doc, fileName };
 }
 
+export function profitAnalysisPdfBase64(analysis, meta = {}) {
+  const { doc, fileName } = buildProfitAnalysisPdf(analysis, meta);
+  const dataUri = doc.output('datauristring');
+  return { fileName, pdfBase64: dataUri.split(',')[1] };
+}
+
 /** Download profit analysis PDF. */
 export function downloadProfitAnalysisPdf(analysis, meta = {}) {
   const { doc, fileName } = buildProfitAnalysisPdf(analysis, meta);

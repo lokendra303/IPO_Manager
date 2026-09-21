@@ -5,9 +5,10 @@ import {
   message, Space, Typography, Select, Input, Popconfirm, Switch, Result, Tooltip, Segmented, Divider,
   Row, Col,
 } from 'antd';
-import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined, SwapOutlined, CalendarOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, SaveOutlined, UndoOutlined, LockOutlined, UnlockOutlined, PercentageOutlined, SearchOutlined, BankOutlined, TeamOutlined, StopOutlined, RollbackOutlined, EditOutlined, DeleteOutlined, SwapOutlined, CalendarOutlined, MailOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
+import AllotmentEmailPdfModal from '../components/AllotmentEmailPdfModal';
 import ModalDatePicker from '../components/ModalDatePicker';
 import client from '../api/client';
 import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
@@ -138,6 +139,7 @@ export default function IpoDetailPage() {
   const [profitPreview, setProfitPreview] = useState([]);
   const [profitLoading, setProfitLoading] = useState(false);
   const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [distributeInvestorCategory, setDistributeInvestorCategory] = useState('RII');
   const [selectedGroupBulkIds, setSelectedGroupBulkIds] = useState([]);
   const [hniModalOpen, setHniModalOpen] = useState(false);
@@ -263,6 +265,12 @@ export default function IpoDetailPage() {
   const notAppliedCount = applications.filter(isNotApplied).length;
   const allottedCount = applications.filter(isAllotted).length;
   const notAllottedCount = applications.filter(isNotAllotted).length;
+  const emailApplications = applications.map((app) => ({
+    ...app,
+    allotment_status: getAllotmentStatus(app),
+    allotted_lots: editedRows[app.id]?.allottedLots ?? app.allotted_lots,
+    amount: editedRows[app.id]?.amount ?? app.amount,
+  }));
   const allotmentSortOrder = (app) => {
     const rank = { ALLOTED: 0, PENDING: 1, NOT_ALLOTED: 2, NOT_APPLIED: 3 };
     return rank[getAllotmentStatus(app)] ?? 9;
@@ -1665,6 +1673,9 @@ export default function IpoDetailPage() {
                     </Button>
                   </span>
                 </Tooltip>
+                <Button icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
+                  Email PDF
+                </Button>
               </>
             )}
             <Link
@@ -1974,6 +1985,13 @@ export default function IpoDetailPage() {
 
       <ContentCard
         title={`Applications (${filteredApplications.length}${returnFilter !== 'all' ? ` of ${applications.length}` : ''})`}
+        extra={
+          applications.length > 0 ? (
+            <Button icon={<MailOutlined />} onClick={() => setEmailOpen(true)}>
+              Email PDF
+            </Button>
+          ) : null
+        }
       >
         {applications.length > 0 && (
           <Alert
@@ -2837,6 +2855,15 @@ export default function IpoDetailPage() {
           }
           refreshReceiveData();
         }}
+      />
+
+      <AllotmentEmailPdfModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        ipoId={id}
+        ipoName={ipo?.name}
+        applications={emailApplications}
+        waitingForListing={!ipoListed}
       />
     </div>
   );

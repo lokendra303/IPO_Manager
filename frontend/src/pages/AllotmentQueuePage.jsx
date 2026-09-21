@@ -7,6 +7,7 @@ import {
   CheckCircleFilled,
   CloseCircleFilled,
   ClockCircleFilled,
+  MailOutlined,
   ReloadOutlined,
   SearchOutlined,
   TeamOutlined,
@@ -18,6 +19,7 @@ import PageLoading from '../components/PageLoading';
 import StatCard from '../components/StatCard';
 import AllotmentProcessPanel from '../components/AllotmentProcessPanel';
 import AllotmentStatusBadge from '../components/AllotmentStatusBadge';
+import AllotmentEmailPdfModal from '../components/AllotmentEmailPdfModal';
 import { getErrorMessage } from '../utils/errors';
 import { formatCurrency, relativeTime } from '../utils/format';
 import { tableDefaults } from '../utils/table';
@@ -103,6 +105,7 @@ export default function AllotmentQueuePage() {
   const [activity, setActivity] = useState([]);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [q, setQ] = useState('');
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const [blocked, setBlocked] = useState(null);
 
@@ -151,12 +154,16 @@ export default function AllotmentQueuePage() {
       message.info(recheck ? 'No members to recheck' : 'No pending members');
       return;
     }
+    const appliedTotal = (queue?.applications || []).length;
+    const baseChecked = Math.max(appliedTotal - targets.length, 0);
     setChecking(true);
     setSummary(null);
     setActivity([]);
     setProgress({
       current: 0,
       total: targets.length,
+      appliedTotal,
+      baseChecked,
       name: null,
       phase: 'start',
       allotted: 0,
@@ -181,6 +188,8 @@ export default function AllotmentQueuePage() {
           setProgress({
             current: phase === 'checking' ? index : index + 1,
             total,
+            appliedTotal,
+            baseChecked,
             name,
             phase,
             message: blocked,
@@ -201,10 +210,12 @@ export default function AllotmentQueuePage() {
       if (stats.message && !stats.checked) message.warning(stats.message);
       else {
         const waiting = !ipoIsListed(queue?.ipo);
+        const totalApplied = (queue?.applications || []).length;
+        const checkedLabel = `${stats.checked} ${stats.checked === 1 ? 'member' : 'members'} out of ${totalApplied} applied ${totalApplied === 1 ? 'member' : 'members'}`;
         message.success(
           waiting && stats.allotted
-            ? `Checked ${stats.checked} · ${stats.allotted} waiting for listing · ${stats.notAllotted} not allotted`
-            : `Checked ${stats.checked} member${stats.checked === 1 ? '' : 's'}`
+            ? `${checkedLabel} · ${stats.allotted} waiting for listing · ${stats.notAllotted} not allotted`
+            : checkedLabel
         );
       }
     } catch (err) {
@@ -384,6 +395,13 @@ export default function AllotmentQueuePage() {
         extra={
           <div className="allotment-actions">
             <Button
+              icon={<MailOutlined />}
+              disabled={!rows.length || checking}
+              onClick={() => setEmailOpen(true)}
+            >
+              Email PDF
+            </Button>
+            <Button
               type="primary"
               icon={<SearchOutlined />}
               loading={checking}
@@ -405,6 +423,7 @@ export default function AllotmentQueuePage() {
           summary={summary}
           activity={activity}
           waitingForListing={waitingForListing}
+          appliedTotal={rows.length}
         />
       </ContentCard>
 
@@ -447,6 +466,15 @@ export default function AllotmentQueuePage() {
           locale={{ emptyText: 'No applications match this filter' }}
         />
       </ContentCard>
+
+      <AllotmentEmailPdfModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        ipoId={id}
+        ipoName={queue?.ipo?.name}
+        applications={rows}
+        waitingForListing={waitingForListing}
+      />
     </div>
   );
 }

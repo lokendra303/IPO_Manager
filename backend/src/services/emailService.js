@@ -3,6 +3,14 @@ import nodemailer from 'nodemailer';
 
 let transporter;
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function stripEnvQuotes(value) {
   if (!value || typeof value !== 'string') return '';
   let v = value.trim();
@@ -80,14 +88,16 @@ function getTransporter() {
   return transporter;
 }
 
-async function sendMail({ to, subject, text, html }) {
+async function sendMail({ to, cc, subject, text, html, attachments }) {
   const transport = getTransporter();
   await transport.sendMail({
     from: getFromAddress(),
     to,
+    cc,
     subject,
     text,
     html,
+    attachments,
   });
 }
 
@@ -163,6 +173,58 @@ export async function sendNewEmailChangeOtpEmail(email, otp) {
     subject: 'Confirm your new email',
     plainIntro: 'You requested to use this email for your IPO Team Manager account. Enter this code to confirm you own this new email address.',
     htmlIntro: 'You requested to use this email for your <strong>IPO Team Manager</strong> account. Enter this code to confirm you own this <strong>new</strong> email address.',
+  });
+}
+
+export async function sendPdfReportEmail({
+  to,
+  cc,
+  subject,
+  heading,
+  summary,
+  filename,
+  pdfBuffer,
+}) {
+  const line = summary || 'The PDF is attached.';
+  await sendMail({
+    to,
+    cc: cc?.length ? cc : undefined,
+    subject: subject || 'IPO Team Manager report',
+    text: [heading, '', line, '', 'The PDF is attached.'].filter(Boolean).join('\n'),
+    html: `
+      <p>${escapeHtml(heading || 'IPO Team Manager report')}</p>
+      <p>${escapeHtml(line)}</p>
+      <p>The PDF is attached.</p>
+    `,
+    attachments: [
+      {
+        filename: filename || 'report.pdf',
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
+  });
+}
+
+export async function sendAllotmentCheckPdfEmail({
+  to,
+  cc,
+  ipoName,
+  teamName,
+  summary,
+  filename,
+  pdfBuffer,
+}) {
+  const name = ipoName || 'IPO';
+  const team = teamName || 'IPO Team';
+  return sendPdfReportEmail({
+    to,
+    cc,
+    subject: `${name} allotment check — ${team}`,
+    heading: `${team} allotment check for ${name}.`,
+    summary: summary || 'Allotment check list attached.',
+    filename: filename || 'allotment-check.pdf',
+    pdfBuffer,
   });
 }
 

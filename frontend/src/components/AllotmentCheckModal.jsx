@@ -9,10 +9,11 @@ import {
   Typography,
   message,
 } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { MailOutlined, SearchOutlined } from '@ant-design/icons';
 import client from '../api/client';
 import AllotmentProcessPanel from './AllotmentProcessPanel';
 import AllotmentStatusBadge from './AllotmentStatusBadge';
+import AllotmentEmailPdfModal from './AllotmentEmailPdfModal';
 import { getErrorMessage } from '../utils/errors';
 import { fetchRegistrarOptions } from '../utils/allotmentCheck';
 import { tableDefaults } from '../utils/table';
@@ -29,6 +30,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
   const [activity, setActivity] = useState([]);
   const [savingRegistrar, setSavingRegistrar] = useState(false);
   const [registrarOptions, setRegistrarOptions] = useState([]);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const load = () => {
     if (!open || !ipoId) {
@@ -109,10 +111,21 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       message.info(recheck ? 'No members to recheck' : 'No pending members');
       return;
     }
+    const appliedTotal = (data?.applications || []).length;
+    const baseChecked = Math.max(appliedTotal - targets.length, 0);
     setChecking(true);
     setSummary(null);
     setActivity([]);
-    setProgress({ current: 0, total: targets.length, name: null, phase: 'start', allotted: 0, notAllotted: 0 });
+    setProgress({
+      current: 0,
+      total: targets.length,
+      appliedTotal,
+      baseChecked,
+      name: null,
+      phase: 'start',
+      allotted: 0,
+      notAllotted: 0,
+    });
     let allotted = 0;
     let notAllotted = 0;
     try {
@@ -132,6 +145,8 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
           setProgress({
             current: phase === 'checking' ? index : index + 1,
             total: targets.length,
+            appliedTotal,
+            baseChecked,
             name,
             phase,
             message: blocked,
@@ -152,7 +167,13 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       setData(refreshed);
       onChecked?.(stats);
       if (stats.message && !stats.checked) message.warning(stats.message);
-      else message.success(`Checked ${stats.checked} · allotted ${stats.allotted} · not allotted ${stats.notAllotted}`);
+      else {
+        const totalApplied = (data?.applications || []).length;
+        const n = stats.checked;
+        message.success(
+          `Checked ${n} ${n === 1 ? 'member' : 'members'} out of ${totalApplied} applied ${totalApplied === 1 ? 'member' : 'members'} · allotted ${stats.allotted} · not allotted ${stats.notAllotted}`
+        );
+      }
     } catch (err) {
       message.error(getErrorMessage(err, 'Allotment check failed'));
     } finally {
@@ -222,6 +243,13 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       footer={
         <Space>
           <Button onClick={onClose}>Close</Button>
+          <Button
+            icon={<MailOutlined />}
+            disabled={checking || loading || !(data?.applications || []).length}
+            onClick={() => setEmailOpen(true)}
+          >
+            Email PDF
+          </Button>
           <Button onClick={() => runCheck(true)} disabled={checking || loading}>
             Recheck all
           </Button>
@@ -255,6 +283,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
         summary={summary}
         activity={activity}
         waitingForListing={waitingForListing}
+        appliedTotal={(data?.applications || []).length}
         compact
       />
 
@@ -277,6 +306,15 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
         }}
         pagination={data?.applications?.length > 8 ? { pageSize: 8, showTotal: (t) => `${t} members` } : false}
         style={{ marginTop: 16 }}
+      />
+
+      <AllotmentEmailPdfModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        ipoId={ipoId}
+        ipoName={data?.ipo?.name}
+        applications={data?.applications || []}
+        waitingForListing={waitingForListing}
       />
     </Modal>
   );

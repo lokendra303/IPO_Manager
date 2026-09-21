@@ -4013,12 +4013,27 @@ body {
   margin-top: 2px;
 }
 
-.allotment-process-pct {
+.allotment-process-count {
+  text-align: right;
+  color: #0d9488;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.allotment-process-count strong {
+  display: block;
   font-size: 28px;
   font-weight: 700;
   color: #0d9488;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
+}
+
+.allotment-process-count span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #0f766e;
 }
 
 .allotment-process-idle {
@@ -4251,7 +4266,7 @@ body {
 }
 
 @media (max-width: 768px) {
-  .allotment-process-pct {
+  .allotment-process-count strong {
     font-size: 22px;
   }
 

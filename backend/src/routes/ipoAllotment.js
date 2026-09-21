@@ -10,6 +10,8 @@ import {
 } from '../services/ipo/allotmentQueueService.js';
 import { autoCheckIpoAllotment } from '../services/ipo/allotment/checkService.js';
 import { assertIpoAllotmentCheckReady } from '../services/ipo/allotmentReady.js';
+import { sendAllotmentCheckPdfEmail } from '../services/emailService.js';
+import { parsePdfEmailRequest, smtpAppError } from '../utils/emailPdf.js';
 
 const router = Router();
 
@@ -64,6 +66,53 @@ router.get('/:id/allotment', async (req, res, next) => {
       getAllotmentQueue(conn, { tenantId: req.tenantId, ipoId })
     );
     res.json({ success: true, ...data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/allotment/email-pdf', async (req, res, next) => {
+  try {
+    const ipoId = parsePositiveInt(req.params.id, 'IPO id');
+    const [ipoRows] = await pool.query(
+      `SELECT i.id, i.name, t.name AS tenant_name
+       FROM ipos i
+       JOIN tenants t ON t.id = i.tenant_id
+       WHERE i.id = ? AND i.tenant_id = ?`,
+      [ipoId, req.tenantId]
+    );
+    if (!ipoRows.length) throw new AppError('IPO not found', 404);
+    const ipo = ipoRows[0];
+
+    const [userRows] = await pool.query(
+      'SELECT email FROM users WHERE id = ? AND tenant_id = ?',
+      [req.user.userId, req.tenantId]
+    );
+    const parsed = parsePdfEmailRequest(req.body, {
+      fallbackEmail: userRows[0]?.email,
+      fallbackFileName: `allotment-check-${ipo.name}.pdf`,
+    });
+
+    try {
+      await sendAllotmentCheckPdfEmail({
+        to: parsed.to,
+        cc: parsed.cc,
+        ipoName: ipo.name,
+        teamName: ipo.tenant_name,
+        summary: parsed.summary,
+        filename: parsed.filename,
+        pdfBuffer: parsed.pdfBuffer,
+      });
+    } catch (err) {
+      throw smtpAppError(err);
+    }
+
+    res.json({
+      success: true,
+      message: parsed.cc.length ? `PDF sent to ${parsed.to} and ${parsed.cc.length} more` : `PDF sent to ${parsed.to}`,
+      to: parsed.to,
+      cc: parsed.cc,
+    });
   } catch (err) {
     next(err);
   }

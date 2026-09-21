@@ -12,6 +12,26 @@ const STEPS = [
   { key: 'save', label: 'Save result', hint: 'Status on the member' },
 ];
 
+function memberWord(n) {
+  return Number(n) === 1 ? 'member' : 'members';
+}
+
+function membersOutOfApplied(count, total) {
+  const n = Number(count) || 0;
+  const t = Number(total) || 0;
+  return `${n} ${memberWord(n)} out of ${t} applied ${memberWord(t)}`;
+}
+
+function checkedAgainstApplied(progress, appliedTotal) {
+  const applied = Number(appliedTotal || progress?.appliedTotal || progress?.total) || 0;
+  if (!progress) return { checked: 0, applied };
+  const base = Number(progress.baseChecked) || 0;
+  const current = Number(progress.current) || 0;
+  const n = progress.phase === 'checking' ? current + 1 : current;
+  const checked = Math.min(Math.max(base + n, 0), applied || base + n);
+  return { checked, applied: applied || checked };
+}
+
 function stepState(key, checking, progress, summary) {
   if (summary && !checking) {
     if (!summary.checked) {
@@ -40,9 +60,11 @@ export default function AllotmentProcessPanel({
   activity = [],
   compact = false,
   waitingForListing = false,
+  appliedTotal = 0,
 }) {
-  const percent = progress?.total
-    ? Math.round((Math.min(progress.current, progress.total) / progress.total) * 100)
+  const { checked, applied } = checkedAgainstApplied(progress, appliedTotal);
+  const barPercent = applied
+    ? Math.round((Math.min(checked, applied) / applied) * 100)
     : 0;
   const log = compact ? activity.slice(0, 4) : activity.slice(0, 6);
 
@@ -80,7 +102,7 @@ export default function AllotmentProcessPanel({
                     : 'Connecting to registrar…'}
               </div>
               <div className="allotment-process-meta">
-                {progress.current} of {progress.total} checked
+                {membersOutOfApplied(checked, applied)}
                 {progress.allotted != null && (
                   <>
                     {' '}
@@ -89,10 +111,13 @@ export default function AllotmentProcessPanel({
                 )}
               </div>
             </div>
-            <div className="allotment-process-pct">{percent}%</div>
+            <div className="allotment-process-count">
+              <strong>{checked}</strong>
+              <span>of {applied} applied</span>
+            </div>
           </div>
           <Progress
-            percent={percent}
+            percent={barPercent}
             showInfo={false}
             status={progress.phase === 'blocked' ? 'exception' : 'active'}
             strokeColor={progress.phase === 'blocked' ? undefined : { from: '#14b8a6', to: '#0d9488' }}
@@ -121,7 +146,7 @@ export default function AllotmentProcessPanel({
             <strong>
               {summary.message && !summary.checked
                 ? summary.message
-                : `Last run · checked ${summary.checked} · ${waitingForListing ? 'waiting for listing' : 'allotted'} ${summary.allotted} · not allotted ${summary.notAllotted}`}
+                : `Last run · ${membersOutOfApplied(summary.checked, appliedTotal || summary.checked)} · ${waitingForListing ? 'waiting for listing' : 'allotted'} ${summary.allotted} · not allotted ${summary.notAllotted}`}
             </strong>
             <div>
               {summary.checked

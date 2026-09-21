@@ -42,6 +42,8 @@ import {
   updateSharePack,
   deleteSharePack,
 } from '../services/ipoShareRuleService.js';
+import { sendPdfReportEmail } from '../services/emailService.js';
+import { parsePdfEmailRequest, smtpAppError } from '../utils/emailPdf.js';
 
 const router = Router();
 
@@ -853,6 +855,50 @@ router.get('/analysis', async (req, res, next) => {
     const filters = parseProfitAnalysisFilters(req.query);
     const analysis = await getProfitAnalysisReport(pool, req.tenantId, filters);
     res.json(analysis);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/analysis/email-pdf', async (req, res, next) => {
+  try {
+    const [userRows] = await pool.query(
+      `SELECT u.email, t.name AS tenant_name
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.id = ? AND u.tenant_id = ?`,
+      [req.user.userId, req.tenantId]
+    );
+    if (!userRows.length) throw new AppError('User not found', 404);
+    const parsed = parsePdfEmailRequest(req.body, {
+      fallbackEmail: userRows[0].email,
+      fallbackFileName: 'profit-analysis.pdf',
+    });
+    const teamName = userRows[0].tenant_name || 'IPO Team';
+    const period = String(req.body?.period || parsed.summary || 'All time').slice(0, 80);
+
+    try {
+      await sendPdfReportEmail({
+        to: parsed.to,
+        cc: parsed.cc,
+        subject: `Profit analysis — ${teamName}`,
+        heading: `${teamName} profit analysis (${period}).`,
+        summary: parsed.summary || period,
+        filename: parsed.filename,
+        pdfBuffer: parsed.pdfBuffer,
+      });
+    } catch (err) {
+      throw smtpAppError(err);
+    }
+
+    res.json({
+      success: true,
+      message: parsed.cc.length
+        ? `PDF sent to ${parsed.to} and ${parsed.cc.length} more`
+        : `PDF sent to ${parsed.to}`,
+      to: parsed.to,
+      cc: parsed.cc,
+    });
   } catch (err) {
     next(err);
   }

@@ -4,6 +4,7 @@ import { Button, Modal, Select, message } from 'antd';
 import {
   DownloadOutlined,
   EyeOutlined,
+  MailOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -12,8 +13,10 @@ import { getErrorMessage } from '../utils/errors';
 import {
   createProfitAnalysisPdfPreviewUrl,
   downloadProfitAnalysisPdf,
+  profitAnalysisPdfBase64,
 } from '../utils/profitAnalysisPdf';
 import PageLoading from '../components/PageLoading';
+import EmailPdfModal from '../components/EmailPdfModal';
 
 const MONTH_OPTIONS = [
   { value: 1, label: 'Jan' },
@@ -192,6 +195,7 @@ export default function ProfitAnalysisPage() {
   const [previewFileName, setPreviewFileName] = useState('');
   const [year, setYear] = useState(null);
   const [months, setMonths] = useState([]);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const yearOpts = useMemo(() => yearOptions(), []);
 
@@ -319,6 +323,14 @@ export default function ProfitAnalysisPage() {
           <Link to="/profit-sharing" className="dash-btn">Sharing</Link>
           <button type="button" className="dash-btn" disabled={pdfLoading || !data} onClick={previewPdf}>
             <EyeOutlined /> Preview
+          </button>
+          <button
+            type="button"
+            className="dash-btn"
+            disabled={pdfLoading || !data}
+            onClick={() => setEmailOpen(true)}
+          >
+            <MailOutlined /> Email PDF
           </button>
           <button
             type="button"
@@ -661,6 +673,13 @@ export default function ProfitAnalysisPage() {
             Close
           </Button>,
           <Button
+            key="email"
+            icon={<MailOutlined />}
+            onClick={() => setEmailOpen(true)}
+          >
+            Email PDF
+          </Button>,
+          <Button
             key="download"
             type="primary"
             icon={<DownloadOutlined />}
@@ -681,6 +700,30 @@ export default function ProfitAnalysisPage() {
           />
         ) : null}
       </Modal>
+
+      <EmailPdfModal
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Email profit analysis"
+        alertTitle="Profit analysis report"
+        alertDescription={`${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`}
+        endpoint="/profit-shares/analysis/email-pdf"
+        canSend={Boolean(data)}
+        disabledReason="Report is not loaded yet"
+        buildAttachment={() => {
+          const built = profitAnalysisPdfBase64(data, pdfMeta());
+          const summary = `${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`;
+          return {
+            pdfBase64: built.pdfBase64,
+            fileName: built.fileName,
+            summary,
+            period: periodLabel,
+          };
+        }}
+        onDownload={() => {
+          downloadProfitAnalysisPdf(data, pdfMeta());
+        }}
+      />
     </div>
   );
 }
