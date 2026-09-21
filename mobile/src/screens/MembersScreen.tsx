@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, SegmentedButtons, TextInput } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import client from '../api/client';
 import Screen from '../components/Screen';
 import PageHeader from '../components/PageHeader';
@@ -18,6 +19,18 @@ import { copyToClipboard } from '../utils/allotmentCheck';
 import { openActionSheet } from '../utils/actionSheet';
 import { colors } from '../theme';
 import { useQuery } from '../hooks/useQuery';
+import {
+  MEMBER_IMPORT_COLUMNS,
+  MEMBER_IMPORT_SAMPLE_ROWS,
+  membersToCsv,
+  membersToExportRows,
+  normalizePanValue,
+  parseMemberCsv,
+  toImportPayload,
+  validateMemberImportRows,
+  type RawMemberRow,
+  type ValidatedMemberRow,
+} from '../utils/memberImport';
 
 type MembersCache = {
   members: any[];
@@ -66,6 +79,12 @@ export default function MembersScreen() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<'all' | 'active' | 'inactive' | 'visible'>('all');
+  const [importRows, setImportRows] = useState<RawMemberRow[]>([]);
+  const [importSelected, setImportSelected] = useState<string[]>([]);
+  const [importBusy, setImportBusy] = useState(false);
 
   const fetcher = useCallback(async (): Promise<MembersCache> => {
     const [m, g] = await Promise.allSettled([client.get('/members'), client.get('/member-groups')]);
@@ -100,6 +119,105 @@ export default function MembersScreen() {
     const nextSort = members.reduce((max, m) => Math.max(max, Number(m.sort_order) || 0), -1) + 1;
     setForm({ status: 'ACTIVE', sortOrder: nextSort, memberGroupId: null });
     setModalOpen(true);
+  };
+
+  const validatedImport = useMemo(
+    () => validateMemberImportRows(importRows, {
+      existingPans: members.map((m) => m.pan),
+      groupNames: memberGroups.map((g) => g.name),
+    }),
+    [importRows, members, memberGroups],
+  );
+  const validImport = validatedImport.filter((r) => r.valid);
+  const selectedImport = validatedImport.filter((r) => r.valid && importSelected.includes(r.key));
+
+  const shareCsv = async (rows: Array<Record<string, unknown>>, title: string) => {
+    try {
+      await Share.share({ message: membersToCsv(rows), title });
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Could not share file'));
+    }
+  };
+
+  const exportList = useMemo(() => {
+    if (exportScope === 'active') return members.filter((m) => m.status === 'ACTIVE');
+    if (exportScope === 'inactive') return members.filter((m) => m.status === 'INACTIVE');
+    if (exportScope === 'visible') return filtered;
+    return members;
+  }, [exportScope, members, filtered]);
+
+  const exportMembers = () => {
+    const rows = membersToExportRows(exportList);
+    if (!rows.length) {
+      Alert.alert('Export', 'No members to export for that choice');
+      return;
+    }
+    shareCsv(rows, 'Members');
+    setExportOpen(false);
+  };
+
+  const pickImportFile = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      const name = String(asset.name || '').toLowerCase();
+      if (/\.xlsx$|\.xls$|\.xlsm$/.test(name)) {
+        Alert.alert('Excel file', 'On the app, upload a CSV. Download the sample, or save the Excel as CSV first.');
+        return;
+      }
+      const text = await fetch(asset.uri).then((r) => r.text());
+      const parsed = parseMemberCsv(text);
+      if (parsed.error) {
+        Alert.alert('Invalid file', parsed.error);
+        setImportRows([]);
+        setImportSelected([]);
+        return;
+      }
+      setImportRows(parsed.rows);
+      const next = validateMemberImportRows(parsed.rows, {
+        existingPans: members.map((m) => m.pan),
+        groupNames: memberGroups.map((g) => g.name),
+      });
+      setImportSelected(next.filter((r) => r.valid).map((r) => r.key));
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Could not read that file'));
+    }
+  };
+
+  const addImported = async (rows: ValidatedMemberRow[]) => {
+    if (!rows.length) {
+      Alert.alert('Import', 'Select at least one valid member');
+      return;
+    }
+    setImportBusy(true);
+    try {
+      const { data } = await client.post('/members/import', { members: rows.map(toImportPayload) });
+      const created = Number(data?.createdCount || 0);
+      const failed = (data?.results || []).filter((r: any) => !r.ok);
+      if (created) {
+        Alert.alert('Imported', created === 1 ? 'Member added' : `${created} members added`);
+        refresh();
+      }
+      if (failed.length) {
+        Alert.alert('Some rows failed', failed.map((f: any) => `${f.pan || 'Row'}: ${f.error}`).slice(0, 4).join('\n'));
+      }
+      const added = new Set((data?.results || []).filter((r: any) => r.ok).map((r: any) => String(r.pan || '').toUpperCase()));
+      setImportRows((prev) => prev.filter((r) => !added.has(normalizePanValue(r.pan))));
+      setImportSelected((prev) => prev.filter((k) => !rows.some((r) => r.key === k)));
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err, 'Import failed'));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const toggleImportRow = (row: ValidatedMemberRow) => {
+    if (!row.valid || importBusy) return;
+    setImportSelected((prev) => (prev.includes(row.key) ? prev.filter((k) => k !== row.key) : [...prev, row.key]));
   };
 
   const openEdit = (record: any) => {
@@ -207,7 +325,13 @@ export default function MembersScreen() {
       <PageHeader
         title="Members"
         subtitle={`${filtered.length} team members`}
-        extra={<Button compact mode="contained" onPress={openCreate}>Add</Button>}
+        extra={
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button compact mode="outlined" onPress={() => setExportOpen(true)}>Export</Button>
+            <Button compact mode="outlined" onPress={() => setImportOpen(true)}>Import</Button>
+            <Button compact mode="contained" onPress={openCreate}>Add</Button>
+          </View>
+        }
       />
       <TextInput placeholder="Search name, PAN, email, group..." value={search} onChangeText={setSearch} mode="outlined" style={{ marginBottom: 12 }} />
       <Text style={styles.filterLabel}>Status</Text>
@@ -481,6 +605,97 @@ export default function MembersScreen() {
           ) : null}
         </SafeAreaView>
       </Modal>
+
+      <Modal visible={exportOpen} animationType="slide" onRequestClose={() => setExportOpen(false)}>
+        <SafeAreaView style={styles.editModal}>
+          <View style={styles.compactRow}>
+            <Text style={styles.modalTitle}>Export members</Text>
+            <Button onPress={() => setExportOpen(false)}>Close</Button>
+          </View>
+          <ScrollView contentContainerStyle={styles.editScroll}>
+            <Text style={styles.groupHint}>
+              Choose who to include. Inactive members are exported with status INACTIVE.
+            </Text>
+            {([
+              { value: 'all' as const, label: `All members (${members.length})` },
+              { value: 'active' as const, label: `Active only (${activeCount})` },
+              { value: 'inactive' as const, label: `Inactive only (${inactiveCount})` },
+              { value: 'visible' as const, label: `On screen now (${filtered.length})` },
+            ]).map((opt) => (
+              <Pressable
+                key={opt.value}
+                onPress={() => setExportScope(opt.value)}
+                style={[styles.groupOption, exportScope === opt.value && styles.groupOptionActive]}
+              >
+                <Text style={styles.groupOptionText}>{opt.label}</Text>
+              </Pressable>
+            ))}
+            <Button mode="contained" onPress={exportMembers} style={{ marginTop: 8 }}>
+              Export CSV ({exportList.length})
+            </Button>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal visible={importOpen} animationType="slide" onRequestClose={() => setImportOpen(false)}>
+        <SafeAreaView style={styles.editModal}>
+          <View style={styles.compactRow}>
+            <Text style={styles.modalTitle}>Import members</Text>
+            <Button onPress={() => setImportOpen(false)}>Close</Button>
+          </View>
+          <ScrollView contentContainerStyle={styles.editScroll}>
+            <Text style={styles.groupHint}>
+              Sample column titles include (required) or (optional). PAN and name must be filled. Empty optional cells are fine.
+            </Text>
+            {MEMBER_IMPORT_COLUMNS.map((col) => (
+              <View key={col.key} style={styles.colGuide}>
+                <Text style={styles.colGuideName}>{col.key}</Text>
+                <Tag label={col.required ? 'Required' : 'Optional'} color={col.required ? colors.error : colors.textSecondary} />
+                <Text style={styles.groupHint}>{col.note}</Text>
+              </View>
+            ))}
+            <Button mode="outlined" onPress={() => shareCsv(MEMBER_IMPORT_SAMPLE_ROWS, 'members-sample.csv')} style={{ marginBottom: 8 }}>
+              Share sample CSV
+            </Button>
+            <Button mode="contained" onPress={pickImportFile} style={{ marginBottom: 12 }}>
+              Choose CSV
+            </Button>
+            {validatedImport.length ? (
+              <>
+                <Text style={styles.fieldLabel}>
+                  {validImport.length} valid · {validatedImport.length - validImport.length} invalid
+                </Text>
+                <Button compact onPress={() => setImportSelected(validImport.map((r) => r.key))}>Select all valid</Button>
+                {validatedImport.map((row) => (
+                  <Pressable
+                    key={row.key}
+                    onPress={() => toggleImportRow(row)}
+                    style={[styles.groupOption, importSelected.includes(row.key) && styles.groupOptionActive, !row.valid && { opacity: 0.7 }]}
+                  >
+                    <Text style={styles.groupOptionText}>
+                      Row {row.rowNumber} · {formatPan(row.pan) || 'No PAN'} · {row.name || '—'}
+                    </Text>
+                    <Text style={[styles.groupHint, { marginBottom: 0, color: row.valid ? colors.textSecondary : '#b91c1c' }]}>
+                      {row.valid ? (row.warnings[0] || 'Valid') : row.errors.join(' · ')}
+                    </Text>
+                    {row.valid ? (
+                      <Button compact onPress={() => addImported([row])} disabled={importBusy}>Add</Button>
+                    ) : null}
+                  </Pressable>
+                ))}
+                <Button
+                  mode="contained"
+                  disabled={!selectedImport.length || importBusy}
+                  loading={importBusy}
+                  onPress={() => addImported(selectedImport)}
+                >
+                  Add selected ({selectedImport.length})
+                </Button>
+              </>
+            ) : null}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </Screen>
   );
 }
@@ -502,6 +717,15 @@ const styles = StyleSheet.create({
   input: { marginBottom: 10 },
   fieldLabel: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, marginTop: 4 },
   groupHint: { fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 18 },
+  colGuide: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 8,
+    backgroundColor: colors.card,
+  },
+  colGuideName: { fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 4, fontFamily: 'monospace' },
   groupOption: {
     padding: 12,
     borderRadius: 8,

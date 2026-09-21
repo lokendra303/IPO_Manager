@@ -1,11 +1,8 @@
 import { Router } from 'express';
-
 import { pool } from '../db/pool.js';
-
 import { AppError } from '../middleware/errorHandler.js';
-
 import { getMemberDetail, assertUniquePan } from '../services/memberDetailService.js';
-
+import { importMembers } from '../services/memberImportService.js';
 import { parsePositiveInt } from '../utils/validate.js';
 
 
@@ -95,7 +92,15 @@ router.get('/', async (req, res, next) => {
 
 });
 
-
+router.post('/import', async (req, res, next) => {
+  try {
+    const members = req.body?.members;
+    const result = await importMembers(pool, req.tenantId, members);
+    res.status(201).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/:id/detail', async (req, res, next) => {
 

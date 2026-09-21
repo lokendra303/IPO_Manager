@@ -15,6 +15,8 @@ import {
   Row,
   Col,
   Tooltip,
+  Space,
+  Radio,
 } from 'antd';
 import {
   PlusOutlined,
@@ -25,7 +27,9 @@ import {
 import client from '../api/client';
 import { getErrorMessage } from '../utils/errors';
 import MemberDetailDrawer from '../components/MemberDetailDrawer';
+import MemberImportModal from '../components/MemberImportModal';
 import { formatPan } from '../utils/format';
+import { downloadMemberCsv, downloadMemberXlsx, membersToExportRows } from '../utils/memberImport';
 
 const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
 
@@ -93,6 +97,9 @@ export default function MembersPage() {
   const [detailMemberId, setDetailMemberId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState('all');
   const [form] = Form.useForm();
 
   const load = () => {
@@ -147,6 +154,26 @@ export default function MembersPage() {
     if (search.trim()) list = list.filter((m) => memberMatchesSearch(m, search));
     return list;
   }, [uniqueMembers, statusFilter, needsShareOnly, groupFilter, search]);
+
+  const existingPans = useMemo(() => uniqueMembers.map((m) => m.pan).filter(Boolean), [uniqueMembers]);
+  const groupNames = useMemo(() => memberGroups.map((g) => g.name).filter(Boolean), [memberGroups]);
+
+  const exportMembers = async (format) => {
+    let list = uniqueMembers;
+    if (exportScope === 'active') list = uniqueMembers.filter((m) => m.status === 'ACTIVE');
+    else if (exportScope === 'inactive') list = uniqueMembers.filter((m) => m.status === 'INACTIVE');
+    else if (exportScope === 'visible') list = filteredMembers;
+    const rows = membersToExportRows(list);
+    if (!rows.length) {
+      message.warning('No members to export for that choice');
+      return;
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const suffix = exportScope === 'inactive' ? 'inactive' : exportScope === 'active' ? 'active' : exportScope === 'visible' ? 'filtered' : 'all';
+    if (format === 'xlsx') await downloadMemberXlsx(rows, `members-${suffix}-${stamp}.xlsx`);
+    else downloadMemberCsv(rows, `members-${suffix}-${stamp}.csv`);
+    setExportOpen(false);
+  };
 
   const nextSortOrder = useMemo(() => {
     if (!uniqueMembers.length) return 0;
@@ -252,6 +279,12 @@ export default function MembersPage() {
         </div>
         <div className="dash-head-actions">
           <Link to="/member-groups" className="dash-btn">Sub-groups</Link>
+          <button type="button" className="dash-btn" onClick={() => setExportOpen(true)}>
+            Export
+          </button>
+          <button type="button" className="dash-btn" onClick={() => setImportOpen(true)}>
+            Import
+          </button>
           <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
             <PlusOutlined /> Add member
           </button>
@@ -408,9 +441,14 @@ export default function MembersPage() {
               ? 'No members match these filters.'
               : 'No members yet. Add the first person on your team.'}</p>
             {!uniqueMembers.length && (
-              <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
-                <PlusOutlined /> Add member
-              </button>
+              <Space>
+                <button type="button" className="dash-btn" onClick={() => setImportOpen(true)}>
+                  Import
+                </button>
+                <button type="button" className="dash-btn dash-btn--primary" onClick={openCreate}>
+                  <PlusOutlined /> Add member
+                </button>
+              </Space>
             )}
           </div>
         ) : (
@@ -504,6 +542,40 @@ export default function MembersPage() {
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
       />
+
+      <MemberImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        existingPans={existingPans}
+        groupNames={groupNames}
+        onImported={load}
+      />
+
+      <Modal
+        title="Export members"
+        open={exportOpen}
+        onCancel={() => setExportOpen(false)}
+        footer={null}
+        destroyOnClose
+      >
+        <p style={{ marginTop: 0, marginBottom: 8 }}>
+          Columns match the import sample, including status so inactive members stay marked INACTIVE.
+        </p>
+        <Radio.Group
+          value={exportScope}
+          onChange={(e) => setExportScope(e.target.value)}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}
+        >
+          <Radio value="all">All members ({uniqueMembers.length})</Radio>
+          <Radio value="active">Active only ({activeCount})</Radio>
+          <Radio value="inactive">Inactive only ({inactiveCount})</Radio>
+          <Radio value="visible">What is on screen now ({filteredMembers.length})</Radio>
+        </Radio.Group>
+        <Space>
+          <Button onClick={() => exportMembers('csv')}>CSV</Button>
+          <Button type="primary" onClick={() => exportMembers('xlsx')}>Excel</Button>
+        </Space>
+      </Modal>
 
       <Modal
         title={editing ? 'Edit member' : 'Add member'}
