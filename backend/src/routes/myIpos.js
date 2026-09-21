@@ -2,26 +2,17 @@ import { Router } from 'express';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsePositiveInt } from '../utils/validate.js';
-import { getGmpHistory } from '../services/ipo/gmpService.js';
-import { summarizeGmpHistory } from '../services/ipo/gmpCalc.js';
-import { serializeCatalogIpo } from '../services/ipo/normalize.js';
+import { getGmpHistory, presentGmpHistory, toGmpCurrent } from '../services/ipo/gmpService.js';
+import { serializeCatalogIpo, toDate } from '../services/ipo/normalize.js';
 
 const router = Router();
 
 function dateOnly(value) {
-  if (value == null || value === '') return null;
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return null;
-    return value.toISOString().slice(0, 10);
-  }
-  const s = String(value).trim();
-  if (!s || s.startsWith('0000-00-00')) return null;
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+  return toDate(value);
 }
 
 function serializeMyIpo(row) {
-  const listingDate = dateOnly(row.listing_date);
+  const listingDate = dateOnly(row.listing_date || row.catalog_listing_date);
   return {
     ...row,
     listing_date: listingDate,
@@ -73,6 +64,7 @@ const MY_IPO_SELECT = `
   SELECT i.*,
     c.name AS catalog_name,
     c.status AS catalog_status,
+    c.listing_date AS catalog_listing_date,
     c.gmp AS catalog_gmp,
     c.gmp_percentage AS catalog_gmp_percentage,
     c.estimated_listing_price AS catalog_estimated_listing_price,
@@ -133,25 +125,18 @@ router.get('/:id/gmp/history', async (req, res, next) => {
     );
     if (!rows.length) throw new AppError('IPO not found', 404);
     if (!rows[0].catalog_id) {
-      return res.json({ success: true, current: null, summary: summarizeGmpHistory([]), history: [] });
+      return res.json({ success: true, current: null, ...presentGmpHistory([]) });
     }
-    const history = await getGmpHistory(pool, rows[0].catalog_id);
+    const historyRows = await getGmpHistory(pool, rows[0].catalog_id);
     const [cat] = await pool.query(
-      'SELECT gmp, gmp_percentage, estimated_listing_price, gmp_updated_at FROM ipo_catalog WHERE id = ?',
+      'SELECT gmp, gmp_percentage, estimated_listing_price, gmp_updated_at, issue_price FROM ipo_catalog WHERE id = ?',
       [rows[0].catalog_id]
     );
+    const current = toGmpCurrent(cat[0]);
     res.json({
       success: true,
-      current: cat[0]
-        ? {
-            gmp: cat[0].gmp != null ? Number(cat[0].gmp) : null,
-            gmpPercentage: cat[0].gmp_percentage != null ? Number(cat[0].gmp_percentage) : null,
-            estimatedListingPrice: cat[0].estimated_listing_price != null ? Number(cat[0].estimated_listing_price) : null,
-            lastUpdated: cat[0].gmp_updated_at,
-          }
-        : null,
-      summary: summarizeGmpHistory(history),
-      history,
+      current,
+      ...presentGmpHistory(historyRows, current),
     });
   } catch (err) {
     next(err);

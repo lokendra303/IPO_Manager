@@ -97,8 +97,15 @@ export default function AppLayout({ children }) {
     { key: '/gmp', icon: <LineChartOutlined />, label: <Link to="/gmp">GMP</Link> },
     { key: '/adjust-combine', icon: <SwapOutlined />, label: <Link to="/adjust-combine">Reuse leftover</Link> },
     { key: '/summary', icon: <BarChartOutlined />, label: <Link to="/summary">Summary</Link> },
-    { key: '/profit-analysis', icon: <RiseOutlined />, label: <Link to="/profit-analysis">Profit Analysis</Link> },
-    { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Profit Sharing</Link> },
+    {
+      key: 'profit',
+      icon: <RiseOutlined />,
+      label: 'Profit',
+      children: [
+        { key: '/profit-analysis', icon: <BarChartOutlined />, label: <Link to="/profit-analysis">Analysis</Link> },
+        { key: '/profit-sharing', icon: <PercentageOutlined />, label: <Link to="/profit-sharing">Sharing</Link> },
+      ],
+    },
     { key: '/audit-log', icon: <HistoryOutlined />, label: <Link to="/audit-log">Audit Log</Link> },
     { key: '/settings', icon: <SettingOutlined />, label: <Link to="/settings">Settings</Link> },
   ];
@@ -159,8 +166,10 @@ export default function AppLayout({ children }) {
             mode="inline"
             selectedKeys={[selectedKey]}
             items={menuItems}
+            defaultOpenKeys={['profit']}
             style={{ border: 'none' }}
-            onClick={() => {
+            onClick={({ key }) => {
+              if (key === 'profit') return;
               if (window.innerWidth < 992) setSiderCollapsed(true);
             }}
           />

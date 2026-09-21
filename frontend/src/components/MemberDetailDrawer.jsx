@@ -1,29 +1,38 @@
 import { useEffect, useState } from 'react';
 import {
-  Drawer, Spin, Row, Col, Table, Tag, Tabs, Descriptions, Empty, Alert, Button, Space, message, Tooltip,
+  Drawer, Spin, Table, Tag, Tabs, Empty, Alert, Button, Space, message, Tooltip,
 } from 'antd';
 import {
-  ArrowDownOutlined,
-  ArrowUpOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  FundOutlined,
-  ClockCircleOutlined,
   CopyOutlined,
-  WalletOutlined,
+  CrownOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
-import StatCard from './StatCard';
 import { Link } from 'react-router-dom';
 import dayjs from 'dayjs';
 import client from '../api/client';
-import { formatCurrency, formatPan } from '../utils/format';
+import { formatCurrency, formatPan, pnlClassName } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import NoteCell from './NoteCell';
 import { copyToClipboard } from '../utils/allotmentCheck';
 import { categoryTagColor, getLotAmountForCategory } from '../utils/ipoCategories';
 
-function CopyableValue({ value, label, children }) {
-  if (!value) return '—';
+const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
+
+function initials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((p) => p[0]).join('').toUpperCase() || '?';
+}
+
+function avatarTone(id) {
+  return AVATAR_TONES[Math.abs(Number(id) || 0) % AVATAR_TONES.length];
+}
+
+function CopyableValue({ value, label, children, mono }) {
+  if (!value) return <span className="mdp-muted">Not added</span>;
   const onCopy = async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -32,16 +41,63 @@ function CopyableValue({ value, label, children }) {
   };
   return (
     <Space size={4} align="center">
-      {children ?? <span>{value}</span>}
+      {children ?? <span className={mono ? 'mdp-mono' : undefined}>{value}</span>}
       <Button
         type="text"
         size="small"
         icon={<CopyOutlined />}
         onClick={onCopy}
         aria-label={`Copy ${label}`}
-        style={{ color: '#64748b' }}
+        className="mdp-copy"
       />
     </Space>
+  );
+}
+
+function Money({ value }) {
+  const n = Number(value ?? 0);
+  return <span className={pnlClassName(n)}>{formatCurrency(n)}</span>;
+}
+
+function InfoTile({ label, children }) {
+  return (
+    <div className="mdp-info-tile">
+      <span className="mdp-info-label">{label}</span>
+      <div className="mdp-info-value">{children}</div>
+    </div>
+  );
+}
+
+function SplitBar({ label, provider, memberPct, manager }) {
+  const segs = [
+    { key: 'provider', pct: Number(provider) || 0, title: `Provider ${provider}%` },
+    { key: 'member', pct: Number(memberPct) || 0, title: `Member ${memberPct}%` },
+    { key: 'manager', pct: Number(manager) || 0, title: `Manager ${manager}%` },
+  ];
+  return (
+    <div className="mdp-split">
+      <div className="mdp-split-head">
+        <span>{label}</span>
+        <span className="mdp-split-legend">
+          <i className="mdp-dot mdp-dot--provider" /> Provider {provider}%
+          <i className="mdp-dot mdp-dot--member" /> Member {memberPct}%
+          <i className="mdp-dot mdp-dot--manager" /> Manager {manager}%
+        </span>
+      </div>
+      <div className="mdp-split-track" role="img" aria-label={segs.map((s) => s.title).join(', ')}>
+        {segs.map((s) => (
+          s.pct > 0 ? (
+            <span
+              key={s.key}
+              className={`mdp-split-seg mdp-split-seg--${s.key}`}
+              style={{ flexGrow: s.pct, flexBasis: 0 }}
+            >
+              {s.pct >= 14 ? `${s.pct}%` : ''}
+            </span>
+          ) : null
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -81,6 +137,9 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
 
   const m = data?.member;
   const s = data?.stats;
+  const group = data?.group;
+  const isLeader = Boolean(data?.isGroupLeader || group?.isLeader);
+  const groupStats = group?.groupStats || {};
 
   const ipoColumns = [
     { title: 'IPO', dataIndex: 'ipo_name', render: (v, r) => (
@@ -106,9 +165,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
           return (
             <span>
               {formatCurrency(remaining)}
-              <span style={{ display: 'block', fontSize: 11, color: '#64748b' }}>
-                of {formatCurrency(v)} adjusted
-              </span>
+              <span className="mdp-subline">of {formatCurrency(v)} adjusted</span>
             </span>
           );
         }
@@ -131,11 +188,7 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
     {
       title: 'Gross P&L',
       dataIndex: 'profit_loss',
-      render: (v, r) => {
-        if (r.allotment_status !== 'ALLOTED') return '—';
-        const n = Number(v ?? 0);
-        return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
-      },
+      render: (v, r) => (r.allotment_status !== 'ALLOTED' ? '—' : <Money value={v} />),
     },
     {
       title: 'Member share',
@@ -143,10 +196,9 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
       render: (v, r) => {
         if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
         if (v == null) return <Tag color="warning">No rules</Tag>;
-        const n = Number(v);
         return (
           <Space size={4}>
-            <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>
+            <Money value={v} />
             {r.share_status === 'pending' && <Tag color="orange">Pending split</Tag>}
           </Space>
         );
@@ -155,22 +207,12 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
     {
       title: 'Manager share',
       dataIndex: 'manager_share',
-      render: (v, r) => {
-        if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
-        if (v == null) return '—';
-        const n = Number(v);
-        return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
-      },
+      render: (v, r) => (r.allotment_status !== 'ALLOTED' || r.profit_loss == null || v == null ? '—' : <Money value={v} />),
     },
     {
       title: 'Provider share',
       dataIndex: 'provider_share',
-      render: (v, r) => {
-        if (r.allotment_status !== 'ALLOTED' || r.profit_loss == null) return '—';
-        if (v == null) return '—';
-        const n = Number(v);
-        return <span style={{ color: n < 0 ? '#cf1322' : n > 0 ? '#389e0d' : undefined }}>{formatCurrency(n)}</span>;
-      },
+      render: (v, r) => (r.allotment_status !== 'ALLOTED' || r.profit_loss == null || v == null ? '—' : <Money value={v} />),
     },
     { title: 'Remarks', dataIndex: 'remarks', ellipsis: true },
     { title: 'Date', dataIndex: 'created_at', render: (v) => dayjs(v).format('DD MMM YYYY') },
@@ -188,184 +230,445 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
     { title: 'Notes', dataIndex: 'notes', render: (v) => <NoteCell value={v} /> },
   ];
 
+  const groupMemberColumns = [
+    {
+      title: 'Member',
+      dataIndex: 'displayName',
+      render: (v, row) => (
+        <div className="mdp-person-cell">
+          <span className={`mem-avatar mem-avatar--${avatarTone(row.id)}`}>{initials(v)}</span>
+          <div>
+            <strong>
+              {v}
+              {row.isLeader ? <em>Leader</em> : null}
+            </strong>
+            <span>{row.pan || '—'}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Contact',
+      render: (_, row) => (
+        <div className="mdp-contact-cell">
+          <span>{row.email || 'No email'}</span>
+          <span className="mdp-mono">{row.upi || 'No UPI'}</span>
+        </div>
+      ),
+    },
+    { title: 'Relation', dataIndex: 'relationshipNote', render: (v) => v || '—' },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      render: (v) => (
+        <span className={`mem-status ${v === 'ACTIVE' ? 'is-on' : 'is-off'}`}>
+          {v === 'ACTIVE' ? 'Active' : 'Inactive'}
+        </span>
+      ),
+    },
+    {
+      title: 'Pending',
+      dataIndex: 'pendingReturn',
+      render: (v) => <span className={Number(v) > 0 ? 'amount-negative' : undefined}>{formatCurrency(v ?? 0)}</span>,
+    },
+    { title: 'Profit', dataIndex: 'totalMemberShare', render: (v) => <Money value={v} /> },
+    {
+      title: 'IPOs',
+      render: (_, row) => `${row.iposApplied ?? 0} · ${row.iposAlloted ?? 0} alloted`,
+    },
+  ];
+
+  const bulkColumns = [
+    {
+      title: 'IPO',
+      dataIndex: 'ipoName',
+      render: (v, r) => (r.ipoId ? <Link to={`/ipos/${r.ipoId}`} onClick={onClose}>{v}</Link> : v),
+    },
+    { title: 'Paid', dataIndex: 'paidAt', render: (v) => (v ? dayjs(v).format('DD MMM YYYY') : '—') },
+    {
+      title: 'Category',
+      dataIndex: 'investorCategory',
+      render: (v) => (v ? <Tag color={categoryTagColor(v)}>{v}</Tag> : '—'),
+    },
+    { title: 'Members', dataIndex: 'memberCount', render: (v) => v ?? '—' },
+    { title: 'Amount sent', dataIndex: 'totalAmount', render: (v) => <strong>{formatCurrency(v)}</strong> },
+  ];
+
+  const groupIpoColumns = [
+    { title: 'IPO', dataIndex: 'ipoName' },
+    { title: 'Member', dataIndex: 'memberName' },
+    { title: 'Amount', dataIndex: 'amount', render: formatCurrency },
+    {
+      title: 'Allotment',
+      dataIndex: 'allotmentStatus',
+      render: (v) => <Tag color={allotmentColors[v]}>{allotmentLabels[v] || v}</Tag>,
+    },
+    {
+      title: 'Member share',
+      dataIndex: 'memberShare',
+      render: (v, r) => (r.allotmentStatus === 'ALLOTED' ? <Money value={v ?? 0} /> : '—'),
+    },
+  ];
+
+  const tabItems = data ? [
+    {
+      key: 'ipos',
+      label: `Personal IPOs (${data.ipoApplications.length})`,
+      children: data.ipoApplications.length ? (
+        <Table
+          rowKey="id"
+          columns={ipoColumns}
+          dataSource={data.ipoApplications}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 1200 }}
+          className="pro-table"
+          size="middle"
+        />
+      ) : (
+        <Empty description="No IPO applications yet" />
+      ),
+    },
+    {
+      key: 'ledger',
+      label: `Fund ledger (${data.ledgerEntries.length})`,
+      children: data.ledgerEntries.length ? (
+        <Table
+          rowKey="id"
+          columns={ledgerColumns}
+          dataSource={data.ledgerEntries}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 'max-content' }}
+          className="pro-table"
+          size="middle"
+        />
+      ) : (
+        <Empty description="No transactions yet" />
+      ),
+    },
+  ] : [];
+
+  if (data && isLeader) {
+    tabItems.push({
+      key: 'group-ipos',
+      label: `Group IPOs (${group?.groupApplications?.length ?? 0})`,
+      children: group?.groupApplications?.length ? (
+        <Table
+          rowKey="id"
+          columns={groupIpoColumns}
+          dataSource={group.groupApplications}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 'max-content' }}
+          className="pro-table"
+          size="middle"
+        />
+      ) : (
+        <Empty description="No group IPO applications yet" />
+      ),
+    });
+  }
+
   return (
     <Drawer
-      title={m ? `${m.display_name} — Member Details` : 'Member Details'}
+      title={m ? m.display_name : 'Member profile'}
       open={open}
       onClose={onClose}
-      width={960}
+      width={1120}
       className="member-drawer"
       destroyOnClose
+      styles={{ body: { padding: 0, background: '#f1f5f9' } }}
     >
       {loading ? (
-        <Spin style={{ display: 'block', margin: '48px auto' }} />
+        <Spin style={{ display: 'block', margin: '64px auto' }} />
       ) : error ? (
-        <Alert type="error" message={error} showIcon />
+        <Alert type="error" message={error} showIcon style={{ margin: 24 }} />
       ) : data ? (
-        <>
+        <div className="mdp">
+          <header className={`mdp-hero${isLeader ? ' mdp-hero--leader' : ''}`}>
+            <span className={`mdp-avatar mem-avatar--${avatarTone(m.id)}`}>
+              {initials(m.display_name)}
+            </span>
+            <div className="mdp-hero-main">
+              <p className="mdp-kicker">
+                {isLeader ? 'Group leader profile' : 'Member profile'}
+              </p>
+              <h2>
+                {m.display_name}
+                <span className={`mem-status ${m.status === 'ACTIVE' ? 'is-on' : 'is-off'}`}>
+                  {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                </span>
+                {isLeader ? (
+                  <span className="mdp-leader-pill">
+                    <CrownOutlined /> Leader
+                  </span>
+                ) : null}
+              </h2>
+              <p className="mdp-hero-meta">
+                {m.relationship_note || 'No relationship noted'}
+                {m.member_group_name ? ` · ${m.member_group_name}` : ' · No sub-group'}
+                {m.created_at ? ` · Since ${dayjs(m.created_at).format('MMM YYYY')}` : ''}
+              </p>
+            </div>
+          </header>
+
           {m.status === 'INACTIVE' && (
             <Alert
               type="warning"
               showIcon
               message="This member is inactive"
               description="They are excluded from IPO distribute and cannot log in with PAN. Activate them from the Members page to restore access."
-              style={{ marginBottom: 16 }}
             />
           )}
-          <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="PAN">
-              <CopyableValue value={formatPan(m.pan)} label="PAN" />
-            </Descriptions.Item>
-            <Descriptions.Item label="Email">
-              <CopyableValue value={m.email} label="Email">
-                <a href={`mailto:${m.email}`}>{m.email}</a>
-              </CopyableValue>
-            </Descriptions.Item>
-            <Descriptions.Item label="UPI ID">
-              <CopyableValue value={m.upi} label="UPI ID">
-                <span style={{ fontFamily: 'monospace' }}>{m.upi}</span>
-              </CopyableValue>
-            </Descriptions.Item>
-            <Descriptions.Item label="Status">
-              <Tag color={m.status === 'ACTIVE' ? 'green' : 'default'}>
-                {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Relationship">{m.relationship_note || '—'}</Descriptions.Item>
-            <Descriptions.Item label="Sub-Group">{m.member_group_name || '—'}</Descriptions.Item>
-            <Descriptions.Item label="P&L share rules" span={2}>
+
+          {group && !isLeader && (
+            <div className="mdp-group-banner">
+              <TeamOutlined />
+              <div>
+                <strong>Belongs to {group.name}</strong>
+                <span>
+                  Leader {group.leaderDisplayName || 'not set'}
+                  {group.leaderPan ? ` · ${group.leaderPan}` : ''}
+                  {group.memberCount ? ` · ${group.memberCount} members` : ''}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <section className="mdp-card">
+            <div className="mdp-card-head">
+              <h3>Personal details</h3>
+            </div>
+            <div className="mdp-info-grid">
+              <InfoTile label="PAN">
+                <CopyableValue value={formatPan(m.pan)} label="PAN" mono />
+              </InfoTile>
+              <InfoTile label="Email">
+                <CopyableValue value={m.email} label="Email">
+                  <a href={`mailto:${m.email}`}>{m.email}</a>
+                </CopyableValue>
+              </InfoTile>
+              <InfoTile label="UPI ID">
+                <CopyableValue value={m.upi} label="UPI ID" mono />
+              </InfoTile>
+              <InfoTile label="Relationship">{m.relationship_note || <span className="mdp-muted">Not added</span>}</InfoTile>
+              <InfoTile label="Sub-group">{m.member_group_name || <span className="mdp-muted">Ungrouped</span>}</InfoTile>
+              <InfoTile label="Fund source">{m.fund_provider_name || <span className="mdp-muted">—</span>}</InfoTile>
+            </div>
+
+            <div className="mdp-rules">
+              <div className="mdp-card-head mdp-card-head--nested">
+                <h4>P&amp;L share rules</h4>
+                {!data.profitShare?.configured ? (
+                  <Link to="/profit-sharing" onClick={onClose}>Set rules</Link>
+                ) : null}
+              </div>
               {data.profitShare?.configured ? (
-                <div>
+                <>
                   {(data.profitShare.rules || []).map((rule) => (
-                    <div key={rule.id} style={{ marginBottom: 4 }}>
-                      <Tag color="blue">{rule.ruleName}</Tag>
-                      {' '}
-                      <Tag color={rule.ipoId ? 'purple' : 'default'}>
-                        {rule.ipoId ? (rule.ipoName || 'IPO') : 'All IPOs'}
-                      </Tag>
-                      {' '}{rule.providerName}
-                      {' · '}Profit: Provider {rule.profitProviderPercent}% · Member {rule.profitMemberPercent}% · Manager {rule.profitManagerPercent}%
-                      {' · '}Loss: Provider {rule.lossProviderPercent}% · Member {rule.lossMemberPercent}% · Manager {rule.lossManagerPercent}%
+                    <div key={rule.id} className="mdp-rule">
+                      <div className="mdp-rule-tags">
+                        <Tag color="blue">{rule.ruleName}</Tag>
+                        <Tag color={rule.ipoId ? 'purple' : 'default'}>
+                          {rule.ipoId ? (rule.ipoName || 'IPO') : 'All IPOs'}
+                        </Tag>
+                        <span className="mdp-rule-provider">{rule.providerName}</span>
+                      </div>
+                      <SplitBar
+                        label="Profit"
+                        provider={rule.profitProviderPercent}
+                        memberPct={rule.profitMemberPercent}
+                        manager={rule.profitManagerPercent}
+                      />
+                      <SplitBar
+                        label="Loss"
+                        provider={rule.lossProviderPercent}
+                        memberPct={rule.lossMemberPercent}
+                        manager={rule.lossManagerPercent}
+                      />
                     </div>
                   ))}
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                    Combined — Profit: Provider {data.profitShare.profitProviderPercent}% · Member {data.profitShare.profitMemberPercent}% · Manager {data.profitShare.profitManagerPercent}%
-                    {' · '}Loss: Provider {data.profitShare.lossProviderPercent}% · Member {data.profitShare.lossMemberPercent}% · Manager {data.profitShare.lossManagerPercent}%
-                  </div>
-                </div>
+                  {data.profitShare.ruleCount > 1 ? (
+                    <div className="mdp-rule">
+                      <div className="mdp-rule-tags">
+                        <Tag>Combined</Tag>
+                      </div>
+                      <SplitBar
+                        label="Profit"
+                        provider={data.profitShare.profitProviderPercent}
+                        memberPct={data.profitShare.profitMemberPercent}
+                        manager={data.profitShare.profitManagerPercent}
+                      />
+                      <SplitBar
+                        label="Loss"
+                        provider={data.profitShare.lossProviderPercent}
+                        memberPct={data.profitShare.lossMemberPercent}
+                        manager={data.profitShare.lossManagerPercent}
+                      />
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <Tag color="warning">Not configured — set under Profit Sharing</Tag>
               )}
-            </Descriptions.Item>
-          </Descriptions>
+            </div>
+          </section>
 
-          <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-            <Col xs={12} sm={8}>
-              <StatCard title="Total Given" value={formatCurrency(s.totalGiven)} variant="warning" icon={<ArrowUpOutlined />} />
-            </Col>
-            <Col xs={12} sm={8}>
-              <StatCard title="Total Received" value={formatCurrency(s.totalReceived)} variant="success" icon={<ArrowDownOutlined />} />
-            </Col>
-            <Col xs={12} sm={8}>
-              <StatCard
-                title={
-                  <Tooltip title="Principal still with the member and not yet marked received. Includes applications awaiting allotment, and subtracts funds already adjusted to another IPO.">
-                    <span>Pending return</span>
-                  </Tooltip>
-                }
-                value={formatCurrency(s.willReceiveFromTeam)}
-                variant={s.willReceiveFromTeam !== 0 ? 'danger' : 'primary'}
-                valueClassName={s.willReceiveFromTeam !== 0 ? 'stat-card-value--loss' : ''}
-                icon={<ClockCircleOutlined />}
-              />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard title="Applied" value={s.iposApplied} variant="info" icon={<FundOutlined />} />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard title="Alloted" value={s.iposAlloted} variant="success" icon={<CheckCircleOutlined />} />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard title="Not Alloted" value={s.iposNotAlloted} variant="danger" icon={<CloseCircleOutlined />} />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard title="Pending IPOs" value={s.iposPending} variant="primary" icon={<ClockCircleOutlined />} />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard
-                title="Gross IPO P&L"
-                value={formatCurrency(s.totalIpoProfit)}
-                variant={s.totalIpoProfit >= 0 ? 'success' : 'danger'}
-                valueClassName={s.totalIpoProfit >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-                icon={<FundOutlined />}
-              />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard
-                title="Member share"
-                value={formatCurrency(s.totalMemberShare ?? 0)}
-                variant={(s.totalMemberShare ?? 0) >= 0 ? 'success' : 'danger'}
-                valueClassName={(s.totalMemberShare ?? 0) >= 0 ? 'stat-card-value--profit' : 'stat-card-value--loss'}
-                icon={<ArrowDownOutlined />}
-              />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard
-                title="Provider share"
-                value={formatCurrency(s.totalProviderShare ?? 0)}
-                variant="info"
-                icon={<FundOutlined />}
-              />
-            </Col>
-            <Col xs={12} sm={6}>
-              <StatCard
-                title="Manager share"
-                value={formatCurrency(s.totalManagerShare ?? 0)}
-                variant="primary"
-                icon={<WalletOutlined />}
-              />
-            </Col>
-          </Row>
+          <div className="mdp-money">
+            <div className={`mdp-money-cell mdp-money-cell--main${s.willReceiveFromTeam ? ' is-due' : ''}`}>
+              <span>
+                <Tooltip title="Principal still with the member and not yet marked received. Includes applications awaiting allotment, and subtracts funds already adjusted to another IPO.">
+                  Pending return
+                </Tooltip>
+              </span>
+              <strong>{formatCurrency(s.willReceiveFromTeam)}</strong>
+              <em>Still with this member</em>
+            </div>
+            <div className="mdp-money-cell">
+              <span>Total given</span>
+              <strong>{formatCurrency(s.totalGiven)}</strong>
+              <em>Sent to this member</em>
+            </div>
+            <div className="mdp-money-cell mdp-money-cell--up">
+              <span>Total received</span>
+              <strong>{formatCurrency(s.totalReceived)}</strong>
+              <em>Returned from this member</em>
+            </div>
+          </div>
 
-          <Tabs
-            items={[
-              {
-                key: 'ipos',
-                label: `Full ledger — IPOs (${data.ipoApplications.length})`,
-                children: data.ipoApplications.length ? (
-                  <Table
-                    rowKey="id"
-                    columns={ipoColumns}
-                    dataSource={data.ipoApplications}
-                    pagination={{ pageSize: 10 }}
-                    scroll={{ x: 1200 }}
-                    className="pro-table"
-                    size="middle"
-                  />
-                ) : (
-                  <Empty description="No IPO applications yet" />
-                ),
-              },
-              {
-                key: 'ledger',
-                label: `Fund ledger (${data.ledgerEntries.length})`,
-                children: data.ledgerEntries.length ? (
-                  <Table
-                    rowKey="id"
-                    columns={ledgerColumns}
-                    dataSource={data.ledgerEntries}
-                    pagination={{ pageSize: 10 }}
-                    scroll={{ x: 'max-content' }}
-                    className="pro-table"
-                    size="middle"
-                  />
-                ) : (
-                  <Empty description="No transactions yet" />
-                ),
-              },
-            ]}
-          />
-        </>
+          <div className="mdp-kpi-grid">
+            <article className="mdp-kpi">
+              <span>Applied</span>
+              <strong>{s.iposApplied}</strong>
+            </article>
+            <article className="mdp-kpi mdp-kpi--up">
+              <span>Alloted</span>
+              <strong>{s.iposAlloted}</strong>
+            </article>
+            <article className="mdp-kpi mdp-kpi--down">
+              <span>Not alloted</span>
+              <strong>{s.iposNotAlloted}</strong>
+            </article>
+            <article className="mdp-kpi mdp-kpi--info">
+              <span>Pending IPOs</span>
+              <strong>{s.iposPending}</strong>
+            </article>
+          </div>
+
+          <div className="mdp-kpi-grid mdp-kpi-grid--pnl">
+            <article className="mdp-kpi">
+              <span>Gross IPO P&amp;L</span>
+              <strong className={pnlClassName(s.totalIpoProfit)}>{formatCurrency(s.totalIpoProfit)}</strong>
+            </article>
+            <article className="mdp-kpi">
+              <span>Member share</span>
+              <strong className={pnlClassName(s.totalMemberShare ?? 0)}>{formatCurrency(s.totalMemberShare ?? 0)}</strong>
+            </article>
+            <article className="mdp-kpi">
+              <span>Provider share</span>
+              <strong>{formatCurrency(s.totalProviderShare ?? 0)}</strong>
+            </article>
+            <article className="mdp-kpi">
+              <span>Manager share</span>
+              <strong>{formatCurrency(s.totalManagerShare ?? 0)}</strong>
+            </article>
+          </div>
+
+          {isLeader && group && (
+            <section className="mdp-card mdp-group">
+              <div className="mdp-card-head">
+                <div>
+                  <p className="mdp-kicker">Sub-group</p>
+                  <h3>
+                    <CrownOutlined /> {group.name}
+                  </h3>
+                  <p className="mdp-hero-meta">
+                    {group.memberCount} members · You are the group leader
+                  </p>
+                </div>
+                <Space wrap>
+                  <Link to="/member-groups" onClick={onClose}>Manage group</Link>
+                  <Link to="/group-leader-wallets" onClick={onClose}>Leader wallet</Link>
+                </Space>
+              </div>
+
+              <div className="mdp-money mdp-money--group">
+                <div className="mdp-money-cell mdp-money-cell--main">
+                  <span>Fund distributed</span>
+                  <strong>{formatCurrency(groupStats.fundDistributed ?? 0)}</strong>
+                  <em>Bulk IPO pays sent to this leader</em>
+                </div>
+                <div className={`mdp-money-cell${groupStats.pendingReturn ? ' mdp-money-cell--down' : ''}`}>
+                  <span>Group pending</span>
+                  <strong>{formatCurrency(groupStats.pendingReturn ?? 0)}</strong>
+                  <em>Still with group members</em>
+                </div>
+                <div className="mdp-money-cell mdp-money-cell--up">
+                  <span>Group member profit</span>
+                  <strong>{formatCurrency(groupStats.totalMemberShare ?? 0)}</strong>
+                  <em>Across all members in {group.name}</em>
+                </div>
+              </div>
+
+              <div className="mdp-kpi-grid">
+                <article className="mdp-kpi">
+                  <span>Cash sent</span>
+                  <strong>{formatCurrency(groupStats.cashSent ?? 0)}</strong>
+                </article>
+                <article className="mdp-kpi mdp-kpi--up">
+                  <span>Cash received</span>
+                  <strong>{formatCurrency(groupStats.cashReceived ?? 0)}</strong>
+                </article>
+                <article className="mdp-kpi">
+                  <span>Group IPOs</span>
+                  <strong>{groupStats.iposApplied ?? 0}</strong>
+                </article>
+                <article className="mdp-kpi mdp-kpi--up">
+                  <span>Group alloted</span>
+                  <strong>{groupStats.iposAlloted ?? 0}</strong>
+                </article>
+              </div>
+
+              <div className="mdp-card-head mdp-card-head--nested">
+                <h4>Group members</h4>
+              </div>
+              {group.members?.length ? (
+                <Table
+                  rowKey="id"
+                  columns={groupMemberColumns}
+                  dataSource={group.members}
+                  pagination={false}
+                  size="middle"
+                  className="pro-table"
+                  scroll={{ x: 860 }}
+                />
+              ) : (
+                <Empty description="No members in this group" />
+              )}
+
+              <div className="mdp-card-head mdp-card-head--nested">
+                <h4>Fund distribution history</h4>
+              </div>
+              <p className="mdp-hint">
+                One bulk transfer per IPO paid to this leader. Each member’s own share still appears on their personal ledger.
+              </p>
+              {group.bulkPayments?.length ? (
+                <Table
+                  rowKey="id"
+                  columns={bulkColumns}
+                  dataSource={group.bulkPayments}
+                  pagination={false}
+                  size="middle"
+                  className="pro-table"
+                />
+              ) : (
+                <Empty description="No bulk payments yet — use Bulk to owner on an IPO." />
+              )}
+            </section>
+          )}
+
+          <section className="mdp-card mdp-tabs">
+            <Tabs items={tabItems} />
+          </section>
+        </div>
       ) : null}
     </Drawer>
   );

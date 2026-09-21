@@ -9,6 +9,7 @@ import {
   assertIpoApplicationsEditable,
 } from '../services/profitShareService.js';
 import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
+import { assertIpoListedForWithdrawal, ipoIsListed } from '../utils/ipoListing.js';
 
 const router = Router();
 
@@ -37,9 +38,11 @@ router.patch('/bulk', async (req, res, next) => {
         const appId = parsePositiveInt(u.id, 'application id');
 
         const [existing] = await conn.query(
-          `SELECT a.*, i.allowed_categories, i.listing_date
+          `SELECT a.*, i.allowed_categories, i.listing_date,
+                  c.listing_date AS catalog_listing_date, c.status AS catalog_status
            FROM ipo_applications a
            JOIN ipos i ON i.id = a.ipo_id
+           LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
            WHERE a.id = ? AND a.tenant_id = ?`,
           [appId, req.tenantId]
         );
@@ -73,15 +76,15 @@ router.patch('/bulk', async (req, res, next) => {
           if (effectiveWithdrawal != null && Number.isNaN(effectiveWithdrawal)) {
             throw new AppError(`Invalid withdrawal amount for app #${appId}`);
           }
-          if (effectiveWithdrawal != null && !row.listing_date) {
-            throw new AppError('IPO is not listed yet. Wait for listing before entering withdrawal money.');
+          if (effectiveWithdrawal != null) {
+            assertIpoListedForWithdrawal(row);
           }
           fields.push('withdrawal_money = ?');
           values.push(effectiveWithdrawal);
         }
 
         const nextAllotment = u.allotmentStatus ?? row.allotment_status;
-        const ipoListed = Boolean(row.listing_date);
+        const ipoListed = ipoIsListed(row);
 
         if (u.allotmentStatus !== undefined) {
           fields.push('allotment_status = ?');

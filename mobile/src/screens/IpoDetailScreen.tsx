@@ -24,7 +24,7 @@ import {
   ipoHasHniLot,
 } from '../utils/ipoCategories';
 import { formatCurrency, formatPan, pnlColor } from '../utils/format';
-import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed } from '../utils/ipoProfit';
+import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, remarksOrMemberSendNote } from '../utils/ipoProfit';
 import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
 import { colors } from '../theme';
 
@@ -730,6 +730,10 @@ export default function IpoDetailScreen() {
       const { data } = await client.post(`/ipos/applications/${appId}/receive`, {
         returnToWallet: true,
         bankAccountId: receiveAccountId,
+        notes: remarksOrMemberSendNote(
+          { ...app, withdrawalMoney: getRowVal(app, 'withdrawalMoney', 'withdrawal_money') },
+          getRowVal(app, 'remarks', 'remarks'),
+        ) || undefined,
       });
       const nowIso = new Date().toISOString();
       setApplications((prev) =>
@@ -2022,15 +2026,23 @@ function ApplicationCard({
       ) : null}
 
       {app.profit_share_distribution_id ? (
-        <Tag label="P&L split done" color="#7c3aed" />
+        <View style={{ marginBottom: 8 }}>
+          <Text style={ui.hint}>Member: {formatCurrency(app.share_member_amount)}</Text>
+          <Text style={ui.hint}>Manager: {formatCurrency(app.share_manager_amount)}</Text>
+          <Text style={ui.hint}>Provider: {formatCurrency(app.share_provider_amount)}</Text>
+          <Tag label="P&L split done" color="#7c3aed" />
+        </View>
       ) : status === 'ALLOTED' && !waitingForListing && pnl != null && Number(pnl) !== 0 ? (
         <Tag label="P&L splits on save" color="#d97706" />
       ) : null}
 
       <TextInput
         dense
-        label="Remarks"
-        value={remarks}
+        label={app.profit_share_distribution_id ? 'Notes (member will send)' : 'Remarks'}
+        value={remarksOrMemberSendNote(
+          { ...app, withdrawalMoney: withdrawal },
+          remarks,
+        )}
         onChangeText={(v) => updateRow(app.id, 'remarks', v)}
         mode="outlined"
         disabled={isClosed}

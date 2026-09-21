@@ -2,8 +2,7 @@ import { Router } from 'express';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { parsePositiveInt } from '../utils/validate.js';
-import { getGmpHistory } from '../services/ipo/gmpService.js';
-import { summarizeGmpHistory } from '../services/ipo/gmpCalc.js';
+import { getGmpHistory, presentGmpHistory, toGmpCurrent } from '../services/ipo/gmpService.js';
 import {
   addCatalogToMyIpos,
   getLiveIpo,
@@ -92,17 +91,12 @@ router.get('/:id/gmp/history', async (req, res, next) => {
     const catalogId = parsePositiveInt(req.params.id, 'IPO id');
     const live = await getLiveIpo(pool, { tenantId: req.tenantId, catalogId });
     if (!live) throw new AppError('Live IPO not found', 404);
-    const history = await getGmpHistory(pool, catalogId);
+    const historyRows = await getGmpHistory(pool, catalogId);
+    const current = toGmpCurrent(live);
     res.json({
       success: true,
-      current: {
-        gmp: live.gmp,
-        gmpPercentage: live.gmpPercentage,
-        estimatedListingPrice: live.estimatedListingPrice,
-        lastUpdated: live.gmpLastUpdated,
-      },
-      summary: summarizeGmpHistory(history),
-      history,
+      current,
+      ...presentGmpHistory(historyRows, current),
     });
   } catch (err) {
     next(err);
@@ -114,12 +108,13 @@ router.get('/:id/gmp', async (req, res, next) => {
     const catalogId = parsePositiveInt(req.params.id, 'IPO id');
     const live = await getLiveIpo(pool, { tenantId: req.tenantId, catalogId });
     if (!live) throw new AppError('Live IPO not found', 404);
+    const current = toGmpCurrent(live);
     res.json({
       success: true,
-      gmp: live.gmp,
-      gmpPercentage: live.gmpPercentage,
-      estimatedListingPrice: live.estimatedListingPrice,
-      lastUpdated: live.gmpLastUpdated,
+      gmp: current?.gmp ?? null,
+      gmpPercentage: current?.gmpPercentage ?? null,
+      estimatedListingPrice: current?.estimatedListingPrice ?? null,
+      lastUpdated: current?.lastUpdated ?? null,
     });
   } catch (err) {
     next(err);

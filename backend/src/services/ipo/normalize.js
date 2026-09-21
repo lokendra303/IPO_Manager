@@ -175,8 +175,9 @@ export function normalizeLiveIpo(raw, sourceProvider, { now } = {}) {
   const gmpPct = providedPct != null && providedPct !== ''
     ? toNum(providedPct)
     : gmpPercentage(gmp, issuePrice);
-  const estimated = raw.estimatedListingPrice ?? raw.estimated_listing_price
-    ?? estimatedListingPrice(issuePrice, gmp);
+  const providedEst = toNum(raw.estimatedListingPrice ?? raw.estimated_listing_price);
+  const computedEst = estimatedListingPrice(issuePrice, gmp);
+  const estimated = providedEst != null && providedEst > 0 ? providedEst : computedEst;
   const registrarRaw = raw.registrar || raw.registrar_name || raw.registrar_info?.name || raw.registrar_info?.registrar || null;
   const sub = raw.subscription && typeof raw.subscription === 'object' ? raw.subscription : {};
   const status = normalizeLiveStatus(raw.status, { openDate, closeDate, listingDate, now });
@@ -264,8 +265,20 @@ export function serializeCatalogIpo(row, { isMyIpo = false, myIpoId = null } = {
     registrarName: row.registrar_name,
     exchange: row.exchange,
     gmp: row.gmp != null ? Number(row.gmp) : null,
-    gmpPercentage: row.gmp_percentage != null ? Number(row.gmp_percentage) : null,
-    estimatedListingPrice: row.estimated_listing_price != null ? Number(row.estimated_listing_price) : null,
+    gmpPercentage: (() => {
+      const gmp = row.gmp != null ? Number(row.gmp) : null;
+      const issuePrice = row.issue_price != null ? Number(row.issue_price) : null;
+      const stored = row.gmp_percentage != null ? Number(row.gmp_percentage) : null;
+      if ((stored == null || stored === 0) && gmp) return gmpPercentage(gmp, issuePrice);
+      return stored;
+    })(),
+    estimatedListingPrice: (() => {
+      const stored = row.estimated_listing_price != null ? Number(row.estimated_listing_price) : null;
+      if (stored != null && stored > 0) return stored;
+      const gmp = row.gmp != null ? Number(row.gmp) : null;
+      const issuePrice = row.issue_price != null ? Number(row.issue_price) : null;
+      return estimatedListingPrice(issuePrice, gmp);
+    })(),
     gmpLastUpdated: row.gmp_updated_at,
     subscription: {
       qib: row.subscription_qib,

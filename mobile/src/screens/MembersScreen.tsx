@@ -11,6 +11,7 @@ import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import StatCard, { PnlStatCard } from '../components/StatCard';
+import FilterChips from '../components/FilterChips';
 import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import { copyToClipboard } from '../utils/allotmentCheck';
@@ -55,6 +56,7 @@ function InfoRow({ label, value, copyable }: { label: string; value: string; cop
 
 export default function MembersScreen() {
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [groupFilter, setGroupFilter] = useState('ALL');
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
@@ -81,9 +83,17 @@ export default function MembersScreen() {
   const filtered = useMemo(() => {
     let list = members;
     if (statusFilter !== 'ALL') list = list.filter((m) => m.status === statusFilter);
+    if (groupFilter === 'NONE') list = list.filter((m) => !m.member_group_id);
+    else if (groupFilter !== 'ALL') {
+      list = list.filter((m) => String(m.member_group_id) === groupFilter);
+    }
     if (search.trim()) list = list.filter((m) => memberMatchesSearch(m, search));
     return list;
-  }, [members, statusFilter, search]);
+  }, [members, statusFilter, groupFilter, search]);
+
+  const activeCount = members.filter((m) => m.status === 'ACTIVE').length;
+  const inactiveCount = members.filter((m) => m.status === 'INACTIVE').length;
+  const ungroupedCount = members.filter((m) => !m.member_group_id).length;
 
   const openCreate = () => {
     setEditing(null);
@@ -199,7 +209,34 @@ export default function MembersScreen() {
         subtitle={`${filtered.length} team members`}
         extra={<Button compact mode="contained" onPress={openCreate}>Add</Button>}
       />
-      <TextInput placeholder="Search..." value={search} onChangeText={setSearch} mode="outlined" style={{ marginBottom: 12 }} />
+      <TextInput placeholder="Search name, PAN, email, group..." value={search} onChangeText={setSearch} mode="outlined" style={{ marginBottom: 12 }} />
+      <Text style={styles.filterLabel}>Status</Text>
+      <FilterChips
+        value={statusFilter}
+        onChange={setStatusFilter}
+        options={[
+          { value: 'ALL', label: `All (${members.length})` },
+          { value: 'ACTIVE', label: `Active (${activeCount})` },
+          { value: 'INACTIVE', label: `Inactive (${inactiveCount})` },
+        ]}
+      />
+      {(memberGroups.length > 0 || ungroupedCount > 0) && (
+        <>
+          <Text style={styles.filterLabel}>Group</Text>
+          <FilterChips
+            value={groupFilter}
+            onChange={setGroupFilter}
+            options={[
+              { value: 'ALL', label: 'All groups' },
+              ...memberGroups.map((g) => ({
+                value: String(g.id),
+                label: `${g.name} (${members.filter((m) => Number(m.member_group_id) === Number(g.id)).length})`,
+              })),
+              { value: 'NONE', label: `No group (${ungroupedCount})` },
+            ]}
+          />
+        </>
+      )}
       <ContentCard title={`Members (${filtered.length})`}>
         {filtered.map((member) => (
           <View key={member.id} style={styles.compactRow}>
@@ -265,7 +302,10 @@ export default function MembersScreen() {
       <Modal visible={detailOpen} animationType="slide" onRequestClose={closeDetail}>
         <SafeAreaView style={styles.detailModal}>
           <View style={styles.detailHeader}>
-            <Text style={styles.modalTitle}>{m ? `${m.display_name}` : 'Member profile'}</Text>
+            <Text style={styles.modalTitle}>
+              {m ? m.display_name : 'Member profile'}
+              {detail?.isGroupLeader ? ' · Leader' : ''}
+            </Text>
             <Button mode="text" onPress={closeDetail}>Close</Button>
           </View>
 
@@ -292,13 +332,17 @@ export default function MembersScreen() {
 
               {detailTab === 'info' && (
                 <>
-                  <ContentCard title="Contact & status">
+                  <ContentCard title="Personal details">
                     <InfoRow label="PAN" value={formatPan(m.pan)} copyable />
                     <InfoRow label="Email" value={m.email || '—'} />
                     <InfoRow label="UPI" value={m.upi || '—'} copyable />
                     <InfoRow label="Status" value={m.status} />
                     <InfoRow label="Relationship" value={m.relationship_note || '—'} />
                     <InfoRow label="Sub-Group" value={m.member_group_name || '—'} />
+                    {m.fund_provider_name ? <InfoRow label="Fund source" value={m.fund_provider_name} /> : null}
+                    {m.group_leader_name && !detail.isGroupLeader ? (
+                      <InfoRow label="Group leader" value={m.group_leader_name} />
+                    ) : null}
                   </ContentCard>
 
                   <ContentCard title="P&L share rules">
@@ -324,6 +368,69 @@ export default function MembersScreen() {
                         <PnlStatCard title="P&L" value={s.totalIpoProfit ?? 0} formatted={formatCurrency(s.totalIpoProfit ?? 0)} />
                         <StatCard title="Applied" value={s.iposApplied ?? 0} variant="info" />
                       </View>
+                    </ContentCard>
+                  )}
+
+                  {detail.group && !detail.isGroupLeader && (
+                    <ContentCard title={`Group · ${detail.group.name}`}>
+                      <Text style={styles.muted}>
+                        Leader {detail.group.leaderDisplayName || 'not set'}
+                        {detail.group.memberCount ? ` · ${detail.group.memberCount} members` : ''}
+                      </Text>
+                    </ContentCard>
+                  )}
+
+                  {detail.isGroupLeader && detail.group && (
+                    <ContentCard title={`Group · ${detail.group.name}`}>
+                      <View style={styles.statRow}>
+                        <StatCard
+                          title="Distributed"
+                          value={formatCurrency(detail.group.groupStats?.fundDistributed ?? 0)}
+                          variant="warning"
+                        />
+                        <StatCard
+                          title="Group pending"
+                          value={formatCurrency(detail.group.groupStats?.pendingReturn ?? 0)}
+                          variant={(detail.group.groupStats?.pendingReturn ?? 0) > 0 ? 'danger' : 'primary'}
+                        />
+                      </View>
+                      <View style={styles.statRow}>
+                        <StatCard
+                          title="Group profit"
+                          value={formatCurrency(detail.group.groupStats?.totalMemberShare ?? 0)}
+                          variant="success"
+                        />
+                        <StatCard title="Members" value={detail.group.memberCount ?? 0} variant="info" />
+                      </View>
+                      {(detail.group.members || []).map((gm: any) => (
+                        <ListRow
+                          key={gm.id}
+                          title={`${gm.displayName}${gm.isLeader ? ' (Leader)' : ''}`}
+                          subtitle={[
+                            gm.pan,
+                            gm.email,
+                            gm.upi,
+                            gm.relationshipNote,
+                            `Pending ${formatCurrency(gm.pendingReturn ?? 0)}`,
+                            `Profit ${formatCurrency(gm.totalMemberShare ?? 0)}`,
+                          ].filter(Boolean).join(' · ')}
+                        />
+                      ))}
+                      {(detail.group.bulkPayments || []).length > 0 ? (
+                        <>
+                          <Text style={styles.fieldLabel}>Fund distribution</Text>
+                          {detail.group.bulkPayments.map((bp: any) => (
+                            <ListRow
+                              key={bp.id}
+                              title={bp.ipoName}
+                              subtitle={`${bp.memberCount ?? 0} members${bp.investorCategory ? ` · ${bp.investorCategory}` : ''}`}
+                              right={<Text style={styles.amount}>{formatCurrency(bp.totalAmount)}</Text>}
+                            />
+                          ))}
+                        </>
+                      ) : (
+                        <Text style={styles.muted}>No bulk payments yet.</Text>
+                      )}
                     </ContentCard>
                   )}
                 </>
@@ -379,6 +486,14 @@ export default function MembersScreen() {
 }
 
 const styles = StyleSheet.create({
+  filterLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
   compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
   compactRowMain: { flex: 1 },
   moreBtn: { paddingHorizontal: 8, paddingVertical: 12 },

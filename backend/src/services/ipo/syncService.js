@@ -1,6 +1,7 @@
 import { toSqlDateTime } from '../../utils/validate.js';
 import { getIpoProvider, getConfiguredProviderName, providerHasCredentials } from './providers/index.js';
 import { recordGmpSample } from './gmpService.js';
+import { estimatedListingPrice, gmpPercentage } from './gmpCalc.js';
 import { recordNotification, scanDateNotifications } from './notificationService.js';
 import { parseIstDateTime } from './normalize.js';
 
@@ -83,8 +84,12 @@ async function upsertCatalogRow(conn, item, sourceProvider) {
     source_provider: sourceProvider,
     source_last_updated: now,
     gmp: item.gmp,
-    gmp_percentage: item.gmpPercentage,
-    estimated_listing_price: item.estimatedListingPrice,
+    gmp_percentage: (item.gmpPercentage != null && Number(item.gmpPercentage) !== 0) || item.gmp === 0
+      ? item.gmpPercentage
+      : gmpPercentage(item.gmp, item.issuePrice),
+    estimated_listing_price: item.estimatedListingPrice != null && Number(item.estimatedListingPrice) > 0
+      ? item.estimatedListingPrice
+      : estimatedListingPrice(item.issuePrice, item.gmp),
     gmp_updated_at: gmpUpdated ? toSqlDateTime(gmpUpdated) : (item.gmp != null ? now : null),
     subscription_qib: item.subscriptionQib,
     subscription_nii: item.subscriptionNii,
@@ -189,11 +194,13 @@ export async function syncLiveIpos(pool, { force = false, jobName = 'live_ipos' 
         } else {
           updated += 1;
         }
+        const sampledAt = parseIstDateTime(result.row.gmp_updated_at) || new Date();
         await recordGmpSample(conn, result.row, {
           gmp: result.row.gmp,
           gmpPercentage: result.row.gmp_percentage,
           estimatedListingPrice: result.row.estimated_listing_price,
           source: provider.name,
+          now: sampledAt,
         });
       }
 

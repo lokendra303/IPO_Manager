@@ -44,7 +44,7 @@ export default function GmpDashboardPage() {
     <div>
       <PageHeader
         title="GMP"
-        subtitle="Grey market premium for IPOs you added to My IPOs. History is stored on every meaningful update."
+        subtitle="Grey market premium for IPOs you added to My IPOs. History is one point per day."
       />
       <ContentCard padded style={{ marginBottom: 16 }}>
         <Typography.Text type="secondary">IPO</Typography.Text>
@@ -68,7 +68,7 @@ export default function GmpDashboardPage() {
             <Col xs={24} sm={12} lg={6}>
               <StatCard
                 title="Est. listing"
-                value={current?.estimatedListingPrice != null ? formatCurrency(current.estimatedListingPrice) : '—'}
+                value={current?.estimatedListingPrice > 0 ? formatCurrency(current.estimatedListingPrice) : '—'}
                 variant="success"
               />
             </Col>
@@ -81,9 +81,9 @@ export default function GmpDashboardPage() {
               <ContentCard title="GMP history" padded>
                 <GmpSparkline points={history?.history || []} height={140} />
                 <div style={{ marginTop: 12 }}>
-                  {(history?.history || []).slice(-8).reverse().map((h) => (
+                  {(history?.history || []).slice(-30).reverse().map((h) => (
                     <div key={h.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0' }}>
-                      <span>{new Date(h.recordedAt).toLocaleString('en-IN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: 'short' })}</span>
+                      <span>{new Date(h.recordedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                       <strong>{formatGmp(h.gmp)}</strong>
                     </div>
                   ))}

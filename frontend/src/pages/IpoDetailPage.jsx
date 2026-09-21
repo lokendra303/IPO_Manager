@@ -28,7 +28,7 @@ import ContentCard from '../components/ContentCard';
 import IpoSummaryStats from '../components/IpoSummaryStats';
 import PageLoading from '../components/PageLoading';
 import { tableDefaults } from '../utils/table';
-import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, ipoListingDate } from '../utils/ipoProfit';
+import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, ipoListingDate, remarksOrMemberSendNote } from '../utils/ipoProfit';
 import { applyAllotmentResult, sameAllotmentId, allotmentCheckAccess } from '../utils/allotmentAutoCheck';
 
 function toDateParam(v) {
@@ -768,6 +768,10 @@ export default function IpoDetailPage() {
       const { data } = await client.post(`/ipos/applications/${appId}/receive`, {
         returnToWallet: true,
         bankAccountId: receiveAccountId,
+        notes: remarksOrMemberSendNote(
+          { ...app, withdrawalMoney: getRowVal(app, 'withdrawalMoney', 'withdrawal_money') },
+          getRowVal(app, 'remarks', 'remarks'),
+        ) || undefined,
       });
       const nowIso = new Date().toISOString();
       setApplications((prev) =>
@@ -1314,18 +1318,26 @@ export default function IpoDetailPage() {
       title: 'Remarks',
       dataIndex: 'remarks',
       width: 200,
-      render: (v, r) => (
+      render: (v, r) => {
+        const merged = {
+          ...r,
+          withdrawalMoney: getRowVal(r, 'withdrawalMoney', 'withdrawal_money'),
+        };
+        const stored = getRowVal(r, 'remarks', 'remarks');
+        const noteValue = remarksOrMemberSendNote(merged, stored);
+        return (
         <div style={{ minWidth: 168 }}>
           <ProfitShareAmounts record={r} />
           <Input
             size="small"
             disabled={isFrozen}
-            placeholder={r.profit_share_distribution_id ? 'Notes' : 'Remarks'}
-            value={getRowVal(r, 'remarks', 'remarks') ?? ''}
+            placeholder={noteValue || (r.profit_share_distribution_id ? 'Member will send funds' : 'Remarks')}
+            value={noteValue}
             onChange={(e) => updateRow(r.id, 'remarks', e.target.value)}
           />
         </div>
-      ),
+        );
+      },
     },
     {
       title: 'Action',
@@ -1731,7 +1743,7 @@ export default function IpoDetailPage() {
           <Space size="large" wrap>
             <span>Current {formatGmp(ipo.gmp)}</span>
             <span>GMP % {ipo.gmpPercentage != null ? `${ipo.gmpPercentage}%` : '—'}</span>
-            <span>Est. listing {ipo.estimatedListingPrice != null ? formatCurrency(ipo.estimatedListingPrice) : '—'}</span>
+            <span>Est. listing {ipo.estimatedListingPrice > 0 ? formatCurrency(ipo.estimatedListingPrice) : '—'}</span>
             <Link to="/gmp">GMP history</Link>
           </Space>
         </ContentCard>

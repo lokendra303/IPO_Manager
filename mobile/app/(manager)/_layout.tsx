@@ -23,8 +23,10 @@ const MENU = [
   { href: '/(manager)/ipos' as const, label: 'IPOs', icon: 'trending-up-outline' as const },
   { href: '/(manager)/adjust-combine' as const, label: 'Reuse leftover', icon: 'swap-horizontal-outline' as const },
   { href: '/(manager)/summary' as const, label: 'Summary', icon: 'bar-chart-outline' as const },
-  { href: '/(manager)/profit-analysis' as const, label: 'Profit Analysis', icon: 'analytics-outline' as const },
-  { href: '/(manager)/profit-sharing' as const, label: 'Profit Sharing', icon: 'pie-chart-outline' as const },
+  { type: 'heading' as const, label: 'Profit' },
+  { href: '/(manager)/profit-analysis' as const, label: 'Analysis', icon: 'analytics-outline' as const, nested: true },
+  { href: '/(manager)/profit-sharing' as const, label: 'Sharing', icon: 'pie-chart-outline' as const, nested: true },
+  { type: 'heading' as const, label: 'More' },
   { href: '/(manager)/audit-log' as const, label: 'Audit Log', icon: 'time-outline' as const },
   { href: '/(manager)/settings' as const, label: 'Settings', icon: 'settings-outline' as const },
 ];
@@ -57,13 +59,20 @@ function CustomDrawerContent({ navigation }: { navigation: { closeDrawer: () => 
 
       <Text style={styles.menuHeading}>Menu</Text>
 
-      {MENU.map((item) => {
+      {MENU.map((item, index) => {
+        if (item.type === 'heading') {
+          return (
+            <Text key={`heading-${item.label}-${index}`} style={[styles.menuHeading, styles.menuHeadingGroup]}>
+              {item.label}
+            </Text>
+          );
+        }
         const active = pathname === item.href || (item.href !== '/(manager)' && pathname.startsWith(item.href));
         const badge = item.badgeKey === 'issues' && openIssueCount > 0 ? openIssueCount : 0;
         return (
           <Pressable
             key={item.href}
-            style={[styles.item, active && styles.itemActive]}
+            style={[styles.item, item.nested && styles.itemNested, active && styles.itemActive]}
             onPress={() => {
               router.push(item.href);
               navigation.closeDrawer();
@@ -201,6 +210,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.sm,
+  },
+  menuHeadingGroup: {
+    marginTop: spacing.md,
+    color: '#5eead4',
+  },
+  itemNested: {
+    marginLeft: spacing.lg,
+    backgroundColor: 'rgba(13, 148, 136, 0.08)',
   },
   item: {
     flexDirection: 'row',

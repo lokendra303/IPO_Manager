@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import client from '../api/client';
 
 const AuthContext = createContext(null);
@@ -62,10 +62,13 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const setSessionUser = (userData) => {
-    setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
-  };
+  const setSessionUser = useCallback((userData) => {
+    setUser((prev) => {
+      const next = { ...(prev || {}), ...userData };
+      localStorage.setItem('user', JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const refreshUser = async () => {
     const { data } = await client.get('/auth/me');

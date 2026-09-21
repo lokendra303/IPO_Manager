@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Col, Modal, Row, Segmented, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Link } from 'react-router-dom';
+import { Button, Modal, Select, message } from 'antd';
 import {
-  ApartmentOutlined,
-  BankOutlined,
   DownloadOutlined,
   EyeOutlined,
-  PercentageOutlined,
-  RiseOutlined,
-  TeamOutlined,
-  UserOutlined,
 } from '@ant-design/icons';
 import client from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -18,11 +13,7 @@ import {
   createProfitAnalysisPdfPreviewUrl,
   downloadProfitAnalysisPdf,
 } from '../utils/profitAnalysisPdf';
-import PageHeader from '../components/PageHeader';
-import StatCard from '../components/StatCard';
-import ContentCard from '../components/ContentCard';
 import PageLoading from '../components/PageLoading';
-import { tableDefaults } from '../utils/table';
 
 const MONTH_OPTIONS = [
   { value: 1, label: 'Jan' },
@@ -39,6 +30,8 @@ const MONTH_OPTIONS = [
   { value: 12, label: 'Dec' },
 ];
 
+const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
+
 function yearOptions() {
   const current = new Date().getFullYear();
   const years = [];
@@ -48,8 +41,144 @@ function yearOptions() {
   return years;
 }
 
-function renderAmt(v) {
-  return <span className={pnlClassName(v)}>{formatCurrency(v)}</span>;
+function initials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  return parts.map((p) => p[0]).join('').toUpperCase() || '?';
+}
+
+function avatarTone(id) {
+  return AVATAR_TONES[Math.abs(Number(id) || 0) % AVATAR_TONES.length];
+}
+
+function Amt({ value }) {
+  return <b className={pnlClassName(value)}>{formatCurrency(value)}</b>;
+}
+
+function Kpi({ label, value, hint, tone = 'neutral', active, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`dash-kpi-a mem-kpi-btn${active ? ' is-on' : ''}`}
+      onClick={onClick}
+    >
+      <article className={`dash-kpi dash-kpi--${tone}`}>
+        <span className="dash-kpi-label">{label}</span>
+        <strong className="dash-kpi-value">{value}</strong>
+        {hint ? <span className="dash-kpi-hint">{hint}</span> : null}
+      </article>
+    </button>
+  );
+}
+
+function ShareMix({ member, manager, provider }) {
+  const m = Math.abs(Number(member) || 0);
+  const g = Math.abs(Number(manager) || 0);
+  const p = Math.abs(Number(provider) || 0);
+  const total = m + g + p;
+  if (!total) return null;
+  return (
+    <div
+      className="panal-mix"
+      role="img"
+      aria-label={`Member ${formatCurrency(member)}, you ${formatCurrency(manager)}, provider ${formatCurrency(provider)}`}
+    >
+      {m > 0 ? <span className="panal-mix-seg panal-mix-seg--member" style={{ flexGrow: m }} /> : null}
+      {g > 0 ? <span className="panal-mix-seg panal-mix-seg--manager" style={{ flexGrow: g }} /> : null}
+      {p > 0 ? <span className="panal-mix-seg panal-mix-seg--provider" style={{ flexGrow: p }} /> : null}
+    </div>
+  );
+}
+
+function ShareGrid({ member, manager, provider, gross, pending, splits }) {
+  return (
+    <div className="panal-shares">
+      {gross != null ? (
+        <div>
+          <span>Gross P&amp;L</span>
+          <Amt value={gross} />
+        </div>
+      ) : null}
+      <div>
+        <span>Member</span>
+        <Amt value={member} />
+      </div>
+      <div>
+        <span>You</span>
+        <Amt value={manager} />
+      </div>
+      <div>
+        <span>Provider</span>
+        <Amt value={provider} />
+      </div>
+      {pending != null && Number(pending) !== 0 ? (
+        <div className="panal-shares-cell--warn">
+          <span>Pending</span>
+          <Amt value={pending} />
+        </div>
+      ) : null}
+      {splits != null ? (
+        <div>
+          <span>Splits</span>
+          <b>{splits}</b>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PersonCard({ row, showGroup }) {
+  return (
+    <article className="panal-person">
+      <span className={`mem-avatar mem-avatar--${avatarTone(row.memberId)}`}>
+        {initials(row.displayName)}
+      </span>
+      <div className="panal-person-main">
+        <div className="panal-person-top">
+          <strong>{row.displayName}</strong>
+          {row.isGroupLeader || row.isLeader ? <span className="mem-status is-on">Leader</span> : null}
+        </div>
+        <p className="mem-person-meta">
+          {formatPan(row.pan) || 'No PAN'}
+          {showGroup && row.memberGroupName ? ` · ${row.memberGroupName}` : ''}
+        </p>
+        <ShareGrid
+          gross={row.grossIpoPnL}
+          member={row.memberShare}
+          manager={row.managerShare}
+          provider={row.providerShare}
+          pending={row.pendingGross}
+        />
+        <ShareMix member={row.memberShare} manager={row.managerShare} provider={row.providerShare} />
+      </div>
+    </article>
+  );
+}
+
+function SliceCard({ title, subtitle, row }) {
+  return (
+    <article className="panal-slice">
+      <div className="panal-slice-top">
+        <strong>{title}</strong>
+        {subtitle ? <span>{subtitle}</span> : null}
+      </div>
+      <ShareGrid
+        member={row.memberShare}
+        manager={row.managerShare}
+        provider={row.providerShare}
+        gross={row.grossDistributed}
+        splits={row.distributionCount}
+      />
+      <ShareMix member={row.memberShare} manager={row.managerShare} provider={row.providerShare} />
+    </article>
+  );
+}
+
+function EmptyState({ children }) {
+  return <p className="panal-empty">{children}</p>;
 }
 
 export default function ProfitAnalysisPage() {
@@ -128,6 +257,11 @@ export default function ProfitAnalysisPage() {
     }
   };
 
+  const toggleMonth = (m) => {
+    if (!year) return;
+    setMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m].sort((a, b) => a - b)));
+  };
+
   if (loading && !data) return <PageLoading />;
 
   const revenue = data?.revenue || {};
@@ -154,108 +288,366 @@ export default function ProfitAnalysisPage() {
     || reportScope.periodLabel
     || 'All time';
 
-  const memberCols = [
-    {
-      title: 'Member',
-      dataIndex: 'displayName',
-      fixed: 'left',
-      render: (v, r) => (
-        <span style={{ fontWeight: 500 }}>
-          {v}
-          {r.isGroupLeader ? <Tag color="blue" style={{ marginLeft: 8 }}>Leader</Tag> : null}
-        </span>
-      ),
-    },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
-    {
-      title: 'Sub-group',
-      dataIndex: 'memberGroupName',
-      render: (v) => (v ? <Tag>{v}</Tag> : '—'),
-    },
-    { title: 'Gross IPO P&L', dataIndex: 'grossIpoPnL', render: renderAmt },
-    { title: 'Member keeps', dataIndex: 'memberShare', render: renderAmt },
-    { title: 'Manager got', dataIndex: 'managerShare', render: renderAmt },
-    { title: 'Provider got', dataIndex: 'providerShare', render: renderAmt },
-    {
-      title: 'Pending split',
-      dataIndex: 'pendingGross',
-      render: (v) => (Number(v) ? renderAmt(v) : '—'),
-    },
-  ];
+  const members = data?.members || [];
+  const subGroups = data?.subGroups || [];
+  const ungroupedMembers = data?.ungroupedMembers || [];
+  const providers = data?.providers || [];
+  const segments = data?.bySegment || [];
+  const categories = data?.byCategory || [];
+  const pendingCount = Number(overall.pendingCount || 0);
+  const splitCount = Number(overall.distributionCount || 0);
 
-  const providerCols = [
-    { title: 'Provider', dataIndex: 'providerName', render: (v) => <span style={{ fontWeight: 500 }}>{v}</span> },
-    { title: 'Total share', dataIndex: 'totalShare', render: renderAmt },
-    { title: 'From profit', dataIndex: 'profitShare', render: renderAmt },
-    { title: 'From loss', dataIndex: 'lossShare', render: renderAmt },
-    { title: 'Splits', dataIndex: 'distributionCount' },
-  ];
-
-  const segmentCols = [
-    { title: 'Type', dataIndex: 'label' },
-    { title: 'Gross split', dataIndex: 'grossDistributed', render: renderAmt },
-    { title: 'Member', dataIndex: 'memberShare', render: renderAmt },
-    { title: 'Manager', dataIndex: 'managerShare', render: renderAmt },
-    { title: 'Provider', dataIndex: 'providerShare', render: renderAmt },
-    { title: 'Splits', dataIndex: 'distributionCount' },
-  ];
-
-  const subGroupMemberCols = [
-    {
-      title: 'Member',
-      dataIndex: 'displayName',
-      render: (v, r) => (
-        <span style={{ fontWeight: r.isLeader ? 600 : 400 }}>
-          {v}
-          {r.isLeader ? <Tag color="blue" style={{ marginLeft: 8 }}>Leader</Tag> : null}
-        </span>
-      ),
-    },
-    { title: 'PAN', dataIndex: 'pan', render: (v) => formatPan(v) || '—' },
-    { title: 'Gross IPO P&L', dataIndex: 'grossIpoPnL', render: renderAmt },
-    { title: 'Member profit', dataIndex: 'memberShare', render: renderAmt },
-    { title: 'Manager share', dataIndex: 'managerShare', render: renderAmt },
-    { title: 'Provider share', dataIndex: 'providerShare', render: renderAmt },
+  const tabs = [
+    { key: 'revenue', label: 'Revenue' },
+    { key: 'members', label: 'Members', count: members.length },
+    { key: 'subgroups', label: 'Sub-groups', count: subGroups.length },
+    { key: 'providers', label: 'Providers', count: providers.length },
+    { key: 'manager', label: 'You' },
   ];
 
   return (
-    <div>
-      <PageHeader
-        title="Profit Analysis"
-        subtitle={`${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`}
-        extra={(
-          <Space wrap>
-            <Select
-              allowClear
-              placeholder="Year"
-              style={{ width: 110 }}
-              options={yearOpts}
-              value={year}
-              onChange={(v) => {
-                setYear(v ?? null);
-                if (!v) setMonths([]);
+    <div className={`panal${loading ? ' is-loading' : ''}`}>
+      <header className="dash-head">
+        <div>
+          <p className="dash-hello">P&amp;L report</p>
+          <h1>Profit analysis</h1>
+          <p className="dash-lead">
+            {periodLabel} · {iposAppliedLabel} · {iposProfitLabel}
+          </p>
+        </div>
+        <div className="dash-head-actions">
+          <Link to="/profit-sharing" className="dash-btn">Sharing</Link>
+          <button type="button" className="dash-btn" disabled={pdfLoading || !data} onClick={previewPdf}>
+            <EyeOutlined /> Preview
+          </button>
+          <button
+            type="button"
+            className="dash-btn dash-btn--primary"
+            disabled={pdfLoading || !data}
+            onClick={downloadPdf}
+          >
+            <DownloadOutlined /> Download PDF
+          </button>
+        </div>
+      </header>
+
+      <section className="dash-card panal-period">
+        <div className="dash-card-head">
+          <h2>Period</h2>
+          {(year || months.length > 0) && (
+            <button
+              type="button"
+              className="dash-btn sg-mini"
+              onClick={() => {
+                setYear(null);
+                setMonths([]);
               }}
-            />
-            <Select
-              mode="multiple"
-              allowClear
+            >
+              All time
+            </button>
+          )}
+        </div>
+        <Select
+          allowClear
+          placeholder="All years"
+          className="panal-year"
+          options={yearOpts}
+          value={year}
+          onChange={(v) => {
+            setYear(v ?? null);
+            if (!v) setMonths([]);
+          }}
+        />
+        <div className="mem-chips panal-months">
+          {MONTH_OPTIONS.map((m) => (
+            <button
+              key={m.value}
+              type="button"
               disabled={!year}
-              placeholder={year ? 'Months' : 'Select year first'}
-              style={{ minWidth: 180 }}
-              maxTagCount="responsive"
-              options={MONTH_OPTIONS}
-              value={months}
-              onChange={(v) => setMonths(v || [])}
-            />
-            <Button icon={<EyeOutlined />} loading={pdfLoading} onClick={previewPdf}>
-              Preview report
-            </Button>
-            <Button type="primary" icon={<DownloadOutlined />} loading={pdfLoading} onClick={downloadPdf}>
-              Download PDF
-            </Button>
-          </Space>
+              className={`mem-chip${months.includes(m.value) ? ' is-on' : ''}`}
+              onClick={() => toggleMonth(m.value)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+        {!year ? (
+          <p className="panal-period-hint">Pick a year to filter by month.</p>
+        ) : (
+          <p className="panal-period-hint">{appsLabel} in this period.</p>
         )}
-      />
+      </section>
+
+      <div className="pshare-money">
+        <div className="pshare-money-cell pshare-money-cell--main">
+          <span>Gross IPO P&amp;L</span>
+          <strong>{formatCurrency(overall.grossIpoPnL)}</strong>
+          <em>{iposAppliedLabel}</em>
+        </div>
+        <div className="pshare-money-cell">
+          <span>Members</span>
+          <strong>{formatCurrency(revenue.memberShare)}</strong>
+          <em>Kept by members</em>
+        </div>
+        <div className="pshare-money-cell pshare-money-cell--up">
+          <span>You</span>
+          <strong>{formatCurrency(revenue.managerShare)}</strong>
+          <em>Manager share</em>
+        </div>
+        <div className="pshare-money-cell">
+          <span>Providers</span>
+          <strong>{formatCurrency(revenue.providerShare)}</strong>
+          <em>Fund provider share</em>
+        </div>
+      </div>
+
+      <section className="dash-kpi-grid panal-kpis">
+        <Kpi
+          label="IPOs applied"
+          value={iposApplied}
+          hint={iposProfitLabel}
+          tone="info"
+          active={view === 'revenue'}
+          onClick={() => setView('revenue')}
+        />
+        <Kpi
+          label="IPOs in profit"
+          value={iposProfit}
+          hint={`${profitApps} apps in profit`}
+          tone="up"
+          active={view === 'revenue'}
+          onClick={() => setView('revenue')}
+        />
+        <Kpi
+          label="Pending split"
+          value={pendingCount}
+          hint={formatCurrency(revenue.pendingGross)}
+          tone={pendingCount > 0 ? 'warn' : 'neutral'}
+          active={view === 'revenue'}
+          onClick={() => setView('revenue')}
+        />
+        <Kpi
+          label="Splits recorded"
+          value={splitCount}
+          hint="Distributed applications"
+          tone="teal"
+          active={view === 'members'}
+          onClick={() => setView('members')}
+        />
+      </section>
+
+      <nav className="pshare-tabs" role="tablist" aria-label="Profit analysis sections">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={view === tab.key}
+            className={`pshare-tab${view === tab.key ? ' is-on' : ''}`}
+            onClick={() => setView(tab.key)}
+          >
+            {tab.label}
+            {tab.count != null ? <b>{tab.count}</b> : null}
+          </button>
+        ))}
+      </nav>
+
+      {view === 'revenue' && (
+        <>
+          <p className="panal-lead">
+            Split of distributed P&amp;L into who keeps the revenue — members, you, and fund providers.
+            Pending amounts are allotted but not yet split.
+          </p>
+          <div className="panal-mini">
+            <div>
+              <span>Gross split (done)</span>
+              <strong>{formatCurrency(revenue.grossDistributed)}</strong>
+            </div>
+            <div className="panal-mini--warn">
+              <span>Pending to split</span>
+              <strong>{formatCurrency(revenue.pendingGross)}</strong>
+              <em>{pendingCount} application{pendingCount === 1 ? '' : 's'}</em>
+            </div>
+            <div>
+              <span>Splits recorded</span>
+              <strong>{splitCount}</strong>
+            </div>
+          </div>
+          <ShareMix
+            member={revenue.memberShare}
+            manager={revenue.managerShare}
+            provider={revenue.providerShare}
+          />
+          <div className="panal-legend">
+            <span><i className="panal-dot panal-dot--member" /> Member</span>
+            <span><i className="panal-dot panal-dot--manager" /> You</span>
+            <span><i className="panal-dot panal-dot--provider" /> Provider</span>
+          </div>
+
+          <div className="panal-two">
+            <section className="dash-card">
+              <header className="dash-card-head">
+                <h2>By IPO segment</h2>
+              </header>
+              {segments.length === 0 ? (
+                <EmptyState>No splits yet</EmptyState>
+              ) : (
+                <ul className="panal-list">
+                  {segments.map((row) => (
+                    <li key={row.ipoSegment}>
+                      <SliceCard title={row.label} row={row} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section className="dash-card">
+              <header className="dash-card-head">
+                <h2>By investor category</h2>
+              </header>
+              {categories.length === 0 ? (
+                <EmptyState>No splits yet</EmptyState>
+              ) : (
+                <ul className="panal-list">
+                  {categories.map((row) => (
+                    <li key={row.investorCategory}>
+                      <SliceCard title={row.label} row={row} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
+        </>
+      )}
+
+      {view === 'members' && (
+        members.length === 0 ? (
+          <EmptyState>No allotted IPO P&amp;L yet for this period.</EmptyState>
+        ) : (
+          <ul className="panal-list">
+            {members.map((row) => (
+              <li key={row.memberId}>
+                <PersonCard row={row} showGroup />
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+
+      {view === 'subgroups' && (
+        <>
+          <p className="panal-lead">
+            Each group lists members with their own profit share. Totals are the sum against that
+            leader’s group — profit stays with each member, not transferred to the leader.
+          </p>
+          {subGroups.length === 0 ? (
+            <EmptyState>No sub-groups with members yet.</EmptyState>
+          ) : (
+            subGroups.map((g) => (
+              <section key={g.groupId} className="dash-card panal-group">
+                <header className="dash-card-head">
+                  <h2>{g.groupName}</h2>
+                  <span className="panal-group-meta">
+                    {g.memberCount} member{g.memberCount === 1 ? '' : 's'} · Leader {g.leaderDisplayName || '—'}
+                  </span>
+                </header>
+                <ShareGrid
+                  gross={g.totals?.grossIpoPnL}
+                  member={g.totals?.memberShare}
+                  manager={g.totals?.managerShare}
+                  provider={g.totals?.providerShare}
+                />
+                <ShareMix
+                  member={g.totals?.memberShare}
+                  manager={g.totals?.managerShare}
+                  provider={g.totals?.providerShare}
+                />
+                <ul className="panal-list panal-list--nested">
+                  {(g.members || []).map((row) => (
+                    <li key={row.memberId}>
+                      <PersonCard row={row} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
+          {ungroupedMembers.length > 0 && (
+            <section className="dash-card panal-group">
+              <header className="dash-card-head">
+                <h2>Not in a sub-group</h2>
+                <span className="panal-group-meta">{ungroupedMembers.length} members</span>
+              </header>
+              <ul className="panal-list panal-list--nested">
+                {ungroupedMembers.map((row) => (
+                  <li key={row.memberId}>
+                    <PersonCard row={row} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+
+      {view === 'providers' && (
+        providers.length === 0 ? (
+          <EmptyState>No provider shares recorded yet.</EmptyState>
+        ) : (
+          <ul className="panal-list">
+            {providers.map((row) => (
+              <li key={row.fundProviderId}>
+                <article className="panal-slice">
+                  <div className="panal-slice-top">
+                    <strong>{row.providerName}</strong>
+                    <span>{row.distributionCount || 0} splits</span>
+                  </div>
+                  <div className="panal-shares">
+                    <div>
+                      <span>Total</span>
+                      <Amt value={row.totalShare} />
+                    </div>
+                    <div>
+                      <span>From profit</span>
+                      <Amt value={row.profitShare} />
+                    </div>
+                    <div>
+                      <span>From loss</span>
+                      <Amt value={row.lossShare} />
+                    </div>
+                  </div>
+                </article>
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+
+      {view === 'manager' && (
+        <section className="dash-card panal-you">
+          <header className="dash-card-head">
+            <h2>{manager.label || 'Your share'}</h2>
+          </header>
+          <div className="pshare-money pshare-money--nested">
+            <div className="pshare-money-cell pshare-money-cell--main">
+              <span>Total share</span>
+              <strong>{formatCurrency(manager.totalShare)}</strong>
+              <em>Net after profit and loss splits</em>
+            </div>
+            <div className="pshare-money-cell pshare-money-cell--up">
+              <span>From profit</span>
+              <strong>{formatCurrency(manager.profitShare)}</strong>
+              <em>Your cut on winning IPOs</em>
+            </div>
+            <div className="pshare-money-cell pshare-money-cell--warn">
+              <span>From loss</span>
+              <strong>{formatCurrency(manager.lossShare)}</strong>
+              <em>Your share of losses</em>
+            </div>
+          </div>
+        </section>
+      )}
 
       <Modal
         title={previewFileName || 'Profit analysis report'}
@@ -289,287 +681,6 @@ export default function ProfitAnalysisPage() {
           />
         ) : null}
       </Modal>
-
-      <ContentCard
-        title="Report overview"
-        extra={(
-          <Typography.Text type="secondary">
-            {iposAppliedLabel} · {iposProfitLabel} · {appsLabel} · {profitApps} apps profit
-          </Typography.Text>
-        )}
-        padded
-        style={{ marginBottom: 24 }}
-        className="profit-analysis-overview"
-      >
-        <Typography.Text type="secondary" className="profit-analysis-section-label">
-          IPOs
-        </Typography.Text>
-        <div className="profit-analysis-stat-grid">
-          <StatCard title="Applied" value={iposApplied} icon={<RiseOutlined />} variant="info" />
-          <StatCard title="Gave profit" value={iposProfit} icon={<RiseOutlined />} variant="success" />
-          <StatCard title="Active apps" value={applicationCount} icon={<TeamOutlined />} variant="default" />
-          <StatCard title="Apps profit" value={profitApps} icon={<RiseOutlined />} variant="success" />
-        </div>
-        <Typography.Text type="secondary" className="profit-analysis-section-label" style={{ marginTop: 16 }}>
-          Revenue split
-        </Typography.Text>
-        <div className="profit-analysis-stat-grid">
-          <StatCard
-            title="Gross P&L"
-            value={formatCurrency(overall.grossIpoPnL)}
-            icon={<PercentageOutlined />}
-            variant={Number(overall.grossIpoPnL) >= 0 ? 'success' : 'danger'}
-            valueClassName={pnlClassName(overall.grossIpoPnL)}
-          />
-          <StatCard
-            title="Member share"
-            value={formatCurrency(revenue.memberShare)}
-            icon={<TeamOutlined />}
-            variant="default"
-            valueClassName={pnlClassName(revenue.memberShare)}
-          />
-          <StatCard
-            title="Manager share"
-            value={formatCurrency(revenue.managerShare)}
-            icon={<UserOutlined />}
-            variant={Number(revenue.managerShare) >= 0 ? 'success' : 'danger'}
-            valueClassName={pnlClassName(revenue.managerShare)}
-          />
-          <StatCard
-            title="Provider share"
-            value={formatCurrency(revenue.providerShare)}
-            icon={<BankOutlined />}
-            variant="info"
-            valueClassName={pnlClassName(revenue.providerShare)}
-          />
-        </div>
-      </ContentCard>
-
-      <ContentCard
-        title="Analysis views"
-        extra={
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[
-              { label: 'Revenue', value: 'revenue' },
-              { label: 'Members', value: 'members' },
-              { label: 'Sub-groups', value: 'subgroups' },
-              { label: 'Providers', value: 'providers' },
-              { label: 'Manager', value: 'manager' },
-            ]}
-          />
-        }
-        style={{ marginBottom: 24 }}
-      >
-        {view === 'revenue' && (
-          <>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              Split of distributed P&L into who keeps the revenue — members, you (manager), and fund providers.
-              Pending amounts are allotted but not yet split.
-            </Typography.Paragraph>
-            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-              <Col xs={24} md={8}>
-                <div style={{ padding: 16, background: '#f8fafc', borderRadius: 8 }}>
-                  <div style={{ color: '#64748b', fontSize: 12 }}>Gross split (done)</div>
-                  <div style={{ fontSize: 22, fontWeight: 600 }}>{formatCurrency(revenue.grossDistributed)}</div>
-                </div>
-              </Col>
-              <Col xs={24} md={8}>
-                <div style={{ padding: 16, background: '#fff7ed', borderRadius: 8 }}>
-                  <div style={{ color: '#64748b', fontSize: 12 }}>Pending to split</div>
-                  <div style={{ fontSize: 22, fontWeight: 600 }}>{formatCurrency(revenue.pendingGross)}</div>
-                  <div style={{ fontSize: 12, color: '#94a3b8' }}>{overall.pendingCount || 0} application(s)</div>
-                </div>
-              </Col>
-              <Col xs={24} md={8}>
-                <div style={{ padding: 16, background: '#f0fdfa', borderRadius: 8 }}>
-                  <div style={{ color: '#64748b', fontSize: 12 }}>Splits recorded</div>
-                  <div style={{ fontSize: 22, fontWeight: 600 }}>{overall.distributionCount || 0}</div>
-                </div>
-              </Col>
-            </Row>
-            <Row gutter={[16, 16]}>
-              <Col xs={24} lg={12}>
-                <Typography.Title level={5} style={{ marginTop: 0 }}>
-                  <PercentageOutlined /> By IPO segment
-                </Typography.Title>
-                <Table
-                  rowKey="ipoSegment"
-                  columns={segmentCols}
-                  dataSource={data?.bySegment || []}
-                  pagination={false}
-                  locale={{ emptyText: 'No splits yet' }}
-                  {...tableDefaults}
-                />
-              </Col>
-              <Col xs={24} lg={12}>
-                <Typography.Title level={5} style={{ marginTop: 0 }}>
-                  By investor category
-                </Typography.Title>
-                <Table
-                  rowKey="investorCategory"
-                  columns={segmentCols}
-                  dataSource={data?.byCategory || []}
-                  pagination={false}
-                  locale={{ emptyText: 'No splits yet' }}
-                  {...tableDefaults}
-                />
-              </Col>
-            </Row>
-          </>
-        )}
-
-        {view === 'members' && (
-          <Table
-            rowKey="memberId"
-            columns={memberCols}
-            dataSource={data?.members || []}
-            scroll={{ x: 1100 }}
-            locale={{ emptyText: 'No allotted IPO P&L yet' }}
-            {...tableDefaults}
-          />
-        )}
-
-        {view === 'subgroups' && (
-          <>
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-              Each sub-group leader section lists members with their own profit share. The total row is the sum
-              against that leader’s group (profit stays attributed to each member, not transferred to the leader).
-            </Typography.Paragraph>
-            {(data?.subGroups || []).length === 0 ? (
-              <Typography.Text type="secondary">No sub-groups with members yet.</Typography.Text>
-            ) : (
-              (data?.subGroups || []).map((g) => (
-                <ContentCard
-                  key={g.groupId}
-                  title={
-                    <span>
-                      <ApartmentOutlined style={{ marginRight: 8 }} />
-                      {g.groupName}
-                      <Tag style={{ marginLeft: 8 }}>{g.memberCount} members</Tag>
-                    </span>
-                  }
-                  extra={
-                    <Typography.Text type="secondary">
-                      Leader: <strong>{g.leaderDisplayName || '—'}</strong>
-                    </Typography.Text>
-                  }
-                  style={{ marginBottom: 16 }}
-                >
-                  <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-                    <Col xs={12} sm={6}>
-                      <StatCard
-                        title="Group member profit"
-                        value={formatCurrency(g.totals.memberShare)}
-                        variant="default"
-                        valueClassName={pnlClassName(g.totals.memberShare)}
-                      />
-                    </Col>
-                    <Col xs={12} sm={6}>
-                      <StatCard
-                        title="Gross IPO P&L"
-                        value={formatCurrency(g.totals.grossIpoPnL)}
-                        variant={g.totals.grossIpoPnL >= 0 ? 'success' : 'danger'}
-                        valueClassName={pnlClassName(g.totals.grossIpoPnL)}
-                      />
-                    </Col>
-                    <Col xs={12} sm={6}>
-                      <StatCard
-                        title="Manager from group"
-                        value={formatCurrency(g.totals.managerShare)}
-                        variant="info"
-                        valueClassName={pnlClassName(g.totals.managerShare)}
-                      />
-                    </Col>
-                    <Col xs={12} sm={6}>
-                      <StatCard
-                        title="Provider from group"
-                        value={formatCurrency(g.totals.providerShare)}
-                        variant="info"
-                        valueClassName={pnlClassName(g.totals.providerShare)}
-                      />
-                    </Col>
-                  </Row>
-                  <Table
-                    rowKey="memberId"
-                    columns={subGroupMemberCols}
-                    dataSource={g.members}
-                    pagination={false}
-                    scroll={{ x: 900 }}
-                    {...tableDefaults}
-                    summary={() => (
-                      <Table.Summary fixed>
-                        <Table.Summary.Row style={{ fontWeight: 600, background: '#f0fdfa' }}>
-                          <Table.Summary.Cell index={0} colSpan={2}>
-                            Total vs leader ({g.leaderDisplayName || 'group'})
-                          </Table.Summary.Cell>
-                          <Table.Summary.Cell>{renderAmt(g.totals.grossIpoPnL)}</Table.Summary.Cell>
-                          <Table.Summary.Cell>{renderAmt(g.totals.memberShare)}</Table.Summary.Cell>
-                          <Table.Summary.Cell>{renderAmt(g.totals.managerShare)}</Table.Summary.Cell>
-                          <Table.Summary.Cell>{renderAmt(g.totals.providerShare)}</Table.Summary.Cell>
-                        </Table.Summary.Row>
-                      </Table.Summary>
-                    )}
-                  />
-                </ContentCard>
-              ))
-            )}
-            {(data?.ungroupedMembers || []).length > 0 && (
-              <ContentCard title="Members not in a sub-group" style={{ marginTop: 8 }}>
-                <Table
-                  rowKey="memberId"
-                  columns={memberCols.filter((c) => c.dataIndex !== 'memberGroupName')}
-                  dataSource={data.ungroupedMembers}
-                  scroll={{ x: 1000 }}
-                  pagination={false}
-                  {...tableDefaults}
-                />
-              </ContentCard>
-            )}
-          </>
-        )}
-
-        {view === 'providers' && (
-          <Table
-            rowKey="fundProviderId"
-            columns={providerCols}
-            dataSource={data?.providers || []}
-            locale={{ emptyText: 'No provider shares recorded yet' }}
-            {...tableDefaults}
-          />
-        )}
-
-        {view === 'manager' && (
-          <Row gutter={[16, 16]} style={{ maxWidth: 720 }}>
-            <Col span={24}>
-              <StatCard
-                title={`${manager.label || 'Manager'} — total share`}
-                value={formatCurrency(manager.totalShare)}
-                icon={<UserOutlined />}
-                variant={Number(manager.totalShare) >= 0 ? 'success' : 'danger'}
-                valueClassName={pnlClassName(manager.totalShare)}
-              />
-            </Col>
-            <Col xs={24} sm={12}>
-              <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 8 }}>
-                <div style={{ color: '#64748b', fontSize: 12 }}>From profit splits</div>
-                <div className="amount-positive" style={{ fontSize: 20, fontWeight: 600 }}>
-                  {formatCurrency(manager.profitShare)}
-                </div>
-              </div>
-            </Col>
-            <Col xs={24} sm={12}>
-              <div style={{ padding: 16, background: '#fef2f2', borderRadius: 8 }}>
-                <div style={{ color: '#64748b', fontSize: 12 }}>From loss splits</div>
-                <div className="amount-negative" style={{ fontSize: 20, fontWeight: 600 }}>
-                  {formatCurrency(manager.lossShare)}
-                </div>
-              </div>
-            </Col>
-          </Row>
-        )}
-      </ContentCard>
     </div>
   );
 }

@@ -134,6 +134,15 @@ export default function MembersPage() {
     (m) => m.status === 'ACTIVE' && !m.share_rule_id
   ).length;
   const ungroupedCount = uniqueMembers.filter((m) => !m.member_group_id).length;
+  const groupCounts = useMemo(() => {
+    const map = new Map();
+    for (const m of uniqueMembers) {
+      if (m.member_group_id == null) continue;
+      const id = Number(m.member_group_id);
+      map.set(id, (map.get(id) || 0) + 1);
+    }
+    return map;
+  }, [uniqueMembers]);
 
   const filteredMembers = useMemo(() => {
     let list = uniqueMembers;
@@ -323,34 +332,75 @@ export default function MembersPage() {
           </p>
         </div>
 
-        {memberGroups.length > 0 && (
-          <div className="mem-chips" role="tablist" aria-label="Filter by sub-group">
-            <button
-              type="button"
-              className={`mem-chip${groupFilter == null ? ' is-on' : ''}`}
-              onClick={() => setGroupFilter(null)}
-            >
-              All groups
-            </button>
-            {memberGroups.map((g) => (
+        <div className="mem-filters">
+          <div className="mem-filter-row">
+            <span className="mem-filter-label">Status</span>
+            <div className="mem-chips" role="tablist" aria-label="Filter by status">
               <button
-                key={g.id}
                 type="button"
-                className={`mem-chip${groupFilter === g.id ? ' is-on' : ''}`}
-                onClick={() => setGroupFilter(g.id)}
+                className={`mem-chip${statusFilter === 'ALL' && !needsShareOnly ? ' is-on' : ''}`}
+                onClick={() => setStatusKpi('ALL')}
               >
-                {g.name}
+                All ({uniqueMembers.length})
               </button>
-            ))}
-            <button
-              type="button"
-              className={`mem-chip${groupFilter === 'NONE' ? ' is-on' : ''}`}
-              onClick={() => setGroupFilter('NONE')}
-            >
-              No group ({ungroupedCount})
-            </button>
+              <button
+                type="button"
+                className={`mem-chip${statusFilter === 'ACTIVE' && !needsShareOnly ? ' is-on' : ''}`}
+                onClick={() => setStatusKpi('ACTIVE')}
+              >
+                Active ({activeCount})
+              </button>
+              <button
+                type="button"
+                className={`mem-chip mem-chip--off${statusFilter === 'INACTIVE' && !needsShareOnly ? ' is-on' : ''}`}
+                onClick={() => setStatusKpi('INACTIVE')}
+              >
+                Inactive ({inactiveCount})
+              </button>
+              <button
+                type="button"
+                className={`mem-chip mem-chip--warn${needsShareOnly ? ' is-on' : ''}`}
+                onClick={() => {
+                  setNeedsShareOnly(true);
+                  setStatusFilter('ALL');
+                }}
+              >
+                Need share ({needsShareCount})
+              </button>
+            </div>
           </div>
-        )}
+          {(memberGroups.length > 0 || ungroupedCount > 0) && (
+            <div className="mem-filter-row">
+              <span className="mem-filter-label">Group</span>
+              <div className="mem-chips" role="tablist" aria-label="Filter by sub-group">
+                <button
+                  type="button"
+                  className={`mem-chip${groupFilter == null ? ' is-on' : ''}`}
+                  onClick={() => setGroupFilter(null)}
+                >
+                  All groups
+                </button>
+                {memberGroups.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`mem-chip${groupFilter === g.id ? ' is-on' : ''}`}
+                    onClick={() => setGroupFilter(g.id)}
+                  >
+                    {g.name} ({groupCounts.get(Number(g.id)) || 0})
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={`mem-chip${groupFilter === 'NONE' ? ' is-on' : ''}`}
+                  onClick={() => setGroupFilter('NONE')}
+                >
+                  No group ({ungroupedCount})
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {loading && uniqueMembers.length === 0 ? (
           <ul className="mem-list" aria-hidden>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import { useRouter } from 'expo-router';
 import client, { setCachedAuthToken, clearCachedAuthToken, setClientUnauthorizedHandler } from '../api/client';
 import { storage } from '../api/storage';
@@ -111,10 +111,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
-  const setSessionUser = async (userData: User) => {
-    setUser(userData);
-    await storage.setItem('user', JSON.stringify(userData));
-  };
+  const setSessionUser = useCallback(async (userData: User) => {
+    const stored = await storage.getItem('user');
+    const prev = stored ? JSON.parse(stored) as User : null;
+    const next = { ...(prev || {}), ...userData } as User;
+    setUser(next);
+    await storage.setItem('user', JSON.stringify(next));
+  }, []);
 
   const refreshUser = async () => {
     const { data } = await client.get('/auth/me');

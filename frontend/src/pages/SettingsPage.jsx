@@ -57,17 +57,19 @@ export default function SettingsPage() {
       .then((res) => {
         if (cancelled) return;
         setAccount(res.data);
-        setSessionUser(res.data);
         teamForm.setFieldsValue({ tenantName: res.data.tenantName });
       })
-      .catch(() => {
-        if (!cancelled) setAccount(null);
+      .catch((err) => {
+        if (!cancelled) {
+          setAccount(null);
+          message.warning(getErrorMessage(err, 'Could not refresh account details'));
+        }
       })
       .finally(() => {
         if (!cancelled) setAccountLoading(false);
       });
     return () => { cancelled = true; };
-  }, [setSessionUser, teamForm]);
+  }, [teamForm]);
 
   const onTeamSave = async (values) => {
     setTeamLoading(true);

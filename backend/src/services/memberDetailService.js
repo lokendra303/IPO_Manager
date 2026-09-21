@@ -2,14 +2,22 @@ import { parsePositiveInt } from '../utils/validate.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { calculateMultiRuleSplit, resolveRulesForIpo } from './profitShareService.js';
 import { outstandingPrincipal, remainingPrincipal } from './pendingReturnUtils.js';
+import { getSubGroupPortalInfo } from './memberSubGroupInfo.js';
 
 export async function getMemberDetail(pool, tenantId, memberId) {
   const id = parsePositiveInt(memberId, 'member id');
 
   const [members] = await pool.query(
-    `SELECT m.*, mg.name AS member_group_name
+    `SELECT m.*,
+            mg.name AS member_group_name,
+            mg.owner_member_id AS group_owner_member_id,
+            COALESCE(o.display_name, mg.owner_external_name) AS group_leader_name,
+            COALESCE(o.pan, mg.owner_external_pan) AS group_leader_pan,
+            fp.name AS fund_provider_name
      FROM members m
      LEFT JOIN member_groups mg ON mg.id = m.member_group_id
+     LEFT JOIN members o ON o.id = mg.owner_member_id
+     LEFT JOIN fund_providers fp ON fp.id = m.fund_provider_id
      WHERE m.id = ? AND m.tenant_id = ?`,
     [id, tenantId]
   );
@@ -168,6 +176,8 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     0
   );
 
+  const group = await getSubGroupPortalInfo(pool, tenantId, id, member.member_group_id);
+
   return {
     member,
     profitShare,
@@ -188,6 +198,8 @@ export async function getMemberDetail(pool, tenantId, memberId) {
     },
     ipoApplications,
     ledgerEntries: ledger,
+    group,
+    isGroupLeader: Boolean(group?.isLeader),
   };
 }
 

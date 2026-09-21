@@ -1,5 +1,5 @@
 import { AppError } from '../../../middleware/errorHandler.js';
-import { normalizeLiveIpo } from '../normalize.js';
+import { normalizeLiveIpo, formatDateIst } from '../normalize.js';
 import { normalizeCompanyName } from '../identity.js';
 
 /**
@@ -92,11 +92,12 @@ export function parseNseTimes(value) {
   return String(Math.round(n * 100) / 100);
 }
 
-function nseStatus(row) {
+function nseStatus(row, now = new Date()) {
   const s = String(row.status || '').toLowerCase();
   if (s.includes('forthcoming') || s.includes('upcoming')) return 'Upcoming';
   if (s.includes('active') || s.includes('open')) return 'Open';
-  if (parseNseDate(row.listingDate || row.listing_date)) return 'Listed';
+  const listing = parseNseDate(row.listingDate || row.listing_date);
+  if (listing && listing <= formatDateIst(now)) return 'Listed';
   return 'Closed';
 }
 

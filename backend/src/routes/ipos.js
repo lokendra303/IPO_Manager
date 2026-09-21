@@ -18,6 +18,7 @@ import {
 import { dedupeIds } from '../utils/validate.js';
 
 import { parsePositiveInt, parseAmount } from '../utils/validate.js';
+import { toDate } from '../services/ipo/normalize.js';
 import { VALID_REGISTRARS } from '../utils/allotmentCheck.js';
 import { allotmentCheckGate } from '../services/ipo/allotmentReady.js';
 import {
@@ -28,15 +29,7 @@ import {
 } from '../constants/ipoCategories.js';
 
 function dateOnly(value) {
-  if (value == null || value === '') return null;
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return null;
-    return value.toISOString().slice(0, 10);
-  }
-  const s = String(value).trim();
-  if (!s || s.startsWith('0000-00-00')) return null;
-  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-  return m ? m[1] : null;
+  return toDate(value);
 }
 
 function serializeIpo(row) {
@@ -967,28 +960,20 @@ router.get('/:id/gmp/history', async (req, res, next) => {
       [ipoId, req.tenantId]
     );
     if (!rows.length) throw new AppError('IPO not found', 404);
-    const { getGmpHistory } = await import('../services/ipo/gmpService.js');
-    const { summarizeGmpHistory } = await import('../services/ipo/gmpCalc.js');
+    const { getGmpHistory, presentGmpHistory, toGmpCurrent } = await import('../services/ipo/gmpService.js');
     if (!rows[0].catalog_id) {
-      return res.json({ success: true, current: null, summary: summarizeGmpHistory([]), history: [] });
+      return res.json({ success: true, current: null, summary: presentGmpHistory([]).summary, history: [] });
     }
-    const history = await getGmpHistory(pool, rows[0].catalog_id);
+    const historyRows = await getGmpHistory(pool, rows[0].catalog_id);
     const [cat] = await pool.query(
-      'SELECT gmp, gmp_percentage, estimated_listing_price, gmp_updated_at FROM ipo_catalog WHERE id = ?',
+      'SELECT gmp, gmp_percentage, estimated_listing_price, gmp_updated_at, issue_price FROM ipo_catalog WHERE id = ?',
       [rows[0].catalog_id]
     );
+    const current = toGmpCurrent(cat[0]);
     res.json({
       success: true,
-      current: cat[0]
-        ? {
-            gmp: cat[0].gmp != null ? Number(cat[0].gmp) : null,
-            gmpPercentage: cat[0].gmp_percentage != null ? Number(cat[0].gmp_percentage) : null,
-            estimatedListingPrice: cat[0].estimated_listing_price != null ? Number(cat[0].estimated_listing_price) : null,
-            lastUpdated: cat[0].gmp_updated_at,
-          }
-        : null,
-      summary: summarizeGmpHistory(history),
-      history,
+      current,
+      ...presentGmpHistory(historyRows, current),
     });
   } catch (err) {
     next(err);
@@ -999,19 +984,27 @@ router.get('/:id/gmp', async (req, res, next) => {
   try {
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
     const [rows] = await pool.query(
-      `SELECT c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at
+      `SELECT c.gmp, c.gmp_percentage, c.estimated_listing_price, c.gmp_updated_at, c.issue_price
        FROM ipos i LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
        WHERE i.id = ? AND i.tenant_id = ?`,
       [ipoId, req.tenantId]
     );
     if (!rows.length) throw new AppError('IPO not found', 404);
+    const { toGmpCurrent } = await import('../services/ipo/gmpService.js');
     const row = rows[0];
+    const current = toGmpCurrent({
+      gmp: row.gmp,
+      gmp_percentage: row.gmp_percentage,
+      estimated_listing_price: row.estimated_listing_price,
+      gmp_updated_at: row.gmp_updated_at,
+      issue_price: row.issue_price,
+    });
     res.json({
       success: true,
-      gmp: row.gmp != null ? Number(row.gmp) : null,
-      gmpPercentage: row.gmp_percentage != null ? Number(row.gmp_percentage) : null,
-      estimatedListingPrice: row.estimated_listing_price != null ? Number(row.estimated_listing_price) : null,
-      lastUpdated: row.gmp_updated_at,
+      gmp: current?.gmp ?? null,
+      gmpPercentage: current?.gmpPercentage ?? null,
+      estimatedListingPrice: current?.estimatedListingPrice ?? null,
+      lastUpdated: current?.lastUpdated ?? null,
     });
   } catch (err) {
     next(err);

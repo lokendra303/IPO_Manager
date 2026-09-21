@@ -74,7 +74,11 @@ router.get('/:id/allotment-check', async (req, res, next) => {
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
     await assertIpoAllotmentCheckReady(pool, { tenantId: req.tenantId, ipoId });
     const [ipoRows] = await pool.query(
-      'SELECT id, name, status, registrar, listing_date FROM ipos WHERE id = ? AND tenant_id = ?',
+      `SELECT i.id, i.name, i.status, i.registrar, i.listing_date,
+              c.listing_date AS catalog_listing_date, c.status AS catalog_status
+       FROM ipos i
+       LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
+       WHERE i.id = ? AND i.tenant_id = ?`,
       [ipoId, req.tenantId]
     );
     if (!ipoRows.length) throw new AppError('IPO not found', 404);
@@ -95,8 +99,9 @@ router.get('/:id/allotment-check', async (req, res, next) => {
         name: ipo.name,
         status: ipo.status,
         registrar: ipo.registrar,
-        listing_date: ipo.listing_date || null,
-        listingDate: ipo.listing_date || null,
+        listing_date: ipo.listing_date || ipo.catalog_listing_date || null,
+        listingDate: ipo.listing_date || ipo.catalog_listing_date || null,
+        catalogStatus: ipo.catalog_status || null,
       },
       portals: getAllotmentPortalsMeta(ipo.registrar).portals,
       applications: applications.map((a) => ({

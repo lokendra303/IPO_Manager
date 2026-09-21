@@ -11,17 +11,14 @@ import {
   assertIpoApplicationsEditable,
 } from './profitShareService.js';
 import { creditWallet, ensureWallet } from './walletService.js';
+import { assertIpoListedForReceive, IPO_LISTED_EXISTS_SQL } from '../utils/ipoListing.js';
 
 function round2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
 }
 
 function assertAllottedIpoIsListed(app) {
-  if (app?.allotment_status === 'ALLOTED' && !app.listing_date) {
-    throw new AppError(
-      'This IPO is allotted but not listed yet. Wait for listing before receiving funds.'
-    );
-  }
+  assertIpoListedForReceive(app);
 }
 
 async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
@@ -164,8 +161,11 @@ export async function receiveIpoApplication(conn, {
   userId,
 }) {
   const [apps] = await conn.query(
-    `SELECT a.*, i.name as ipo_name, i.listing_date FROM ipo_applications a
+    `SELECT a.*, i.name as ipo_name, i.listing_date,
+            c.listing_date AS catalog_listing_date, c.status AS catalog_status
+     FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
+     LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
      WHERE a.id = ? AND a.tenant_id = ?`,
     [appId, tenantId]
   );
@@ -380,8 +380,11 @@ export async function receiveIpoApplicationsBulk(conn, {
   const placeholders = ids.map(() => '?').join(',');
 
   const [apps] = await conn.query(
-    `SELECT a.*, i.name as ipo_name, i.listing_date FROM ipo_applications a
+    `SELECT a.*, i.name as ipo_name, i.listing_date,
+            c.listing_date AS catalog_listing_date, c.status AS catalog_status
+     FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id
+     LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
      WHERE a.id IN (${placeholders}) AND a.tenant_id = ?`,
     [...ids, tenantId]
   );
@@ -501,7 +504,7 @@ export async function receiveIpoApplicationsByGroups(conn, {
        AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
        AND (
          a.allotment_status <> 'ALLOTED'
-         OR i.listing_date IS NOT NULL
+         OR ${IPO_LISTED_EXISTS_SQL}
        )
      ORDER BY g.sort_order, g.name, m.sort_order, m.id`,
     [ipoIdNum, tenantId, ...ids]

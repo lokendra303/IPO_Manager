@@ -1,5 +1,5 @@
 import { buildIdentityKey, normalizeCompanyName } from './identity.js';
-import { estimatedListingPrice } from './gmpCalc.js';
+import { estimatedListingPrice, gmpPercentage } from './gmpCalc.js';
 import { normalizeLiveStatus } from './normalize.js';
 
 const FILL_KEYS = [
@@ -23,9 +23,14 @@ export function mergeLiveIpoPair(base, extra) {
   if (extra.marketType === 'SME' || base.marketType === 'SME') out.marketType = 'SME';
   if (extra.gmp != null) {
     out.gmp = extra.gmp;
-    out.gmpPercentage = extra.gmpPercentage ?? out.gmpPercentage;
-    out.estimatedListingPrice = extra.estimatedListingPrice
-      ?? estimatedListingPrice(out.issuePrice, extra.gmp);
+    const extraPct = extra.gmpPercentage;
+    out.gmpPercentage = extraPct != null && extraPct !== 0
+      ? extraPct
+      : gmpPercentage(extra.gmp, out.issuePrice) ?? extraPct ?? out.gmpPercentage;
+    const extraEst = extra.estimatedListingPrice;
+    out.estimatedListingPrice = extraEst != null && extraEst > 0
+      ? extraEst
+      : estimatedListingPrice(out.issuePrice, extra.gmp);
     out.gmpUpdatedAt = extra.gmpUpdatedAt || out.gmpUpdatedAt;
   }
   if (extra.issueSize && /cr/i.test(String(extra.issueSize)) && out.issueSize && /shares/i.test(String(out.issueSize))) {

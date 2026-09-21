@@ -135,7 +135,7 @@ export default function LiveIpoDetailPage() {
             <Descriptions column={1} size="small">
               <Descriptions.Item label="Current GMP">{formatGmp(ipo.gmp)}</Descriptions.Item>
               <Descriptions.Item label="GMP %">{ipo.gmpPercentage != null ? `${ipo.gmpPercentage}%` : '—'}</Descriptions.Item>
-              <Descriptions.Item label="Est. listing">{ipo.estimatedListingPrice != null ? formatCurrency(ipo.estimatedListingPrice) : '—'}</Descriptions.Item>
+              <Descriptions.Item label="Est. listing">{ipo.estimatedListingPrice > 0 ? formatCurrency(ipo.estimatedListingPrice) : '—'}</Descriptions.Item>
               <Descriptions.Item label="Last updated">{relativeTime(ipo.gmpLastUpdated)}</Descriptions.Item>
               {gmp?.summary && (
                 <>

@@ -1,7 +1,8 @@
 export default function GmpSparkline({ points = [], height = 72 }) {
   const values = (points || [])
-    .map((p) => ({ t: p.recordedAt, v: Number(p.gmp) }))
-    .filter((p) => Number.isFinite(p.v));
+    .map((p) => ({ t: new Date(p.recordedAt).getTime(), v: Number(p.gmp) }))
+    .filter((p) => Number.isFinite(p.v) && Number.isFinite(p.t))
+    .sort((a, b) => a.t - b.t);
   if (values.length < 2) {
     return (
       <div style={{ height, display: 'flex', alignItems: 'center', color: '#94a3b8', fontSize: 13 }}>
@@ -12,10 +13,13 @@ export default function GmpSparkline({ points = [], height = 72 }) {
   const min = Math.min(...values.map((p) => p.v));
   const max = Math.max(...values.map((p) => p.v));
   const span = max - min || 1;
+  const tMin = values[0].t;
+  const tMax = values[values.length - 1].t;
+  const tSpan = tMax - tMin || 1;
   const w = 320;
   const pad = 8;
-  const coords = values.map((p, i) => {
-    const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+  const coords = values.map((p) => {
+    const x = pad + ((p.t - tMin) / tSpan) * (w - pad * 2);
     const y = pad + (1 - (p.v - min) / span) * (height - pad * 2);
     return `${x},${y}`;
   });

@@ -269,7 +269,7 @@ export default function LiveIposPage() {
                       <span>Sub</span>
                       <b>{sub ? `${sub}x` : '—'}</b>
                     </div>
-                    {r.estimatedListingPrice != null && (
+                    {r.estimatedListingPrice > 0 && (
                       <div>
                         <span>Est. listing</span>
                         <b>{formatCurrency(r.estimatedListingPrice)}</b>

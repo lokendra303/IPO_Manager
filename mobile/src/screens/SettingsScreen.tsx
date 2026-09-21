@@ -54,25 +54,25 @@ export default function SettingsScreen() {
 
   useEffect(() => {
     if (user?.tenantName) setTeamName(user.tenantName);
-    if (user?.email) setEmail(user.email);
   }, [user]);
 
   useEffect(() => {
     let cancelled = false;
     client
       .get('/settings/account')
-      .then(async (res) => {
+      .then((res) => {
         if (cancelled) return;
         setAccount(res.data);
-        await setSessionUser(res.data);
         if (res.data.tenantName) setTeamName(res.data.tenantName);
-        if (res.data.email) setEmail(res.data.email);
       })
-      .catch(() => {
-        if (!cancelled) setAccount(null);
+      .catch((err) => {
+        if (!cancelled) {
+          setAccount(null);
+          Alert.alert('Account', getErrorMessage(err, 'Could not refresh account details'));
+        }
       });
     return () => { cancelled = true; };
-  }, [setSessionUser]);
+  }, []);
 
   const onTeamSave = async () => {
     setTeamLoading(true);

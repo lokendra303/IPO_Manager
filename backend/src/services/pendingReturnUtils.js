@@ -1,3 +1,7 @@
+import { ipoIsListed, IPO_LISTED_EXISTS_SQL } from '../utils/ipoListing.js';
+
+export { ipoIsListed };
+
 /**
  * Principal still held on an application after any fund adjust out.
  */
@@ -13,10 +17,6 @@ export function remainingPrincipal(row) {
 export function outstandingPrincipal(row) {
   if (row?.trns_received === 'Received') return 0;
   return remainingPrincipal(row);
-}
-
-export function ipoIsListed(ipoOrRow) {
-  return Boolean(ipoOrRow?.listing_date || ipoOrRow?.listingDate || ipoOrRow?.ipo_listing_date);
 }
 
 /**
@@ -40,9 +40,7 @@ export const PENDING_RETURN_PRINCIPAL_SQL = `
   CASE
     WHEN a.trns_received = 'Received' THEN 0
     WHEN a.allotment_status = 'PENDING' THEN 0
-    WHEN a.allotment_status = 'ALLOTED' AND NOT EXISTS (
-      SELECT 1 FROM ipos ix WHERE ix.id = a.ipo_id AND ix.listing_date IS NOT NULL
-    ) THEN 0
+    WHEN a.allotment_status = 'ALLOTED' AND NOT ${IPO_LISTED_EXISTS_SQL} THEN 0
     ELSE GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
   END
 `;
@@ -76,6 +74,6 @@ export const APPLICATION_RETURN_DUE_SQL = `
   AND a.allotment_status <> 'PENDING'
   AND (
     a.allotment_status <> 'ALLOTED'
-    OR EXISTS (SELECT 1 FROM ipos ix WHERE ix.id = a.ipo_id AND ix.listing_date IS NOT NULL)
+    OR ${IPO_LISTED_EXISTS_SQL}
   )
 `;

@@ -47,7 +47,7 @@ async function releaseStaleChecking(conn, ipoId, tenantId) {
 export async function getAllotmentQueue(conn, { tenantId, ipoId }) {
   const [ipoRows] = await conn.query(
     `SELECT i.id, i.name, i.status, i.registrar, i.catalog_id, i.listing_date,
-            c.registrar_code, c.registrar_name
+            c.registrar_code, c.registrar_name, c.listing_date AS catalog_listing_date, c.status AS catalog_status
      FROM ipos i
      LEFT JOIN ipo_catalog c ON c.id = i.catalog_id
      WHERE i.id = ? AND i.tenant_id = ?`,
@@ -110,8 +110,9 @@ export async function getAllotmentQueue(conn, { tenantId, ipoId }) {
       status: ipo.status,
       registrar,
       registrarName: ipo.registrar_name || registrar,
-      listing_date: ipo.listing_date || null,
-      listingDate: ipo.listing_date || null,
+      listing_date: ipo.listing_date || ipo.catalog_listing_date || null,
+      listingDate: ipo.listing_date || ipo.catalog_listing_date || null,
+      catalogStatus: ipo.catalog_status || null,
     },
     counts,
     portals: getAllotmentPortalsMeta(registrar).portals,

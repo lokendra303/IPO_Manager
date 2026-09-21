@@ -1,6 +1,14 @@
 import { toSqlDateTime } from '../../utils/validate.js';
-import { estimatedListingPrice, gmpPercentage, isDuplicateGmpSample, parseGmpValue } from './gmpCalc.js';
-import { gmpChangedSignificantly } from './gmpCalc.js';
+import {
+  attachCurrentGmp,
+  collapseGmpHistoryByDay,
+  estimatedListingPrice,
+  gmpChangedSignificantly,
+  gmpPercentage,
+  isDuplicateGmpSample,
+  parseGmpValue,
+  summarizeGmpHistory,
+} from './gmpCalc.js';
 import { recordNotification } from './notificationService.js';
 
 function parseMaybeDate(value) {
@@ -15,8 +23,11 @@ export async function recordGmpSample(conn, catalogRow, { gmp, gmpPercentage: pc
   if (prem == null) return { saved: false, reason: 'no_gmp' };
 
   const issuePrice = catalogRow.issue_price != null ? Number(catalogRow.issue_price) : null;
-  const percentage = pct != null ? Number(pct) : gmpPercentage(prem, issuePrice);
-  const estimated = est != null ? Number(est) : estimatedListingPrice(issuePrice, prem);
+  const percentage = pct != null && Number(pct) !== 0 ? Number(pct) : gmpPercentage(prem, issuePrice);
+  const providedEst = est != null ? Number(est) : null;
+  const estimated = providedEst != null && providedEst > 0
+    ? providedEst
+    : estimatedListingPrice(issuePrice, prem);
 
   const [prevRows] = await conn.query(
     `SELECT gmp, recorded_at FROM ipo_gmp_history
@@ -62,6 +73,37 @@ export async function getGmpHistory(pool, catalogId) {
     source: r.source,
     recordedAt: r.recorded_at,
   }));
+}
+
+export function presentGmpHistory(rows, current = null) {
+  const daily = collapseGmpHistoryByDay(rows);
+  const history = attachCurrentGmp(daily, current);
+  return {
+    history,
+    summary: summarizeGmpHistory(history),
+  };
+}
+
+function positivePrice(value) {
+  const n = value != null ? Number(value) : null;
+  return n != null && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function toGmpCurrent(row) {
+  if (!row) return null;
+  const gmp = parseGmpValue(row.gmp);
+  const issuePrice = parseGmpValue(row.issuePrice ?? row.issue_price);
+  let pct = row.gmpPercentage ?? row.gmp_percentage;
+  pct = pct != null && pct !== '' ? Number(pct) : null;
+  if ((pct == null || pct === 0) && gmp) pct = gmpPercentage(gmp, issuePrice);
+  const est = positivePrice(row.estimatedListingPrice ?? row.estimated_listing_price)
+    ?? estimatedListingPrice(issuePrice, gmp);
+  return {
+    gmp,
+    gmpPercentage: pct,
+    estimatedListingPrice: est,
+    lastUpdated: row.lastUpdated ?? row.gmpLastUpdated ?? row.gmp_updated_at ?? null,
+  };
 }
 
 export { parseMaybeDate };

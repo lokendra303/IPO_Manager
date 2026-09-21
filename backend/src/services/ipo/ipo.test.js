@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildExternalId, buildIdentityKey, normalizeCompanyName } from './identity.js';
-import { estimatedListingPrice, gmpPercentage, isDuplicateGmpSample, summarizeGmpHistory, gmpChangedSignificantly } from './gmpCalc.js';
+import { estimatedListingPrice, gmpPercentage, isDuplicateGmpSample, summarizeGmpHistory, gmpChangedSignificantly, collapseGmpHistoryByDay, attachCurrentGmp, istDateKey } from './gmpCalc.js';
 import { normalizeRegistrarCode } from './registrarNormalize.js';
 import { normalizeLiveIpo, normalizeLiveStatus, normalizeMarketType, canAddCatalogToMyIpos, parseIstDateTime } from './normalize.js';
 import { createMockIpoProvider } from './providers/mockIpoProvider.js';
@@ -11,6 +11,7 @@ import { mergeLiveIpoLists, mergeLiveIpoPair } from './mergeLiveIpos.js';
 import { resolveActiveProviderName } from './providers/index.js';
 import { maskPan, sanitizeForLog } from '../../utils/pan.js';
 import { allotmentCheckGate } from './allotmentReady.js';
+import { ipoIsListed } from '../../utils/ipoListing.js';
 
 describe('identity / duplicate protection', () => {
   it('does not rely on IPO name alone', () => {
@@ -49,6 +50,43 @@ describe('GMP calculation', () => {
     const previous = { gmp: 50, recorded_at: new Date() };
     assert.equal(isDuplicateGmpSample(previous, 50, new Date(), 15 * 60 * 1000), true);
     assert.equal(isDuplicateGmpSample(previous, 55, new Date(), 15 * 60 * 1000), false);
+  });
+
+  it('skips the same GMP later the same IST day', () => {
+    const previous = { gmp: 50, recorded_at: new Date('2026-09-09T09:00:00+05:30') };
+    const later = new Date('2026-09-09T18:30:00+05:30');
+    assert.equal(isDuplicateGmpSample(previous, 50, later, 15 * 60 * 1000), true);
+    const nextDay = new Date('2026-09-10T09:00:00+05:30');
+    assert.equal(isDuplicateGmpSample(previous, 50, nextDay, 15 * 60 * 1000), false);
+  });
+
+  it('collapses history to the last sample per IST day', () => {
+    const rows = [
+      { id: 1, gmp: 40, recordedAt: new Date('2026-09-08T10:00:00+05:30') },
+      { id: 2, gmp: 42, recordedAt: new Date('2026-09-08T16:00:00+05:30') },
+      { id: 3, gmp: 50, recordedAt: new Date('2026-09-09T09:00:00+05:30') },
+      { id: 4, gmp: 50, recordedAt: new Date('2026-09-09T18:00:00+05:30') },
+    ];
+    const daily = collapseGmpHistoryByDay(rows);
+    assert.equal(daily.length, 2);
+    assert.equal(daily[0].id, 2);
+    assert.equal(daily[0].gmp, 42);
+    assert.equal(daily[1].id, 4);
+    assert.equal(istDateKey(daily[1].recordedAt), '2026-09-09');
+    const mixedTime = collapseGmpHistoryByDay([
+      { id: 10, gmp: 50, recordedAt: new Date('2026-09-09T18:30:00+05:30') },
+      { id: 11, gmp: 62, recordedAt: new Date('2026-09-09T18:01:00+05:30') },
+    ]);
+    assert.equal(mixedTime[0].gmp, 62);
+  });
+
+  it('attaches current GMP only when it differs from the last daily point', () => {
+    const history = [{ id: 1, gmp: 50, recordedAt: new Date('2026-09-08T18:00:00+05:30') }];
+    const same = attachCurrentGmp(history, { gmp: 50, lastUpdated: new Date('2026-09-09T18:00:00+05:30') });
+    assert.equal(same.length, 1);
+    const moved = attachCurrentGmp(history, { gmp: 62, lastUpdated: new Date('2026-09-09T18:00:00+05:30') });
+    assert.equal(moved.length, 2);
+    assert.equal(moved[1].gmp, 62);
   });
 
   it('summarizes history', () => {
@@ -125,6 +163,18 @@ describe('provider normalization', () => {
     assert.equal(row.subscriptionTotal, '1.99');
   });
 
+  it('ignores a zero estimated listing price and uses issue + GMP', () => {
+    const row = normalizeLiveIpo({
+      name: 'Test Co IPO',
+      issue_price: 82,
+      gmp: 60,
+      estimated_listing_price: 0,
+      status: 'open',
+    }, 'downstox');
+    assert.equal(row.gmp, 60);
+    assert.equal(row.estimatedListingPrice, 142);
+  });
+
   it('maps market type and status', () => {
     assert.equal(normalizeMarketType('regular'), 'MAINBOARD');
     assert.equal(normalizeMarketType('sme'), 'SME');
@@ -159,6 +209,27 @@ describe('provider normalization', () => {
       closeDate: '2026-08-25',
       now: new Date('2026-08-31T18:00:00+05:30'),
     }), 'LISTED');
+  });
+});
+
+describe('IPO listed for withdrawal', () => {
+  const now = new Date('2026-09-21T12:00:00+05:30');
+
+  it('treats a past catalog listing date as listed even if the tenant IPO has no date', () => {
+    assert.equal(ipoIsListed({ listing_date: null, catalog_listing_date: '2026-09-03' }, now), true);
+  });
+
+  it('waits when the listing date is still in the future', () => {
+    assert.equal(ipoIsListed({ listing_date: '2026-09-25', catalog_listing_date: '2026-09-25' }, now), false);
+  });
+
+  it('allows tenant mark-listed today', () => {
+    assert.equal(ipoIsListed({ listing_date: '2026-09-21' }, now), true);
+  });
+
+  it('falls back to catalog LISTED status when no date is stored', () => {
+    assert.equal(ipoIsListed({ catalog_status: 'LISTED' }, now), true);
+    assert.equal(ipoIsListed({ catalog_status: 'CLOSED' }, now), false);
   });
 });
 
@@ -340,6 +411,33 @@ describe('composite live IPO merge', () => {
     assert.equal(list[0].sourceProvider, 'composite');
     assert.equal(list[0].gmp, 60);
     assert.equal(list[0].symbol, 'LUMINO');
+  });
+
+  it('computes listing price when Downstox sends estListing 0', () => {
+    const nse = mapNseListRow({
+      companyName: 'Lumino Industries Limited',
+      symbol: 'LUMINO',
+      series: 'EQ',
+      issueStartDate: '27-Aug-2026',
+      issueEndDate: '31-Aug-2026',
+      listingDate: '03-Sep-2026',
+      issuePrice: 'Rs.78 - 82',
+    });
+    const downstox = mapDownstoxRow({
+      company: 'Lumino Industries',
+      slug: 'lumino-industries',
+      gmp: 60,
+      priceBand: null,
+      estListing: 0,
+      gainPct: 0,
+      date: '27-31 August',
+      type: 'Open',
+      status: '9 Sept, 18:01',
+    }, new Date('2026-09-09T18:30:00+05:30'));
+    const merged = mergeLiveIpoPair(nse, downstox);
+    assert.equal(merged.gmp, 60);
+    assert.equal(merged.issuePrice, 82);
+    assert.equal(merged.estimatedListingPrice, 142);
   });
 });
 
