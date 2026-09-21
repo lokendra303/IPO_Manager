@@ -8,6 +8,10 @@ import { getErrorMessage } from '../utils/errors';
 import { fetchRegistrarOptions, type RegistrarOption } from '../utils/allotmentCheck';
 import Tag from './Tag';
 import { ui } from '../styles/ui';
+import EmailPdfModal from './EmailPdfModal';
+import { allotmentCheckPdfBase64, summarizeAllotmentRows } from '../utils/allotmentCheckPdf';
+import { ipoIsListed } from '../utils/ipoProfit';
+import { useAuth } from '../context/AuthContext';
 
 type Props = {
   ipoId: number;
@@ -17,12 +21,14 @@ type Props = {
 };
 
 export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked }: Props) {
+  const { user } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [savingRegistrar, setSavingRegistrar] = useState(false);
   const [registrarOptions, setRegistrarOptions] = useState<RegistrarOption[]>([]);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   const load = () => {
     if (!visible || !ipoId) {
@@ -85,8 +91,11 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
   };
 
   const members = data?.applications || data?.members || [];
+  const waitingForListing = !ipoIsListed(data?.ipo);
+  const emailSummary = summarizeAllotmentRows(members, waitingForListing).summary;
 
   return (
+    <>
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={ui.modal}>
         <View style={ui.modalHeader}>
@@ -103,8 +112,16 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
           <Button mode="contained" loading={checking} onPress={() => runCheck(false)} style={{ marginBottom: 8 }}>
             Check pending
           </Button>
-          <Button mode="outlined" loading={checking} onPress={() => runCheck(true)} style={{ marginBottom: 16 }}>
+          <Button mode="outlined" loading={checking} onPress={() => runCheck(true)} style={{ marginBottom: 8 }}>
             Recheck all
+          </Button>
+          <Button
+            mode="outlined"
+            disabled={!members.length || checking}
+            onPress={() => setEmailOpen(true)}
+            style={{ marginBottom: 16 }}
+          >
+            Email PDF
           </Button>
 
           {summary ? (
@@ -144,6 +161,21 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
         </ScrollView>
       </SafeAreaView>
     </Modal>
+      <EmailPdfModal
+        visible={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Email allotment PDF"
+        alertTitle={data?.ipo?.name ? `${data.ipo.name} allotment list` : 'Allotment list'}
+        alertDescription={emailSummary}
+        endpoint={`/ipos/${ipoId}/allotment/email-pdf`}
+        canSend={members.length > 0}
+        disabledReason="No members to include"
+        buildAttachment={() => allotmentCheckPdfBase64(
+          { ipoName: data?.ipo?.name, applications: members, waitingForListing },
+          { teamName: user?.tenantName || 'IPO Team' },
+        )}
+      />
+    </>
   );
 }
 

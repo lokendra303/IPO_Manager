@@ -3,6 +3,14 @@ export function formatPan(pan: string | null | undefined): string {
   return String(pan).toUpperCase().trim();
 }
 
+/** Display form: XXXXX1234F. Never put full PAN in URLs. */
+export function maskPan(pan: string | null | undefined): string {
+  if (pan == null || pan === '') return '';
+  const p = String(pan).toUpperCase().trim();
+  if (p.length < 10) return 'XXXXX****';
+  return `XXXXX${p.slice(5)}`;
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—';
   return new Date(value).toLocaleString('en-IN');

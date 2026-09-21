@@ -1,6 +1,7 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import dayjs from 'dayjs';
+import { htmlToPdfBase64 } from './emailPdf';
 
 const APP_NAME = 'IPO Team Manager';
 const DEVELOPER_NAME = 'Lokendra';
@@ -327,4 +328,15 @@ export async function previewProfitAnalysisPdf(
   // Opens system print/preview UI — best PDF preview on device without a PDF viewer package
   await Print.printAsync({ html });
   return true;
+}
+
+export async function profitAnalysisPdfBase64(
+  analysis: ProfitAnalysisPayload,
+  meta: { teamName?: string; generatedAt?: string } = {}
+) {
+  const html = buildProfitAnalysisHtml(analysis, meta);
+  const pdfBase64 = await htmlToPdfBase64(html);
+  const safeTeam = String(meta.teamName || 'IPO-Team').replace(/[^\w\-]+/g, '_');
+  const fileName = `profit-analysis-${safeTeam}-${dayjs().format('YYYY-MM-DD')}.pdf`;
+  return { pdfBase64, fileName };
 }

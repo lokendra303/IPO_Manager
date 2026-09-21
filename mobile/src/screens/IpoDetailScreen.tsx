@@ -13,6 +13,7 @@ import FilterChips from '../components/FilterChips';
 import Loading from '../components/Loading';
 import Tag from '../components/Tag';
 import AllotmentCheckModal from '../components/AllotmentCheckModal';
+import EmailPdfModal from '../components/EmailPdfModal';
 import Banner from '../components/Banner';
 import InfoCard from '../components/InfoCard';
 import { ui } from '../styles/ui';
@@ -26,6 +27,8 @@ import {
 } from '../utils/ipoCategories';
 import { formatCurrency, formatPan, pnlColor } from '../utils/format';
 import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, remarksOrMemberSendNote } from '../utils/ipoProfit';
+import { allotmentCheckPdfBase64, summarizeAllotmentRows } from '../utils/allotmentCheckPdf';
+import { useAuth } from '../context/AuthContext';
 import { getErrorMessage, getUndoSettleBlockedModal } from '../utils/errors';
 import { colors } from '../theme';
 
@@ -64,6 +67,7 @@ function remainingAppPrincipal(app: any) {
 export default function IpoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
 
   const [ipo, setIpo] = useState<any>(null);
   const [applications, setApplications] = useState<any[]>([]);
@@ -80,6 +84,7 @@ export default function IpoDetailScreen() {
   const [profitPreview, setProfitPreview] = useState<any[]>([]);
   const [profitLoading, setProfitLoading] = useState(false);
   const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [hniModalOpen, setHniModalOpen] = useState(false);
   const [hniSaving, setHniSaving] = useState(false);
   const [enableHni, setEnableHni] = useState(false);
@@ -217,6 +222,13 @@ export default function IpoDetailScreen() {
   const notAppliedCount = applications.filter(isNotApplied).length;
   const allottedCount = applications.filter(isAllotted).length;
   const notAllottedCount = applications.filter(isNotAllotted).length;
+  const emailApplications = applications.map((app) => ({
+    ...app,
+    allotment_status: getAllotmentStatus(app),
+    allotted_lots: editedRows[app.id]?.allottedLots ?? app.allotted_lots,
+    amount: editedRows[app.id]?.amount ?? app.amount,
+  }));
+  const emailSummary = summarizeAllotmentRows(emailApplications, !ipoListed).summary;
   const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app));
 
   const filteredApplications = applications.filter((app) => {
@@ -1294,6 +1306,7 @@ export default function IpoDetailScreen() {
             const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
             if (unsavedRowCount) buttons.push({ text: 'Undo changes', onPress: onUndoChanges });
             if (applications.length > 0) {
+              buttons.push({ text: 'Email PDF', onPress: () => setEmailOpen(true) });
               if (ipo?.allotmentCheckReady === false) {
                 buttons.push({
                   text: 'Check allotment (not open yet)',
@@ -1441,6 +1454,13 @@ export default function IpoDetailScreen() {
 
       <ContentCard
         title={`Apps (${filteredApplications.length}${returnFilter !== 'all' ? `/${applications.length}` : ''})`}
+        extra={
+          applications.length > 0 ? (
+            <Button mode="text" compact onPress={() => setEmailOpen(true)}>
+              Email PDF
+            </Button>
+          ) : null
+        }
       >
         {applications.length > 0 && (
           <View style={{ marginBottom: 12 }}>
@@ -1966,6 +1986,21 @@ export default function IpoDetailScreen() {
         visible={allotmentCheckOpen}
         onClose={() => setAllotmentCheckOpen(false)}
         onChecked={() => load()}
+      />
+
+      <EmailPdfModal
+        visible={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Email allotment PDF"
+        alertTitle={ipo?.name ? `${ipo.name} allotment list` : 'Allotment list'}
+        alertDescription={emailSummary}
+        endpoint={`/ipos/${id}/allotment/email-pdf`}
+        canSend={emailApplications.length > 0}
+        disabledReason="No members to include"
+        buildAttachment={() => allotmentCheckPdfBase64(
+          { ipoName: ipo?.name, applications: emailApplications, waitingForListing: !ipoListed },
+          { teamName: user?.tenantName || 'IPO Team' },
+        )}
       />
     </Screen>
   );

@@ -10,7 +10,8 @@ import { colors, radii, spacing, typography } from '../theme';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
 import { useAuth } from '../context/AuthContext';
-import { previewProfitAnalysisPdf, shareProfitAnalysisPdf } from '../utils/profitAnalysisPdf';
+import { previewProfitAnalysisPdf, profitAnalysisPdfBase64, shareProfitAnalysisPdf } from '../utils/profitAnalysisPdf';
+import EmailPdfModal from '../components/EmailPdfModal';
 
 type Tab = 'revenue' | 'members' | 'subgroups' | 'providers' | 'manager';
 
@@ -132,6 +133,7 @@ export default function ProfitAnalysisScreen() {
   const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('revenue');
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
   const [year, setYear] = useState('');
   const [months, setMonths] = useState<number[]>([]);
   const yearOptions = useMemo(() => buildYearOptions(), []);
@@ -266,6 +268,15 @@ export default function ProfitAnalysisScreen() {
           Download
         </Button>
       </View>
+      <Button
+        mode="outlined"
+        icon="email-outline"
+        disabled={pdfLoading || !data}
+        onPress={() => setEmailOpen(true)}
+        style={{ marginBottom: 12 }}
+      >
+        Email PDF
+      </Button>
 
       <View style={ui.card}>
         <Text style={styles.cardTitle}>Period</Text>
@@ -504,6 +515,26 @@ export default function ProfitAnalysisScreen() {
           </View>
         </View>
       )}
+      <EmailPdfModal
+        visible={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        title="Email profit analysis"
+        alertTitle="Profit analysis report"
+        alertDescription={`${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`}
+        endpoint="/profit-shares/analysis/email-pdf"
+        canSend={Boolean(data)}
+        disabledReason="Report is not loaded yet"
+        buildAttachment={async () => {
+          const built = await profitAnalysisPdfBase64(data, pdfMeta());
+          const summary = `${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`;
+          return {
+            pdfBase64: built.pdfBase64,
+            fileName: built.fileName,
+            summary,
+            period: periodLabel,
+          };
+        }}
+      />
     </Screen>
   );
 }
