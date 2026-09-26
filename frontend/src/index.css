@@ -4131,9 +4131,9 @@ body {
   color: #047857;
 }
 
-.allotment-badge--given {
-  background: #dbeafe;
-  color: #1d4ed8;
+.allotment-badge--mandate {
+  background: #fce7f3;
+  color: #9d174d;
 }
 
 .allotment-row--waiting > td {

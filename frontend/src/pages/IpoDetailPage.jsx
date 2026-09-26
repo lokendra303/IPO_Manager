@@ -37,6 +37,7 @@ import {
   sharePackLabel,
   shareRuleMemberIds,
 } from '../utils/shareRules';
+import { isThirdPartyMandate, isMandateAllotted } from '../utils/fundingMode';
 
 function toDateParam(v) {
   if (!v) return null;
@@ -133,6 +134,7 @@ export default function IpoDetailPage() {
   const [step, setStep] = useState(0);
   const [selectedIds, setSelectedIds] = useState([]);
   const [markGiven, setMarkGiven] = useState(true);
+  const [thirdPartyMandate, setThirdPartyMandate] = useState(false);
   const [editedRows, setEditedRows] = useState({});
   const [statusLoading, setStatusLoading] = useState(false);
   const [profitModalOpen, setProfitModalOpen] = useState(false);
@@ -259,12 +261,22 @@ export default function IpoDetailPage() {
   const isNotAllotted = (app) => getAllotmentStatus(app) === 'NOT_ALLOTED';
   const ipoListed = ipoIsListed(ipo);
   const isWaitingListing = (app) => isAllotted(app) && !ipoListed;
-  const canReceiveApp = (app) => app && !isFundReturned(app) && !isWaitingListing(app);
+  const canReceiveApp = (app) => {
+    if (!app || isFundReturned(app) || isWaitingListing(app)) return false;
+    if (isThirdPartyMandate(app) && !isMandateAllotted(getAllotmentStatus(app))) return false;
+    return true;
+  };
   const returnedCount = applications.filter(isFundReturned).length;
-  const pendingReturnCount = applications.length - returnedCount;
+  const isCollectDue = (app) => {
+    if (isFundReturned(app)) return false;
+    if (isThirdPartyMandate(app)) return isMandateAllotted(getAllotmentStatus(app));
+    return true;
+  };
+  const pendingReturnCount = applications.filter(isCollectDue).length;
   const notAppliedCount = applications.filter(isNotApplied).length;
   const allottedCount = applications.filter(isAllotted).length;
   const notAllottedCount = applications.filter(isNotAllotted).length;
+  const thirdPartyMandateCount = applications.filter(isThirdPartyMandate).length;
   const emailApplications = applications.map((app) => ({
     ...app,
     allotment_status: getAllotmentStatus(app),
@@ -275,14 +287,15 @@ export default function IpoDetailPage() {
     const rank = { ALLOTED: 0, PENDING: 1, NOT_ALLOTED: 2, NOT_APPLIED: 3 };
     return rank[getAllotmentStatus(app)] ?? 9;
   };
-  const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app));
+  const notAppliedPendingReturn = applications.filter((app) => isNotApplied(app) && !isFundReturned(app) && !isThirdPartyMandate(app));
   const filteredApplications = applications.filter((app) => {
     if (returnFilter === 'returned') return isFundReturned(app);
-    if (returnFilter === 'pending') return !isFundReturned(app);
+    if (returnFilter === 'pending') return isCollectDue(app);
     if (returnFilter === 'not_applied') return isNotApplied(app);
     if (returnFilter === 'allotted') return isAllotted(app);
     if (returnFilter === 'waiting_listing') return isWaitingListing(app);
     if (returnFilter === 'not_allotted') return isNotAllotted(app);
+    if (returnFilter === 'third_party_mandate') return isThirdPartyMandate(app);
     return true;
   });
   const receivableSelectedIds = selectedReceiveIds.filter((appId) => {
@@ -482,6 +495,7 @@ export default function IpoDetailPage() {
     setDistributeInvestorCategory(defaultCat);
     setDistributeMode(memberGroups.length ? 'groups' : 'individual');
     setPaySplits({});
+    setThirdPartyMandate(false);
     try {
       const { data } = await client.get('/wallet');
       const accts = (data.accounts || []).filter((a) => a.purpose !== 'MANAGER');
@@ -525,12 +539,15 @@ export default function IpoDetailPage() {
       const acc = bankAccounts.find((a) => a.id === d.bankAccountId);
       return !acc || d.amount > Number(acc.balance);
     }));
-  const insufficient = !hasBankAccounts || insufficientSingle || insufficientSplit;
-  const bankStepValid =
+  const insufficient = thirdPartyMandate
+    ? false
+    : (!hasBankAccounts || insufficientSingle || insufficientSplit);
+  const bankStepValid = thirdPartyMandate || (
     hasBankAccounts &&
     (payMode === 'split'
       ? splitDebits.length > 0 && splitTotal === totalNeeded && !insufficientSplit
-      : payAccountId != null && !insufficientSingle);
+      : payAccountId != null && !insufficientSingle)
+  );
   const missingReceiveAccount = bankAccounts.length > 1 && !receiveAccountId;
 
   const onCloseIpo = async () => {
@@ -606,27 +623,29 @@ export default function IpoDetailPage() {
       message.warning('Select at least one member or a sub-group bulk payment');
       return;
     }
-    if (!bankAccounts.length) {
-      message.warning('Add a bank account under Wallet before distributing');
-      return;
-    }
-    if (payMode === 'single') {
-      if (!payAccountId) {
-        message.warning('Select which bank account to pay from');
+    if (!thirdPartyMandate) {
+      if (!bankAccounts.length) {
+        message.warning('Add a bank account under Wallet before distributing');
         return;
       }
-      if (insufficientSingle) {
-        message.warning('Selected account does not have enough balance');
-        return;
-      }
-    } else if (payMode === 'split') {
-      if (splitTotal !== totalNeeded) {
-        message.warning('Split amounts must equal the total required');
-        return;
-      }
-      if (insufficientSplit) {
-        message.warning('One or more accounts do not have enough balance');
-        return;
+      if (payMode === 'single') {
+        if (!payAccountId) {
+          message.warning('Select which bank account to pay from');
+          return;
+        }
+        if (insufficientSingle) {
+          message.warning('Selected account does not have enough balance');
+          return;
+        }
+      } else if (payMode === 'split') {
+        if (splitTotal !== totalNeeded) {
+          message.warning('Split amounts must equal the total required');
+          return;
+        }
+        if (insufficientSplit) {
+          message.warning('One or more accounts do not have enough balance');
+          return;
+        }
       }
     }
     setDistributing(true);
@@ -637,16 +656,23 @@ export default function IpoDetailPage() {
           groupId,
           investorCategory: distributeInvestorCategory,
         })),
-        markGiven,
+        markGiven: thirdPartyMandate ? true : markGiven,
         investorCategory: distributeInvestorCategory,
+        fundingMode: thirdPartyMandate ? 'THIRD_PARTY_MANDATE' : 'DISTRIBUTED',
       };
-      if (payMode === 'split' && splitDebits.length) {
-        body.accountDebits = splitDebits;
-      } else {
-        body.bankAccountId = payAccountId;
+      if (!thirdPartyMandate) {
+        if (payMode === 'split' && splitDebits.length) {
+          body.accountDebits = splitDebits;
+        } else {
+          body.bankAccountId = payAccountId;
+        }
       }
       await client.post(`/ipos/${id}/distribute`, body);
-      message.success('Funds distributed to team');
+      message.success(
+        thirdPartyMandate
+          ? 'Members added to applied list (third party mandate)'
+          : 'Funds distributed to team'
+      );
       setDistributeOpen(false);
       setSelectedIds([]);
       setSelectedGroupBulkIds([]);
@@ -1175,6 +1201,9 @@ export default function IpoDetailPage() {
                   <div className="ipo-app-pay-hint">Paid to {paidTo}</div>
                 </Tooltip>
               ) : null}
+              {isThirdPartyMandate(r) ? (
+                <div className="ipo-app-pay-hint">3rd party mandate</div>
+              ) : null}
             </div>
           </div>
         );
@@ -1251,6 +1280,13 @@ export default function IpoDetailPage() {
         if (v === 'Received') {
           return <span className="allotment-badge allotment-badge--allotted">Returned</span>;
         }
+        if (isThirdPartyMandate(r) && !isMandateAllotted(getAllotmentStatus(r))) {
+          return (
+            <Tooltip title="Applied on your UPI — nothing to collect unless allotted">
+              <span className="allotment-badge allotment-badge--mandate">No collect</span>
+            </Tooltip>
+          );
+        }
         const remaining = remainingAppPrincipal(r);
         const adjustedOut = Number(r.adjusted_out_amount || 0);
         if (adjustedOut > 0) {
@@ -1260,7 +1296,7 @@ export default function IpoDetailPage() {
             </Tooltip>
           );
         }
-        return <span className="allotment-badge allotment-badge--pending">Pending</span>;
+        return <span className="allotment-badge allotment-badge--pending">{isThirdPartyMandate(r) ? 'Collect due' : 'Pending'}</span>;
       },
     },
     {
@@ -1268,9 +1304,14 @@ export default function IpoDetailPage() {
       dataIndex: 'trns_given',
       width: 80,
       align: 'center',
-      render: (v) => (v
-        ? <span className="allotment-badge allotment-badge--given">{v}</span>
-        : <Typography.Text type="secondary">—</Typography.Text>),
+      render: (v, r) => {
+        if (isThirdPartyMandate(r)) {
+          return <span className="allotment-badge allotment-badge--mandate">3rd party</span>;
+        }
+        return v
+          ? <span className="allotment-badge allotment-badge--given">{v}</span>
+          : <Typography.Text type="secondary">—</Typography.Text>;
+      },
     },
     {
       title: 'Allotment',
@@ -2019,6 +2060,7 @@ export default function IpoDetailPage() {
                   ? { label: `Alloted (${allottedCount})`, value: 'allotted' }
                   : { label: `Waiting for listing (${allottedCount})`, value: 'waiting_listing' },
                 { label: `Not Alloted (${notAllottedCount})`, value: 'not_allotted' },
+                { label: `Third party mandate (${thirdPartyMandateCount})`, value: 'third_party_mandate' },
               ]}
             />
             {returnedCount > 0 && (
@@ -2096,6 +2138,8 @@ export default function IpoDetailPage() {
                     ? 'No members marked as alloted yet'
                     : returnFilter === 'not_allotted'
                       ? 'No members marked as not alloted yet'
+                      : returnFilter === 'third_party_mandate'
+                        ? 'No third-party mandate applications'
                       : 'All members have returned funds',
           }}
         />
@@ -2279,7 +2323,7 @@ export default function IpoDetailPage() {
         footer={step < 2 ? undefined : [
           <Button key="back" onClick={() => setStep(step - 1)}>Back</Button>,
           <Button key="go" type="primary" disabled={insufficient || distributing || hniLotMissing} loading={distributing} onClick={onDistribute}>
-            Confirm Distribution
+            {thirdPartyMandate ? 'Add to applied list' : 'Confirm Distribution'}
           </Button>,
         ]}
         width={720}
@@ -2532,14 +2576,31 @@ export default function IpoDetailPage() {
 
               <div>
                 <label>
+                  <Switch
+                    checked={thirdPartyMandate}
+                    onChange={(checked) => {
+                      setThirdPartyMandate(checked);
+                      if (checked) setMarkGiven(true);
+                    }}
+                  /> Third party mandate — add to applied list, don’t give money (use my UPI)
+                </label>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 0 24px' }}>
+                  Member stays on this IPO’s applied list. Cash stays blocked on your UPI until allotment.
+                </Typography.Paragraph>
+              </div>
+
+              {!thirdPartyMandate && (
+              <div>
+                <label>
                   <Switch checked={markGiven} onChange={setMarkGiven} /> Mark as applied (Given)
                 </label>
                 <Typography.Paragraph type="secondary" style={{ fontSize: 12, margin: '4px 0 0 24px' }}>
                   Use Receive in the applications table later when IPO funds are returned to your wallet.
                 </Typography.Paragraph>
               </div>
+              )}
 
-              {!hasBankAccounts ? (
+              {!thirdPartyMandate && (!hasBankAccounts ? (
                 <Alert
                   type="error"
                   showIcon
@@ -2675,7 +2736,7 @@ export default function IpoDetailPage() {
                     />
                   )}
                 </div>
-              )}
+              ))}
             </Space>
             <div style={{ marginTop: 16 }}>
               <Button onClick={() => setStep(0)}>Back</Button>
@@ -2709,7 +2770,15 @@ export default function IpoDetailPage() {
               <strong>{formatCurrency(lotForSelectedCategory)}</strong>
             </p>
             <p>Total required: <strong>{formatCurrency(totalNeeded)}</strong></p>
-            {payMode === 'single' && selectedPayAccount ? (
+            {thirdPartyMandate ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="Third party mandate"
+                description="Members are added to the applied list. No wallet debit and no GIVEN ledger until allotment."
+              />
+            ) : payMode === 'single' && selectedPayAccount ? (
               <Alert
                 type="info"
                 showIcon
@@ -2739,7 +2808,7 @@ export default function IpoDetailPage() {
                 }
               />
             ) : null}
-            {insufficient && (
+            {insufficient && !thirdPartyMandate && (
               <Alert
                 type="error"
                 message="Cannot distribute"

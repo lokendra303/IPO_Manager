@@ -684,7 +684,7 @@ router.post('/:id/distribute', async (req, res, next) => {
 
     const {
       memberIds, amounts, markGiven, bankAccountId, accountDebits, investorCategory, memberCategories,
-      groupBulks,
+      groupBulks, fundingMode, thirdPartyMandate,
     } = req.body;
 
     if (!memberIds?.length && !groupBulks?.length) {
@@ -716,6 +716,10 @@ router.post('/:id/distribute', async (req, res, next) => {
         memberCategories,
 
         groupBulks,
+
+        fundingMode,
+
+        thirdPartyMandate,
 
         userId: req.user.userId,
 

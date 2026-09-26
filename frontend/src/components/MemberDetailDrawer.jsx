@@ -15,6 +15,7 @@ import { getErrorMessage } from '../utils/errors';
 import NoteCell from './NoteCell';
 import { copyToClipboard } from '../utils/allotmentCheck';
 import { categoryTagColor, getLotAmountForCategory } from '../utils/ipoCategories';
+import { isThirdPartyMandate } from '../utils/fundingMode';
 
 const AVATAR_TONES = ['teal', 'slate', 'blue', 'amber', 'rose', 'violet'];
 
@@ -179,7 +180,11 @@ export default function MemberDetailDrawer({ memberId, open, onClose }) {
       render: (v) => (v ? <Tag color={categoryTagColor(v)}>{v}</Tag> : '—'),
     },
     { title: 'Received', dataIndex: 'trns_received', render: (v) => v ? <Tag color="green">{v}</Tag> : '—' },
-    { title: 'Given', dataIndex: 'trns_given', render: (v) => v ? <Tag color="blue">{v}</Tag> : '—' },
+    { title: 'Given', dataIndex: 'trns_given', render: (v, r) => (
+      isThirdPartyMandate(r)
+        ? <Tag color="magenta">3rd party mandate</Tag>
+        : v ? <Tag color="blue">{v}</Tag> : '—'
+    ) },
     {
       title: 'Allotment',
       dataIndex: 'allotment_status',

@@ -11,6 +11,7 @@ import { assertAccountDebits, requireBankAccountId, syncOwnerWalletTotal } from 
 import { dedupeIds, parsePositiveInt, parseAmount } from '../utils/validate.js';
 import { assertIpoApplicationsEditable, revokeProfitShareDistribution } from './profitShareService.js';
 import { requireIpoShareRule, assertMembersOnIpoShareRule } from './ipoShareRuleService.js';
+import { FUNDING_MODE_THIRD_PARTY_MANDATE, parseFundingMode, isThirdPartyMandate } from '../constants/fundingMode.js';
 
 /** Net provider capital available to deploy (principal − funds still with members). */
 export async function getProviderDeployCapacity(conn, tenantId) {
@@ -25,7 +26,8 @@ export async function getProviderDeployCapacity(conn, tenantId) {
     `SELECT COALESCE(SUM(GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)), 0) AS still_out
      FROM ipo_applications a
      WHERE a.tenant_id = ?
-       AND (a.trns_received IS NULL OR a.trns_received <> 'Received')`,
+       AND (a.trns_received IS NULL OR a.trns_received <> 'Received')
+       AND COALESCE(a.funding_mode, 'DISTRIBUTED') <> 'THIRD_PARTY_MANDATE'`,
     [tenantId]
   );
   const principal = round2(prin.principal);
@@ -71,6 +73,7 @@ async function buildDistributionPlan(conn, {
   investorCategory,
   memberCategories,
   groupBulks,
+  thirdPartyMandate = false,
 }) {
   const ipoIdNum = ipo.id;
   const allowed = parseAllowedCategories(ipo.allowed_categories);
@@ -102,29 +105,33 @@ async function buildDistributionPlan(conn, {
         memberId: m.id,
         amount: lot,
         investorCategory: cat,
-        paidToMemberId: ownerId || null,
-        paidToExternalName: ownerExternal,
+        paidToMemberId: thirdPartyMandate ? null : (ownerId || null),
+        paidToExternalName: thirdPartyMandate ? null : ownerExternal,
       });
       groupTotal += lot;
-      ledgers.push({
-        memberId: m.id,
-        type: 'GIVEN',
-        amount: lot,
-        notes: ownerExternal
-          ? `IPO: ${ipo.name} — ${group.name} (paid to ${ownerLabel})`
-          : `IPO: ${ipo.name} — ${group.name} (paid to group owner)`,
-      });
+      if (!thirdPartyMandate) {
+        ledgers.push({
+          memberId: m.id,
+          type: 'GIVEN',
+          amount: lot,
+          notes: ownerExternal
+            ? `IPO: ${ipo.name} — ${group.name} (paid to ${ownerLabel})`
+            : `IPO: ${ipo.name} — ${group.name} (paid to group owner)`,
+        });
+      }
     }
 
-    bulkPayments.push({
-      memberGroupId: group.id,
-      ownerMemberId: ownerId || null,
-      ownerExternalName: ownerExternal,
-      totalAmount: groupTotal,
-      memberCount: members.length,
-      investorCategory: cat,
-      notes: `IPO: ${ipo.name} — ${group.name}`,
-    });
+    if (!thirdPartyMandate) {
+      bulkPayments.push({
+        memberGroupId: group.id,
+        ownerMemberId: ownerId || null,
+        ownerExternalName: ownerExternal,
+        totalAmount: groupTotal,
+        memberCount: members.length,
+        investorCategory: cat,
+        notes: `IPO: ${ipo.name} — ${group.name}`,
+      });
+    }
   }
 
   const uniqueMemberIds = dedupeIds(memberIds || []).filter((id) => !coveredMemberIds.has(id));
@@ -173,14 +180,16 @@ async function buildDistributionPlan(conn, {
         memberId,
         amount: amt,
         investorCategory: cat,
-        paidToMemberId: memberId,
+        paidToMemberId: thirdPartyMandate ? null : memberId,
       });
-      ledgers.push({
-        memberId,
-        type: 'GIVEN',
-        amount: amt,
-        notes: `IPO: ${ipo.name}`,
-      });
+      if (!thirdPartyMandate) {
+        ledgers.push({
+          memberId,
+          type: 'GIVEN',
+          amount: amt,
+          notes: `IPO: ${ipo.name}`,
+        });
+      }
     }
   }
 
@@ -199,8 +208,12 @@ export async function distributeIpo(conn, {
   investorCategory,
   memberCategories,
   groupBulks,
+  fundingMode,
+  thirdPartyMandate,
 }) {
   const ipoIdNum = parsePositiveInt(ipoId, 'IPO id');
+  const mode = parseFundingMode(fundingMode || thirdPartyMandate);
+  const isMandate = mode === FUNDING_MODE_THIRD_PARTY_MANDATE;
 
   const [ipoRows] = await conn.query(
     'SELECT * FROM ipos WHERE id = ? AND tenant_id = ?',
@@ -227,6 +240,7 @@ export async function distributeIpo(conn, {
     investorCategory,
     memberCategories,
     groupBulks,
+    thirdPartyMandate: isMandate,
   });
 
   await assertMembersOnIpoShareRule(
@@ -239,56 +253,60 @@ export async function distributeIpo(conn, {
   const total = appPlans.reduce((s, p) => s + Number(p.amount), 0);
   const now = new Date();
 
-  await ensureWallet(conn, tenantId);
+  if (!isMandate) {
+    await ensureWallet(conn, tenantId);
 
-  const capacity = await getProviderDeployCapacity(conn, tenantId);
-  if (total > capacity.available + 0.001) {
-    throw new AppError(
-      `Cannot distribute ₹${total.toFixed(2)}. Provider principal left to deploy: ₹${Math.max(0, capacity.available).toFixed(2)} ` +
-        `(principal ₹${capacity.principal.toFixed(2)} − already with members ₹${capacity.stillOut.toFixed(2)}). ` +
-        `Undistribute a member or add provider funds first.`
-    );
-  }
-
-  if (!accountDebits?.length) {
-    const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
-      purpose: 'PROVIDER',
-    });
-    const [accRows] = await conn.query(
-      'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
-      [resolvedAccountId, tenantId]
-    );
-    if (!accRows.length) throw new AppError('Bank account not found', 404);
-    if (Number(accRows[0].balance) < total) {
+    const capacity = await getProviderDeployCapacity(conn, tenantId);
+    if (total > capacity.available + 0.001) {
       throw new AppError(
-        `Insufficient provider wallet balance in ${accRows[0].label}. Need ₹${total}, available ₹${accRows[0].balance}`
+        `Cannot distribute ₹${total.toFixed(2)}. Provider principal left to deploy: ₹${Math.max(0, capacity.available).toFixed(2)} ` +
+          `(principal ₹${capacity.principal.toFixed(2)} − already with members ₹${capacity.stillOut.toFixed(2)}). ` +
+          `Undistribute a member or add provider funds first.`
       );
     }
-  } else {
-    await assertAccountDebits(conn, tenantId, accountDebits, total);
-    for (const d of accountDebits) {
+
+    if (!accountDebits?.length) {
+      const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
+        purpose: 'PROVIDER',
+      });
       const [accRows] = await conn.query(
-        'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? FOR UPDATE',
-        [d.bankAccountId, tenantId]
+        'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? AND is_active = 1 FOR UPDATE',
+        [resolvedAccountId, tenantId]
       );
       if (!accRows.length) throw new AppError('Bank account not found', 404);
-      if (Number(accRows[0].balance) < Number(d.amount)) {
+      if (Number(accRows[0].balance) < total) {
         throw new AppError(
-          `Insufficient balance in ${accRows[0].label}. Need ₹${d.amount}, available ₹${accRows[0].balance}`
+          `Insufficient provider wallet balance in ${accRows[0].label}. Need ₹${total}, available ₹${accRows[0].balance}`
         );
+      }
+    } else {
+      await assertAccountDebits(conn, tenantId, accountDebits, total);
+      for (const d of accountDebits) {
+        const [accRows] = await conn.query(
+          'SELECT balance, label FROM manager_bank_accounts WHERE id = ? AND tenant_id = ? FOR UPDATE',
+          [d.bankAccountId, tenantId]
+        );
+        if (!accRows.length) throw new AppError('Bank account not found', 404);
+        if (Number(accRows[0].balance) < Number(d.amount)) {
+          throw new AppError(
+            `Insufficient balance in ${accRows[0].label}. Need ₹${d.amount}, available ₹${accRows[0].balance}`
+          );
+        }
       }
     }
   }
 
   const applications = [];
   const appIdByMember = new Map();
+  const givenAt = isMandate || markGiven ? now : null;
+  const givenLabel = isMandate ? 'Applied' : (markGiven ? 'Given' : null);
 
   for (const plan of appPlans) {
     const [appResult] = await conn.query(
       `INSERT INTO ipo_applications
        (ipo_id, member_id, tenant_id, amount, date_received, trns_received, date_given, trns_given,
-        allotment_status, investor_category, paid_to_member_id, paid_to_external_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`,
+        allotment_status, investor_category, paid_to_member_id, paid_to_external_name, funding_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
       [
         ipoIdNum,
         plan.memberId,
@@ -296,11 +314,12 @@ export async function distributeIpo(conn, {
         plan.amount,
         null,
         null,
-        markGiven ? now : null,
-        markGiven ? 'Given' : null,
+        givenAt,
+        givenLabel,
         plan.investorCategory,
         plan.paidToMemberId ?? null,
         plan.paidToExternalName ?? null,
+        mode,
       ]
     );
     appIdByMember.set(plan.memberId, appResult.insertId);
@@ -342,35 +361,37 @@ export async function distributeIpo(conn, {
     ? `Distributed for ${ipo.name} (${memberCount} members, ${groupCount} group bulk)`
     : `Distributed for ${ipo.name} (${memberCount} members)`;
 
-  if (accountDebits?.length) {
-    await debitWalletFromAccounts(conn, {
-      tenantId,
-      debits: accountDebits,
-      type: 'DISTRIBUTE_OUT',
-      refType: 'ipo',
-      refId: ipoIdNum,
-      txnDate: now,
-      notes: debitNotes,
-      userId,
-    });
-  } else {
-    const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
-      purpose: 'PROVIDER',
-    });
-    await debitWallet(conn, {
-      tenantId,
-      amount: total,
-      bankAccountId: resolvedAccountId,
-      type: 'DISTRIBUTE_OUT',
-      refType: 'ipo',
-      refId: ipoIdNum,
-      txnDate: now,
-      notes: debitNotes,
-      userId,
-    });
+  if (!isMandate) {
+    if (accountDebits?.length) {
+      await debitWalletFromAccounts(conn, {
+        tenantId,
+        debits: accountDebits,
+        type: 'DISTRIBUTE_OUT',
+        refType: 'ipo',
+        refId: ipoIdNum,
+        txnDate: now,
+        notes: debitNotes,
+        userId,
+      });
+    } else {
+      const resolvedAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
+        purpose: 'PROVIDER',
+      });
+      await debitWallet(conn, {
+        tenantId,
+        amount: total,
+        bankAccountId: resolvedAccountId,
+        type: 'DISTRIBUTE_OUT',
+        refType: 'ipo',
+        refId: ipoIdNum,
+        txnDate: now,
+        notes: debitNotes,
+        userId,
+      });
+    }
   }
 
-  return { total, applications, groupBulkCount: groupCount };
+  return { total, applications, groupBulkCount: groupCount, fundingMode: mode };
 }
 
 /**
@@ -419,25 +440,6 @@ export async function undistributeIpoApplication(conn, {
   const amount = round2(app.amount);
   if (amount <= 0) throw new AppError('Invalid application amount');
 
-  // Prefer the bank account used on the latest DISTRIBUTE_OUT for this IPO
-  let resolvedAccountId = bankAccountId
-    ? await requireBankAccountId(conn, tenantId, bankAccountId, { purpose: 'PROVIDER' })
-    : null;
-  if (!resolvedAccountId) {
-    const [distRows] = await conn.query(
-      `SELECT bank_account_id FROM wallet_transactions
-       WHERE tenant_id = ? AND type = 'DISTRIBUTE_OUT' AND ref_type = 'ipo' AND ref_id = ?
-         AND bank_account_id IS NOT NULL
-       ORDER BY id DESC LIMIT 1`,
-      [tenantId, app.ipo_id]
-    );
-    resolvedAccountId = distRows[0]?.bank_account_id
-      ? await requireBankAccountId(conn, tenantId, distRows[0].bank_account_id, {
-          purpose: 'PROVIDER',
-        })
-      : await requireBankAccountId(conn, tenantId, null, { purpose: 'PROVIDER' });
-  }
-
   const now = new Date();
 
   await revokeProfitShareDistribution(conn, {
@@ -454,22 +456,46 @@ export async function undistributeIpoApplication(conn, {
 
   await conn.query('DELETE FROM ipo_applications WHERE id = ? AND tenant_id = ?', [id, tenantId]);
 
-  await ensureWallet(conn, tenantId);
-  await creditWallet(conn, {
-    tenantId,
-    amount,
-    bankAccountId: resolvedAccountId,
-    type: 'ADJUSTMENT',
-    refType: 'distribute_reversal',
-    refId: id,
-    txnDate: now,
-    notes: `Undistribute — ${app.display_name} (${app.ipo_name})`,
-    userId,
-    skipEnsureWallet: true,
-    skipSync: true,
-    resolvedBankAccountId: resolvedAccountId,
-  });
-  await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [resolvedAccountId] });
+  let walletCredited = 0;
+  let resolvedOutAccountId = null;
+  if (!isThirdPartyMandate(app)) {
+    let resolvedAccountId = bankAccountId
+      ? await requireBankAccountId(conn, tenantId, bankAccountId, { purpose: 'PROVIDER' })
+      : null;
+    if (!resolvedAccountId) {
+      const [distRows] = await conn.query(
+        `SELECT bank_account_id FROM wallet_transactions
+         WHERE tenant_id = ? AND type = 'DISTRIBUTE_OUT' AND ref_type = 'ipo' AND ref_id = ?
+           AND bank_account_id IS NOT NULL
+         ORDER BY id DESC LIMIT 1`,
+        [tenantId, app.ipo_id]
+      );
+      resolvedAccountId = distRows[0]?.bank_account_id
+        ? await requireBankAccountId(conn, tenantId, distRows[0].bank_account_id, {
+            purpose: 'PROVIDER',
+          })
+        : await requireBankAccountId(conn, tenantId, null, { purpose: 'PROVIDER' });
+    }
+
+    await ensureWallet(conn, tenantId);
+    await creditWallet(conn, {
+      tenantId,
+      amount,
+      bankAccountId: resolvedAccountId,
+      type: 'ADJUSTMENT',
+      refType: 'distribute_reversal',
+      refId: id,
+      txnDate: now,
+      notes: `Undistribute — ${app.display_name} (${app.ipo_name})`,
+      userId,
+      skipEnsureWallet: true,
+      skipSync: true,
+      resolvedBankAccountId: resolvedAccountId,
+    });
+    await syncOwnerWalletTotal(conn, tenantId, { bankAccountIds: [resolvedAccountId] });
+    walletCredited = amount;
+    resolvedOutAccountId = resolvedAccountId;
+  }
 
   const capacity = await getProviderDeployCapacity(conn, tenantId);
 
@@ -478,8 +504,8 @@ export async function undistributeIpoApplication(conn, {
     memberName: app.display_name,
     ipoName: app.ipo_name,
     amount,
-    walletCredited: amount,
-    bankAccountId: resolvedAccountId,
+    walletCredited,
+    bankAccountId: resolvedOutAccountId,
     capacity,
   };
 }

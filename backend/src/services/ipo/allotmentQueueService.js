@@ -3,6 +3,7 @@ import { ALLOTMENT_STATUSES } from '../../utils/validate.js';
 import { toSqlDateTime } from '../../utils/validate.js';
 import { maskPan } from '../../utils/pan.js';
 import { getAllotmentPortalsMeta } from '../../utils/allotmentCheck.js';
+import { syncThirdPartyMandateGiven } from '../thirdPartyMandateService.js';
 
 const CHECKING_STALE_MINUTES = 15;
 
@@ -28,6 +29,7 @@ function serializeApplicant(row) {
     appliedLots: row.applied_lots != null ? Number(row.applied_lots) : null,
     appliedAmount: Number(row.amount),
     allotmentStatus: row.allotment_status,
+    fundingMode: row.funding_mode || 'DISTRIBUTED',
     allottedLots: row.allotted_lots != null ? Number(row.allotted_lots) : null,
     allottedAmount: row.allotted_amount != null ? Number(row.allotted_amount) : null,
     checkedAt: row.allotment_checked_at,
@@ -62,7 +64,7 @@ export async function getAllotmentQueue(conn, { tenantId, ipoId }) {
   const [applications] = await conn.query(
     `SELECT a.id, a.member_id, a.amount, a.allotment_status, a.application_number,
             a.applied_lots, a.allotted_lots, a.allotted_amount, a.allotment_checked_at,
-            m.display_name, m.pan
+            a.funding_mode, m.display_name, m.pan
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      WHERE a.ipo_id = ? AND a.tenant_id = ?
@@ -128,7 +130,7 @@ export async function claimNextPending(conn, { tenantId, ipoId }) {
   const [checking] = await conn.query(
     `SELECT a.id, a.member_id, a.amount, a.allotment_status, a.application_number,
             a.applied_lots, a.allotted_lots, a.allotted_amount, a.allotment_checked_at,
-            m.display_name, m.pan
+            a.funding_mode, m.display_name, m.pan
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      WHERE a.ipo_id = ? AND a.tenant_id = ? AND a.allotment_status = 'CHECKING'
@@ -160,7 +162,7 @@ export async function claimNextPending(conn, { tenantId, ipoId }) {
   const [rows] = await conn.query(
     `SELECT a.id, a.member_id, a.amount, a.allotment_status, a.application_number,
             a.applied_lots, a.allotted_lots, a.allotted_amount, a.allotment_checked_at,
-            m.display_name, m.pan
+            a.funding_mode, m.display_name, m.pan
      FROM ipo_applications a
      JOIN members m ON m.id = a.member_id
      WHERE a.id = ?`,
@@ -176,7 +178,7 @@ export async function saveAllotmentResult(conn, { tenantId, applicationId, resul
   }
 
   const [rows] = await conn.query(
-    `SELECT a.*, i.id AS ipo_exists
+    `SELECT a.*, i.id AS ipo_exists, i.name AS ipo_name
      FROM ipo_applications a
      JOIN ipos i ON i.id = a.ipo_id AND i.tenant_id = a.tenant_id
      WHERE a.id = ? AND a.tenant_id = ?`,
@@ -205,6 +207,17 @@ export async function saveAllotmentResult(conn, { tenantId, applicationId, resul
     `UPDATE ipo_applications SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`,
     values
   );
+
+  await syncThirdPartyMandateGiven(conn, {
+    tenantId,
+    app: {
+      ...app,
+      allotment_status: status,
+      allotted_lots: lots != null && !Number.isNaN(lots) ? lots : app.allotted_lots,
+    },
+    nextStatus: status,
+    ipoName: app.ipo_name,
+  });
 
   return { ipoId: app.ipo_id, status };
 }

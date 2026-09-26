@@ -10,6 +10,7 @@ import {
 } from '../services/profitShareService.js';
 import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 import { assertIpoListedForWithdrawal, ipoIsListed } from '../utils/ipoListing.js';
+import { syncThirdPartyMandateGiven } from '../services/thirdPartyMandateService.js';
 
 const router = Router();
 
@@ -38,7 +39,7 @@ router.patch('/bulk', async (req, res, next) => {
         const appId = parsePositiveInt(u.id, 'application id');
 
         const [existing] = await conn.query(
-          `SELECT a.*, i.allowed_categories, i.listing_date,
+          `SELECT a.*, i.allowed_categories, i.listing_date, i.name AS ipo_name,
                   c.listing_date AS catalog_listing_date, c.status AS catalog_status
            FROM ipo_applications a
            JOIN ipos i ON i.id = a.ipo_id
@@ -164,6 +165,19 @@ router.patch('/bulk', async (req, res, next) => {
           values
         );
         ids.push(appId);
+
+        await syncThirdPartyMandateGiven(conn, {
+          tenantId: req.tenantId,
+          app: {
+            ...row,
+            id: appId,
+            amount: effectiveAmount,
+            allotted_lots: u.allottedLots ?? row.allotted_lots,
+            allotted_amount: u.allottedAmount ?? row.allotted_amount,
+          },
+          nextStatus: nextAllotment,
+          ipoName: row.ipo_name,
+        });
 
         if (willClearPnL && !ipoClosed) {
           await revokeProfitShareDistribution(conn, {

@@ -12,6 +12,7 @@ import {
 } from './profitShareService.js';
 import { creditWallet, ensureWallet } from './walletService.js';
 import { assertIpoListedForReceive, IPO_LISTED_EXISTS_SQL } from '../utils/ipoListing.js';
+import { isThirdPartyMandate } from '../constants/fundingMode.js';
 
 function round2(n) {
   return Math.round(Number(n || 0) * 100) / 100;
@@ -19,6 +20,15 @@ function round2(n) {
 
 function assertAllottedIpoIsListed(app) {
   assertIpoListedForReceive(app);
+}
+
+function assertThirdPartyMandateReceivable(app) {
+  if (!isThirdPartyMandate(app)) return;
+  if (app.allotment_status !== 'ALLOTED' && app.allotment_status !== 'PARTIALLY_ALLOTTED') {
+    throw new AppError(
+      'Nothing to collect — third party mandate was not allotted. Funds stayed in your UPI.'
+    );
+  }
 }
 
 async function getManagerShareAlreadyInWallet(conn, tenantId, applicationId) {
@@ -173,6 +183,7 @@ export async function receiveIpoApplication(conn, {
   if (!apps.length) throw new AppError('Application not found', 404);
 
   const app = apps[0];
+  assertThirdPartyMandateReceivable(app);
   assertAllottedIpoIsListed(app);
   await assertIpoApplicationsEditable(conn, tenantId, app.ipo_id);
   const amounts = await resolveReceiveAmounts(conn, tenantId, app, amount);
@@ -209,7 +220,7 @@ export async function receiveIpoApplication(conn, {
     );
   }
 
-  if (returnToWallet) {
+  if (returnToWallet && !isThirdPartyMandate(app)) {
     if (hasWalletReturn) {
       throw new AppError('Funds were already returned to wallet for this application');
     }
@@ -258,6 +269,7 @@ async function receiveOneFromCache(conn, {
   amounts,
 }) {
   if (!app) throw new AppError('Application not found', 404);
+  assertThirdPartyMandateReceivable(app);
   assertAllottedIpoIsListed(app);
 
   const resolvedAmounts = amounts ?? await resolveReceiveAmounts(conn, tenantId, app);
@@ -286,7 +298,7 @@ async function receiveOneFromCache(conn, {
     );
   }
 
-  if (returnToWallet) {
+  if (returnToWallet && !isThirdPartyMandate(app)) {
     if (hasWalletReturn) {
       throw new AppError('Funds were already returned to wallet for this application');
     }
@@ -414,7 +426,8 @@ export async function receiveIpoApplicationsBulk(conn, {
   const walletReturnSet = new Set(existingWalletReturn.map((row) => row.ref_id));
 
   let resolvedBankAccountId = null;
-  if (returnToWallet) {
+  const needsWallet = returnToWallet && apps.some((a) => !isThirdPartyMandate(a));
+  if (needsWallet) {
     await ensureWallet(conn, tenantId);
     resolvedBankAccountId = await requireBankAccountId(conn, tenantId, bankAccountId, {
       purpose: 'PROVIDER',
@@ -429,20 +442,22 @@ export async function receiveIpoApplicationsBulk(conn, {
   for (const rawId of applicationIds) {
     const appId = Number(rawId);
     try {
+      const app = appById.get(appId);
+      const creditWallet = returnToWallet && !isThirdPartyMandate(app);
       const result = await receiveOneFromCache(conn, {
         tenantId,
         appId,
-        app: appById.get(appId),
+        app,
         hasLedger: ledgerSet.has(appId),
         hasWalletReturn: walletReturnSet.has(appId),
-        returnToWallet,
+        returnToWallet: creditWallet,
         resolvedBankAccountId,
         notes,
         userId,
         amounts: amountsByAppId.get(appId),
       });
       ledgerSet.add(appId);
-      if (returnToWallet) walletReturnSet.add(appId);
+      if (creditWallet) walletReturnSet.add(appId);
       results.push(result);
     } catch (err) {
       failed.push({ appId, error: err.message || 'Failed to receive' });

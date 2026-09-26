@@ -2272,6 +2272,57 @@ async function applyIpoCatalogV58(conn) {
   }
 }
 
+async function applyDistributionRuleShareFkV62(conn) {
+  if (!(await tableExists(conn, 'profit_share_distribution_rules'))) return;
+  if (!(await tableExists(conn, 'profit_share_rules'))) return;
+  if (!(await columnExists(conn, 'profit_share_distribution_rules', 'member_share_rule_id'))) return;
+
+  const [fks] = await conn.query(
+    `SELECT CONSTRAINT_NAME, REFERENCED_TABLE_NAME
+     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'profit_share_distribution_rules'
+       AND COLUMN_NAME = 'member_share_rule_id'
+       AND REFERENCED_TABLE_NAME IS NOT NULL`
+  );
+
+  if (fks.some((row) => row.REFERENCED_TABLE_NAME === 'profit_share_rules')) {
+    return;
+  }
+
+  for (const row of fks) {
+    await conn.query(
+      `ALTER TABLE profit_share_distribution_rules DROP FOREIGN KEY \`${row.CONSTRAINT_NAME}\``
+    );
+  }
+
+  await conn.query(
+    `UPDATE profit_share_distribution_rules psdr
+     LEFT JOIN profit_share_rules psr ON psr.id = psdr.member_share_rule_id
+     SET psdr.member_share_rule_id = NULL
+     WHERE psdr.member_share_rule_id IS NOT NULL AND psr.id IS NULL`
+  );
+
+  await conn.query(
+    `ALTER TABLE profit_share_distribution_rules
+     ADD CONSTRAINT fk_psdr_share_rule
+       FOREIGN KEY (member_share_rule_id) REFERENCES profit_share_rules(id) ON DELETE SET NULL`
+  );
+  console.log('Pointed profit_share_distribution_rules.member_share_rule_id at profit_share_rules');
+}
+
+async function applyThirdPartyMandateFundingV63(conn) {
+  if (!(await tableExists(conn, 'ipo_applications'))) return;
+  if (!(await columnExists(conn, 'ipo_applications', 'funding_mode'))) {
+    await conn.query(
+      `ALTER TABLE ipo_applications
+       ADD COLUMN funding_mode ENUM('DISTRIBUTED', 'THIRD_PARTY_MANDATE')
+       NOT NULL DEFAULT 'DISTRIBUTED' AFTER paid_to_external_name`
+    );
+    console.log('Added ipo_applications.funding_mode');
+  }
+}
+
 async function migrate() {
   const conn = await mysql.createConnection(getDbConnectionOptions());
 
@@ -2339,6 +2390,8 @@ async function migrate() {
   await applyIpoShareRulesV59(conn);
   await applyIpoMultiShareRulesV60(conn);
   await applySharePacksV61(conn);
+  await applyDistributionRuleShareFkV62(conn);
+  await applyThirdPartyMandateFundingV63(conn);
   console.log('Migration completed successfully.');
   await conn.end();
 }

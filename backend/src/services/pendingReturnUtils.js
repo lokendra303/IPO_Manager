@@ -26,6 +26,13 @@ export function outstandingPrincipal(row) {
 export function isApplicationReturnDue(row) {
   if (row.trns_received === 'Received') return false;
   if (row.allotment_status === 'PENDING') return false;
+  if (
+    String(row.funding_mode || 'DISTRIBUTED') === 'THIRD_PARTY_MANDATE'
+    && row.allotment_status !== 'ALLOTED'
+    && row.allotment_status !== 'PARTIALLY_ALLOTTED'
+  ) {
+    return false;
+  }
   if (row.allotment_status === 'ALLOTED') return ipoIsListed(row);
   return true;
 }
@@ -40,6 +47,8 @@ export const PENDING_RETURN_PRINCIPAL_SQL = `
   CASE
     WHEN a.trns_received = 'Received' THEN 0
     WHEN a.allotment_status = 'PENDING' THEN 0
+    WHEN COALESCE(a.funding_mode, 'DISTRIBUTED') = 'THIRD_PARTY_MANDATE'
+      AND a.allotment_status NOT IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 0
     WHEN a.allotment_status = 'ALLOTED' AND NOT ${IPO_LISTED_EXISTS_SQL} THEN 0
     ELSE GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
   END
@@ -52,6 +61,8 @@ export const PENDING_RETURN_PRINCIPAL_SQL = `
 export const PENDING_FUND_TOTAL_SQL = `
   CASE
     WHEN a.trns_received = 'Received' THEN 0
+    WHEN COALESCE(a.funding_mode, 'DISTRIBUTED') = 'THIRD_PARTY_MANDATE'
+      AND a.allotment_status NOT IN ('ALLOTED', 'PARTIALLY_ALLOTTED') THEN 0
     ELSE GREATEST(a.amount - COALESCE(a.adjusted_out_amount, 0), 0)
   END
 `;
@@ -72,6 +83,10 @@ export const PENDING_AFTER_ADJUST_SQL = `
 export const APPLICATION_RETURN_DUE_SQL = `
   (a.trns_received IS NULL OR a.trns_received <> 'Received')
   AND a.allotment_status <> 'PENDING'
+  AND (
+    COALESCE(a.funding_mode, 'DISTRIBUTED') <> 'THIRD_PARTY_MANDATE'
+    OR a.allotment_status IN ('ALLOTED', 'PARTIALLY_ALLOTTED')
+  )
   AND (
     a.allotment_status <> 'ALLOTED'
     OR ${IPO_LISTED_EXISTS_SQL}

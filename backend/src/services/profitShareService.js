@@ -1015,22 +1015,27 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
     const distributionId = distResult.insertId;
 
     for (const line of lines) {
-      await conn.query(
-        `INSERT INTO profit_share_distribution_rules
+      const insertSql = `INSERT INTO profit_share_distribution_rules
          (distribution_id, member_share_rule_id, rule_name, fund_provider_id,
           provider_percent, manager_percent, provider_amount, manager_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          distributionId,
-          line.ruleId,
-          line.ruleName,
-          line.fundProviderId,
-          line.providerPercent,
-          line.managerPercent,
-          line.providerAmount,
-          line.managerAmount,
-        ]
-      );
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+      const insertValues = [
+        distributionId,
+        line.ruleId || null,
+        line.ruleName,
+        line.fundProviderId,
+        line.providerPercent,
+        line.managerPercent,
+        line.providerAmount,
+        line.managerAmount,
+      ];
+      try {
+        await conn.query(insertSql, insertValues);
+      } catch (err) {
+        if (err.errno !== 1452 && err.code !== 'ER_NO_REFERENCED_ROW_2') throw err;
+        insertValues[1] = null;
+        await conn.query(insertSql, insertValues);
+      }
 
       if (line.fundProviderId && line.providerAmount !== 0) {
         // Accrue profit separately — do not increase provider principal until reinvested.

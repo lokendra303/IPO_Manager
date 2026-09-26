@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS profit_share_distribution_rules (
   provider_amount DECIMAL(15, 2) NOT NULL,
   manager_amount DECIMAL(15, 2) NOT NULL,
   FOREIGN KEY (distribution_id) REFERENCES profit_share_distributions(id) ON DELETE CASCADE,
+  -- Created pointing at member_profit_shares; applyDistributionRuleShareFkV62 retargets to profit_share_rules.
   FOREIGN KEY (member_share_rule_id) REFERENCES member_profit_shares(id) ON DELETE SET NULL,
   FOREIGN KEY (fund_provider_id) REFERENCES fund_providers(id) ON DELETE SET NULL,
   INDEX idx_dist_rules_distribution (distribution_id)

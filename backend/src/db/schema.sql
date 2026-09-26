@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS ipo_applications (
   investor_category ENUM('RII', 'HNI') NOT NULL DEFAULT 'RII',
   paid_to_member_id INT DEFAULT NULL,
   paid_to_external_name VARCHAR(120) DEFAULT NULL,
+  funding_mode ENUM('DISTRIBUTED', 'THIRD_PARTY_MANDATE') NOT NULL DEFAULT 'DISTRIBUTED',
   profit_loss DECIMAL(15, 2) DEFAULT NULL,
   withdrawal_money DECIMAL(15, 2) DEFAULT NULL,
   remarks TEXT DEFAULT NULL,
