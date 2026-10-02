@@ -104,9 +104,9 @@ export default function DashboardScreen() {
       )}
       {totalPendingReturn > 0 && (
         <Banner variant="warn">
-          {`${formatCurrency(totalPendingReturn)} pending return from ${pendingReturns.length} member${
+          {`${formatCurrency(totalPendingReturn)} to collect · ${pendingReturns.length} member${
             pendingReturns.length === 1 ? '' : 's'
-          } — allotted / not allotted, not yet received`}
+          }`}
         </Banner>
       )}
       <View style={ui.statRow}>

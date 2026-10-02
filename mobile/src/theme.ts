@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { MD3LightTheme } from 'react-native-paper';
+import { MD3LightTheme, configureFonts } from 'react-native-paper';
 
 export const colors = {
   primary: '#0d9488',
@@ -18,8 +18,8 @@ export const colors = {
   bgElevated: '#ffffff',
   card: '#ffffff',
   text: '#0f172a',
-  textSecondary: '#64748b',
-  textMuted: '#94a3b8',
+  textSecondary: '#334155',
+  textMuted: '#64748b',
   sider: '#0b1220',
   siderElevated: '#151f32',
   border: '#e2e8f0',
@@ -68,17 +68,34 @@ export const shadows = {
 };
 
 export const typography = {
-  hero: { fontSize: 28, fontWeight: '800' as const, letterSpacing: -0.5 },
-  title: { fontSize: 24, fontWeight: '700' as const, letterSpacing: -0.3 },
-  section: { fontSize: 17, fontWeight: '700' as const },
-  body: { fontSize: 15, fontWeight: '500' as const },
-  caption: { fontSize: 13, fontWeight: '400' as const },
-  label: { fontSize: 12, fontWeight: '600' as const, letterSpacing: 0.3 },
+  hero: { fontSize: 32, fontWeight: '800' as const, letterSpacing: -0.4 },
+  title: { fontSize: 26, fontWeight: '700' as const, letterSpacing: -0.3 },
+  section: { fontSize: 18, fontWeight: '700' as const },
+  body: { fontSize: 16, fontWeight: '600' as const, lineHeight: 22 },
+  caption: { fontSize: 15, fontWeight: '500' as const, lineHeight: 21 },
+  label: { fontSize: 14, fontWeight: '700' as const },
 };
+
+const mobileFonts = configureFonts({
+  config: {
+    displaySmall: { fontSize: 28, lineHeight: 36, fontWeight: '700' },
+    headlineSmall: { fontSize: 22, lineHeight: 28, fontWeight: '700' },
+    titleLarge: { fontSize: 20, lineHeight: 26, fontWeight: '700' },
+    titleMedium: { fontSize: 17, lineHeight: 24, fontWeight: '700' },
+    titleSmall: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
+    bodyLarge: { fontSize: 17, lineHeight: 24, fontWeight: '400' },
+    bodyMedium: { fontSize: 16, lineHeight: 22, fontWeight: '400' },
+    bodySmall: { fontSize: 14, lineHeight: 20, fontWeight: '500' },
+    labelLarge: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+    labelMedium: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
+    labelSmall: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
+  },
+});
 
 export const appTheme = {
   ...MD3LightTheme,
   roundness: radii.md,
+  fonts: mobileFonts,
   colors: {
     ...MD3LightTheme.colors,
     primary: colors.primary,

@@ -788,10 +788,10 @@ const styles = StyleSheet.create({
   moreText: { fontSize: 20, fontWeight: '700', color: colors.textMuted, letterSpacing: 1 },
   ledgerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 16 },
   txnRow: { marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 8 },
-  words: { fontSize: 12, color: '#64748b', paddingHorizontal: 4, marginBottom: 4 },
+  words: { fontSize: 14, fontWeight: '500', color: '#334155', paddingHorizontal: 4, marginBottom: 4 },
   splitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   splitLabel: { flex: 1, fontSize: 14 },
   splitInput: { width: 120 },
-  splitTotal: { fontSize: 13, color: '#64748b', marginBottom: 4 },
+  splitTotal: { fontSize: 15, fontWeight: '600', color: '#334155', marginBottom: 4 },
   splitError: { color: '#dc2626' },
 });

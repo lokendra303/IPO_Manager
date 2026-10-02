@@ -36,6 +36,7 @@ import {
 import { listMemberGroups } from '../services/memberGroupService.js';
 import { ensureWallet } from '../services/walletService.js';
 import { listBankAccounts, getWalletBalancesByPurpose } from '../services/bankAccountService.js';
+import { attachShareProviderLines } from '../services/profitShareService.js';
 
 function dateOnly(value) {
   return toDate(value);
@@ -121,7 +122,7 @@ async function loadIpoDetail(conn, tenantId, ipoId) {
 
 async function loadIpoApplications(conn, tenantId, ipoId) {
   const [rows] = await conn.query(IPO_APPLICATIONS_SQL, [ipoId, tenantId]);
-  return rows;
+  return attachShareProviderLines(conn, rows);
 }
 
 const router = Router();

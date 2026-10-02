@@ -702,11 +702,9 @@ export default function MembersScreen() {
 
 const styles = StyleSheet.create({
   filterLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
     marginBottom: 6,
   },
   compactRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
@@ -716,7 +714,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: '700', flex: 1 },
   input: { marginBottom: 10 },
   fieldLabel: { fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, marginTop: 4 },
-  groupHint: { fontSize: 12, color: colors.textSecondary, marginBottom: 8, lineHeight: 18 },
+  groupHint: { fontSize: 15, fontWeight: '500', color: colors.textSecondary, marginBottom: 8, lineHeight: 22 },
   colGuide: {
     padding: 10,
     borderRadius: 8,
@@ -756,7 +754,7 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 16,
   },
-  inactiveText: { color: '#92400e', fontSize: 13 },
+  inactiveText: { color: '#92400e', fontSize: 15, fontWeight: '600' },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -770,7 +768,7 @@ const styles = StyleSheet.create({
   infoValue: { color: colors.text, fontSize: 14, fontWeight: '500', textAlign: 'right', flexShrink: 1 },
   copyBtn: { padding: 4 },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 12 },
-  ruleLine: { fontSize: 13, color: colors.text, marginBottom: 8, lineHeight: 20 },
+  ruleLine: { fontSize: 15, color: colors.text, marginBottom: 8, lineHeight: 22 },
   muted: { color: colors.textSecondary, fontSize: 14 },
   amount: { fontWeight: '600', color: colors.text },
 });

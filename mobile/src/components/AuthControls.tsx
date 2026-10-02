@@ -115,11 +115,10 @@ export function AuthLinkButton({ label, onPress }: { label: string; onPress: () 
 const styles = StyleSheet.create({
   field: { marginBottom: spacing.md },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: colors.textSecondary,
     marginBottom: 8,
-    letterSpacing: 0.2,
   },
   inputWrap: {
     flexDirection: 'row',
@@ -161,8 +160,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   tabText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: colors.textSecondary,
   },
   tabTextActive: { color: '#fff' },

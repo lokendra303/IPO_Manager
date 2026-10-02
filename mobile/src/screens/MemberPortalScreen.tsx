@@ -232,7 +232,7 @@ export default function MemberPortalScreen() {
 }
 
 const styles = StyleSheet.create({
-  pending: { color: colors.error, fontWeight: '600', fontSize: 13 },
+  pending: { color: colors.error, fontWeight: '700', fontSize: 15 },
   links: {
     flexDirection: 'row',
     flexWrap: 'wrap',

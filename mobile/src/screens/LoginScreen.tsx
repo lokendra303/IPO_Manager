@@ -594,8 +594,8 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   hint: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 15,
+    lineHeight: 22,
     color: colors.textSecondary,
     marginBottom: spacing.md,
   },
@@ -619,7 +619,7 @@ const styles = StyleSheet.create({
   footer: {
     textAlign: 'center',
     color: '#64748b',
-    fontSize: 12,
+    fontSize: 14,
     paddingVertical: spacing.lg,
   },
 });

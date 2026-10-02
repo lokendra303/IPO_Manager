@@ -408,7 +408,7 @@ export default function AdjustFundsScreen() {
 
 const styles = StyleSheet.create({
   bold: { fontWeight: '600' },
-  warn: { color: '#dc2626', fontSize: 12 },
+  warn: { color: '#dc2626', fontSize: 15, fontWeight: '600' },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',

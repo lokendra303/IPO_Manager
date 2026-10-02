@@ -9,7 +9,8 @@ import {
   getShareRulesForIpo,
   loadShareRulesByIpoIds,
   tryResolveShareRulesForMember,
-  requireIpoShareRule,
+  MISSING_IPO_SHARE_RULE,
+  MEMBER_NOT_ON_SHARE_RULE,
 } from './ipoShareRuleService.js';
 
 export function validatePercents(providerPercent, managerPercent, label = 'Share') {
@@ -594,8 +595,14 @@ export function validateMemberRulesSet(rules) {
         `Loss shares for ${scopeName} (${lossProvider}% + ${lossManager}% manager) cannot exceed 100%`
       );
     }
-    if (!r.fundProviderId) {
-      throw new AppError(`Rule "${r.ruleName}": fund provider is required`);
+    const providerInvolved = profitProvider > 0 || lossProvider > 0;
+    const oneTime = r.ruleName === ONE_TIME_RULE_NAME;
+    if (!r.fundProviderId && (providerInvolved || !oneTime)) {
+      throw new AppError(
+        oneTime
+          ? 'Select a fund provider. The provider receives a share of this split.'
+          : `Rule "${r.ruleName}": fund provider is required`
+      );
     }
     validateProfitLossPercents({
       profitProviderPercent: r.profitProviderPercent,
@@ -657,6 +664,165 @@ export function calculateMultiRuleSplit(grossProfitLoss, rules) {
     sumProviderPct,
     sumManagerPct,
   };
+}
+
+export const ONE_TIME_RULE_NAME = 'One-time';
+export const ONE_TIME_RULE_REQUIRED = 'Enter a one-time split rule, or add this member to the IPO share template';
+
+function percentValue(value) {
+  const n = Number(value ?? 0);
+  return n;
+}
+
+/** One-time rules apply only to this split. They are not saved as share rules. */
+export function indexInstantRules(instantRules) {
+  const map = new Map();
+  if (instantRules == null) return map;
+  if (!Array.isArray(instantRules)) throw new AppError('instantRules must be a list');
+  for (const raw of instantRules) {
+    if (!raw || typeof raw !== 'object') throw new AppError('Invalid one-time split rule');
+    const applicationId = Number(raw.applicationId);
+    if (!Number.isInteger(applicationId) || applicationId < 1) {
+      throw new AppError('Each one-time rule needs an application id');
+    }
+    if (map.has(applicationId)) throw new AppError('Duplicate one-time rule for an application');
+    const profitProviderPercent = percentValue(raw.profitProviderPercent);
+    const profitManagerPercent = percentValue(raw.profitManagerPercent);
+    const lossProviderPercent = percentValue(raw.lossProviderPercent);
+    const lossManagerPercent = percentValue(raw.lossManagerPercent);
+    validateProfitLossPercents({
+      profitProviderPercent,
+      profitManagerPercent,
+      lossProviderPercent,
+      lossManagerPercent,
+    });
+    const providerInvolved = profitProviderPercent > 0 || lossProviderPercent > 0;
+    let fundProviderId = null;
+    if (raw.fundProviderId != null && raw.fundProviderId !== '') {
+      fundProviderId = Number(raw.fundProviderId);
+      if (!Number.isInteger(fundProviderId) || fundProviderId < 1) {
+        throw new AppError('Invalid fund provider');
+      }
+    } else if (providerInvolved) {
+      throw new AppError('Select a fund provider. The provider receives a share of this split.');
+    }
+    map.set(applicationId, {
+      applicationId,
+      fundProviderId,
+      profitProviderPercent,
+      profitManagerPercent,
+      lossProviderPercent,
+      lossManagerPercent,
+    });
+  }
+  return map;
+}
+
+export function instantRuleToSplitRules(instant, providerName) {
+  return [{
+    id: null,
+    ruleName: ONE_TIME_RULE_NAME,
+    fundProviderId: instant.fundProviderId,
+    providerName: providerName || null,
+    profitProviderPercent: instant.profitProviderPercent,
+    profitManagerPercent: instant.profitManagerPercent,
+    lossProviderPercent: instant.lossProviderPercent,
+    lossManagerPercent: instant.lossManagerPercent,
+    isActive: true,
+    ipoId: null,
+  }];
+}
+
+function canUseInstantRule(error) {
+  if (!error) return true;
+  return error === MISSING_IPO_SHARE_RULE || error === MEMBER_NOT_ON_SHARE_RULE;
+}
+
+/**
+ * An explicit one-time rule applies only to that application (this member on this IPO).
+ * It does not change the template and is not used for any other member.
+ * With no one-time rule, a template match is used. Otherwise the application is not split.
+ */
+export function resolveApplicationSplitRules(ipoRules, memberId, instantRule, providerName) {
+  if (instantRule) {
+    return {
+      rules: instantRuleToSplitRules(instantRule, providerName),
+      error: null,
+      ruleSource: 'one-time',
+      needsInstantRule: false,
+    };
+  }
+  const resolved = tryResolveShareRulesForMember(ipoRules, memberId);
+  if (resolved.rules.length) {
+    return { rules: resolved.rules, error: null, ruleSource: 'template', needsInstantRule: false };
+  }
+  if (!canUseInstantRule(resolved.error)) {
+    return { rules: [], error: resolved.error, ruleSource: 'none', needsInstantRule: false };
+  }
+  return {
+    rules: [],
+    error: ONE_TIME_RULE_REQUIRED,
+    ruleSource: 'none',
+    needsInstantRule: true,
+  };
+}
+
+async function distributionIsOneTime(conn, distributionId) {
+  if (!distributionId) return false;
+  const [rows] = await conn.query(
+    `SELECT rule_name, member_share_rule_id
+     FROM profit_share_distribution_rules
+     WHERE distribution_id = ?`,
+    [distributionId]
+  );
+  return rows.some((row) => row.rule_name === ONE_TIME_RULE_NAME && row.member_share_rule_id == null);
+}
+
+/** Per-provider amounts stored on a split, so a combined provider total can be labeled. */
+export async function attachShareProviderLines(conn, applications) {
+  const rows = applications || [];
+  const distIds = [...new Set(rows.map((row) => row.profit_share_distribution_id).filter(Boolean))];
+  if (!distIds.length) {
+    return rows.map((row) => ({ ...row, share_provider_lines: [] }));
+  }
+  const [lines] = await conn.query(
+    `SELECT psdr.distribution_id, psdr.fund_provider_id, psdr.rule_name,
+            psdr.provider_percent, psdr.provider_amount, fp.name AS provider_name
+     FROM profit_share_distribution_rules psdr
+     LEFT JOIN fund_providers fp ON fp.id = psdr.fund_provider_id
+     WHERE psdr.distribution_id IN (${distIds.map(() => '?').join(',')})
+     ORDER BY psdr.id`,
+    distIds
+  );
+  const byDist = new Map();
+  for (const line of lines) {
+    const list = byDist.get(line.distribution_id) || [];
+    list.push({
+      fundProviderId: line.fund_provider_id,
+      providerName: line.provider_name || null,
+      ruleName: line.rule_name || null,
+      providerPercent: Number(line.provider_percent ?? 0),
+      providerAmount: Number(line.provider_amount ?? 0),
+    });
+    byDist.set(line.distribution_id, list);
+  }
+  return rows.map((row) => ({
+    ...row,
+    share_provider_lines: byDist.get(row.profit_share_distribution_id) || [],
+  }));
+}
+
+async function providerNamesForIds(conn, tenantId, providerIds) {
+  const ids = [...new Set(providerIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  const map = new Map();
+  if (!ids.length) return map;
+  const [rows] = await conn.query(
+    `SELECT id, name FROM fund_providers WHERE tenant_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+    [tenantId, ...ids]
+  );
+  for (const row of rows) map.set(Number(row.id), row.name);
+  if (map.size !== ids.length) throw new AppError('Fund provider not found', 404);
+  return map;
 }
 
 /** Manager/provider/member split for an application (stored distribution or live rules). */
@@ -917,13 +1083,16 @@ export async function tryAutoDistributeApplication(conn, { tenantId, application
   return results[0] || { applicationId, skipped: true, reason: 'No distribution result' };
 }
 
-export async function distributeProfitShares(conn, { tenantId, ipoId, applicationIds, userId }) {
+export async function distributeProfitShares(conn, { tenantId, ipoId, applicationIds, userId, instantRules }) {
   if (ipoId && (await isIpoFinancialsFrozen(conn, tenantId, ipoId))) {
     throw new AppError('Cannot distribute P&L for a closed IPO. Reopen the IPO first.');
   }
-  if (ipoId) {
-    await requireIpoShareRule(conn, tenantId, ipoId);
-  }
+  const instantByApp = indexInstantRules(instantRules);
+  const providerNames = await providerNamesForIds(
+    conn,
+    tenantId,
+    [...instantByApp.values()].map((rule) => rule.fundProviderId)
+  );
 
   let query = `
     SELECT a.*, i.name as ipo_name, m.display_name, i.status AS ipo_status
@@ -951,16 +1120,31 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
 
   for (const app of apps) {
     const existing = await getDistributionForApplication(conn, tenantId, app.id);
-    if (existing && !(await distributionNeedsUpdate(conn, tenantId, app, existing))) {
+    const instant = instantByApp.get(app.id) || null;
+    if (existing && !instant && await distributionIsOneTime(conn, existing.id)) {
+      const grossNow = Number(app.profit_loss);
+      results.push({
+        applicationId: app.id,
+        memberName: app.display_name,
+        skipped: true,
+        reason: amountsMatch(existing.gross_profit_loss, grossNow)
+          ? 'Already distributed'
+          : 'This member has a one-time split on this IPO. Set a new one-time rule for this member, or revoke the split.',
+      });
+      continue;
+    }
+    if (existing && !instant && !(await distributionNeedsUpdate(conn, tenantId, app, existing))) {
       results.push({ applicationId: app.id, memberName: app.display_name, skipped: true, reason: 'Already distributed' });
       continue;
     }
-    if (existing) {
-      await revokeProfitShareDistribution(conn, { tenantId, applicationId: app.id, userId });
-    }
 
     const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
-    const { rules, error } = tryResolveShareRulesForMember(ipoRules, app.member_id);
+    const { rules, error, ruleSource } = resolveApplicationSplitRules(
+      ipoRules,
+      app.member_id,
+      instant,
+      instant ? providerNames.get(instant.fundProviderId) : null
+    );
 
     const gross = Number(app.profit_loss);
     if (gross === 0) {
@@ -978,9 +1162,13 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
         applicationId: app.id,
         memberName: app.display_name,
         skipped: true,
-        reason: error || 'Select a share rule for this IPO',
+        reason: error || ONE_TIME_RULE_REQUIRED,
       });
       continue;
+    }
+
+    if (existing) {
+      await revokeProfitShareDistribution(conn, { tenantId, applicationId: app.id, userId });
     }
 
     validateMemberRulesSet(rules);
@@ -1009,7 +1197,9 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
         totalManager,
         memberAmount,
         now,
-        `IPO: ${app.ipo_name} (${lines.length} rule(s))`,
+        ruleSource === 'one-time'
+          ? `One-time split for this member on ${app.ipo_name}`
+          : `IPO: ${app.ipo_name} (${lines.length} rule(s))`,
       ]
     );
     const distributionId = distResult.insertId;
@@ -1059,7 +1249,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
 
     // Manager share is credited to wallet when fund return is received (not here).
 
-    const providerNames = [...new Set(lines.map((l) => l.providerName).filter(Boolean))].join(', ');
+    const providerNameLabel = [...new Set(lines.map((l) => l.providerName).filter(Boolean))].join(', ');
 
     results.push({
       applicationId: app.id,
@@ -1069,7 +1259,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
       isLoss,
       pnlType,
       ruleLabel: isLoss ? 'loss' : 'profit',
-      ruleSource: 'member',
+      ruleSource,
       ruleCount: lines.length,
       ruleLines: lines,
       providerPercent: sumProviderPct,
@@ -1077,7 +1267,7 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
       providerAmount: totalProvider,
       managerAmount: totalManager,
       memberAmount,
-      providerName: providerNames,
+      providerName: providerNameLabel,
       skipped: false,
     });
   }
@@ -1086,7 +1276,13 @@ export async function distributeProfitShares(conn, { tenantId, ipoId, applicatio
 }
 
 /** Preview pending P&L splits and rows that need re-split after rule changes. */
-export async function previewProfitShares(conn, tenantId, { ipoId, applicationIds } = {}) {
+export async function previewProfitShares(conn, tenantId, { ipoId, applicationIds, instantRules } = {}) {
+  const instantByApp = indexInstantRules(instantRules);
+  const providerNames = await providerNamesForIds(
+    conn,
+    tenantId,
+    [...instantByApp.values()].map((rule) => rule.fundProviderId)
+  );
   let query = `
     SELECT a.id, a.member_id, a.ipo_id, a.profit_loss, m.display_name, i.name as ipo_name,
            psd.id AS distribution_id
@@ -1113,27 +1309,57 @@ export async function previewProfitShares(conn, tenantId, { ipoId, applicationId
   for (const app of apps) {
     const gross = Number(app.profit_loss);
     const ipoRules = await getShareRulesForIpo(conn, tenantId, app.ipo_id);
-    const { rules, error } = tryResolveShareRulesForMember(ipoRules, app.member_id);
-    let configWarning = error;
-    let split;
-    try {
-      split = calculateMultiRuleSplit(gross, rules);
-    } catch (e) {
-      configWarning = e.message || 'Invalid share rules';
-      split = {
-        pnlType: gross >= 0 ? 'PROFIT' : 'LOSS',
-        totalProvider: 0,
-        totalManager: 0,
-        memberAmount: gross,
-        lines: [],
-      };
-    }
+    const instant = instantByApp.get(app.id) || null;
+    let resolved = resolveApplicationSplitRules(
+      ipoRules,
+      app.member_id,
+      instant,
+      instant ? providerNames.get(instant.fundProviderId) : null
+    );
 
     let needsResplit = false;
     if (app.distribution_id) {
       const existing = await getDistributionForApplication(conn, tenantId, app.id);
-      needsResplit = existing ? await distributionNeedsUpdate(conn, tenantId, app, existing) : false;
-      if (!needsResplit) continue;
+      const oneTime = existing && await distributionIsOneTime(conn, existing.id);
+      if (oneTime && !instant && amountsMatch(existing.gross_profit_loss, gross)) continue;
+      if (oneTime && !instant) {
+        needsResplit = true;
+        resolved = {
+          rules: [],
+          error: ONE_TIME_RULE_REQUIRED,
+          ruleSource: 'none',
+          needsInstantRule: true,
+        };
+      } else {
+        needsResplit = existing ? await distributionNeedsUpdate(conn, tenantId, app, existing) : false;
+        if (!needsResplit && !instant) continue;
+      }
+    }
+
+    const { rules, needsInstantRule, ruleSource } = resolved;
+    let configWarning = resolved.error;
+    let split;
+    if (!rules.length) {
+      split = {
+        pnlType: gross >= 0 ? 'PROFIT' : 'LOSS',
+        totalProvider: 0,
+        totalManager: 0,
+        memberAmount: 0,
+        lines: [],
+      };
+    } else {
+      try {
+        split = calculateMultiRuleSplit(gross, rules);
+      } catch (e) {
+        configWarning = e.message || 'Invalid share rules';
+        split = {
+          pnlType: gross >= 0 ? 'PROFIT' : 'LOSS',
+          totalProvider: 0,
+          totalManager: 0,
+          memberAmount: 0,
+          lines: [],
+        };
+      }
     }
 
     previews.push({
@@ -1143,12 +1369,13 @@ export async function previewProfitShares(conn, tenantId, { ipoId, applicationId
       grossProfitLoss: gross,
       pnlType: split.pnlType,
       ruleCount: rules.length,
-      ruleSource: rules.length ? 'member' : 'none',
+      ruleSource,
       ruleLines: split.lines,
       providerAmount: split.totalProvider,
       managerAmount: split.totalManager,
       memberAmount: split.memberAmount,
       configWarning,
+      needsInstantRule,
       needsResplit,
     });
   }

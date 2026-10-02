@@ -1000,9 +1000,28 @@ export default function ProfitSharingPage() {
         );
       },
     },
-    { title: 'Provider share', dataIndex: 'provider_amount', render: (v) => (
-      <span className={pnlClassName(v)}>{formatCurrency(v)}</span>
-    )},
+    { title: 'Provider share', dataIndex: 'provider_amount', render: (v, r) => {
+      const lines = (r.ruleLines || []).filter((line) => line.provider_name || line.providerName || Number(line.provider_amount ?? line.providerAmount) !== 0);
+      if (lines.length > 1) {
+        return (
+          <div style={{ fontSize: 12 }}>
+            {lines.map((line) => {
+              const name = line.provider_name || line.providerName || 'Provider';
+              const amount = line.provider_amount ?? line.providerAmount;
+              return (
+                <div key={line.id || `${name}-${line.rule_name || line.ruleName}`}>
+                  <span className={pnlClassName(amount)}>{name}: {formatCurrency(amount)}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+      const name = lines[0]?.provider_name || lines[0]?.providerName || r.provider_name;
+      return (
+        <span className={pnlClassName(v)}>{name ? `${name}: ` : ''}{formatCurrency(v)}</span>
+      );
+    }},
     { title: 'Manager share', dataIndex: 'manager_amount', render: (v) => (
       <span className={pnlClassName(v)}>{formatCurrency(v)}</span>
     )},

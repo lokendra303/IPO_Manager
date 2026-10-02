@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: '#f8fafc',
   },
-  metricLabel: { color: '#64748b', fontSize: 12, fontWeight: '600', flex: 1 },
+  metricLabel: { color: '#334155', fontSize: 15, fontWeight: '600', flex: 1 },
   metricValue: { color: '#0f172a', fontSize: 15, fontWeight: '700' },
   ipoRow: {
     flexDirection: 'row',

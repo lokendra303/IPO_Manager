@@ -54,13 +54,13 @@ const styles = StyleSheet.create({
   },
   pressed: { backgroundColor: colors.primaryLight, borderColor: colors.primaryMuted },
   left: { flex: 1 },
-  title: { ...typography.body, fontWeight: '600', color: colors.text },
-  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 3, lineHeight: 18 },
+  title: { ...typography.body, fontSize: 17, fontWeight: '700', color: colors.text },
+  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 4, lineHeight: 21 },
   badge: {
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  badgeText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 });

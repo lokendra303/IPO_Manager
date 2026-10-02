@@ -763,10 +763,10 @@ router.get('/providers/:providerId/template', async (req, res, next) => {
 
 router.post('/preview', async (req, res, next) => {
   try {
-    const { ipoId, applicationIds } = req.body;
+    const { ipoId, applicationIds, instantRules } = req.body;
     const conn = await pool.getConnection();
     try {
-      const previews = await previewProfitShares(conn, req.tenantId, { ipoId, applicationIds });
+      const previews = await previewProfitShares(conn, req.tenantId, { ipoId, applicationIds, instantRules });
       res.json(previews);
     } finally {
       conn.release();
@@ -813,12 +813,13 @@ router.post('/revoke', async (req, res, next) => {
 
 router.post('/distribute', async (req, res, next) => {
   try {
-    const { ipoId, applicationIds } = req.body;
+    const { ipoId, applicationIds, instantRules } = req.body;
     const results = await withTransaction((conn) =>
       distributeProfitShares(conn, {
         tenantId: req.tenantId,
         ipoId: ipoId || null,
         applicationIds,
+        instantRules,
         userId: req.user.userId,
       })
     );

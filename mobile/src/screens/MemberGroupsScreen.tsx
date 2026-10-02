@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', flex: 1 },
   input: { marginBottom: 12 },
   muted: { color: colors.textSecondary, fontSize: 14 },
-  hint: { color: colors.textSecondary, fontSize: 13, marginBottom: 12, lineHeight: 20 },
+  hint: { color: colors.textSecondary, fontSize: 15, fontWeight: '500', marginBottom: 12, lineHeight: 22 },
   warning: { color: '#b45309', fontSize: 14 },
   modal: { flex: 1, backgroundColor: colors.bg },
   modalHeader: {

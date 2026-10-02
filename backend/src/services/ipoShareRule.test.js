@@ -1,6 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateMultiRuleSplit, calculateSplit } from './profitShareService.js';
+import {
+  calculateMultiRuleSplit,
+  calculateSplit,
+  resolveApplicationSplitRules,
+  indexInstantRules,
+  ONE_TIME_RULE_NAME,
+  ONE_TIME_RULE_REQUIRED,
+} from './profitShareService.js';
 import {
   MISSING_IPO_SHARE_RULE,
   MEMBER_NOT_ON_SHARE_RULE,
@@ -117,6 +124,73 @@ describe('IPO share rules', () => {
     assert.equal(pack.hasConflicts, true);
     assert.equal(pack.conflicts.length, 1);
     assert.equal(pack.packName, 'Mix');
+  });
+
+  it('applies an explicit one-time rule only to that application', () => {
+    const explicit = resolveApplicationSplitRules(sampleRule, 101, {
+      fundProviderId: 9,
+      profitProviderPercent: 10,
+      profitManagerPercent: 10,
+      lossProviderPercent: 10,
+      lossManagerPercent: 10,
+    }, 'Other');
+    assert.equal(explicit.ruleSource, 'one-time');
+    assert.equal(explicit.rules[0].fundProviderId, 9);
+    assert.equal(explicit.rules[0].id, null);
+
+    const stillTemplate = resolveApplicationSplitRules(sampleRule, 101, null, null);
+    assert.equal(stillTemplate.ruleSource, 'template');
+    assert.equal(stillTemplate.rules[0].fundProviderId, 3);
+
+    const uncovered = resolveApplicationSplitRules(sampleRule, 999, {
+      fundProviderId: 9,
+      profitProviderPercent: 40,
+      profitManagerPercent: 10,
+      lossProviderPercent: 40,
+      lossManagerPercent: 10,
+    }, 'Temp provider');
+    assert.equal(uncovered.needsInstantRule, false);
+    assert.equal(uncovered.ruleSource, 'one-time');
+    assert.equal(uncovered.rules[0].id, null);
+    assert.equal(uncovered.rules[0].ruleName, ONE_TIME_RULE_NAME);
+    const split = calculateMultiRuleSplit(1000, uncovered.rules);
+    assert.equal(split.totalProvider, 400);
+    assert.equal(split.totalManager, 100);
+    assert.equal(split.memberAmount, 500);
+
+    const missing = resolveApplicationSplitRules(null, 101, null, null);
+    assert.equal(missing.needsInstantRule, true);
+    assert.equal(missing.rules.length, 0);
+    assert.equal(missing.error, ONE_TIME_RULE_REQUIRED);
+  });
+
+  it('requires a fund provider only when the provider receives a share', () => {
+    const noProviderShare = indexInstantRules([{
+      applicationId: 8,
+      profitProviderPercent: 0,
+      profitManagerPercent: 20,
+      lossProviderPercent: 0,
+      lossManagerPercent: 0,
+    }]);
+    assert.equal(noProviderShare.get(8).fundProviderId, null);
+
+    assert.throws(
+      () => indexInstantRules([{
+        applicationId: 9,
+        profitProviderPercent: 40,
+        profitManagerPercent: 10,
+        lossProviderPercent: 0,
+        lossManagerPercent: 0,
+      }]),
+      (err) => /Select a fund provider/.test(err.message)
+    );
+  });
+
+  it('rejects an invalid one-time rule', () => {
+    assert.throws(
+      () => indexInstantRules([{ applicationId: 5, fundProviderId: 1, profitProviderPercent: 80, profitManagerPercent: 30, lossProviderPercent: 0, lossManagerPercent: 0 }]),
+      (err) => /cannot exceed 100%/.test(err.message)
+    );
   });
 
   it('allows a template of non-overlapping rules', () => {

@@ -25,6 +25,36 @@ export function formatCurrency(value: number | string | null | undefined): strin
   }).format(n);
 }
 
+export function providerLineName(line: any) {
+  return line?.providerName || line?.provider_name || '';
+}
+
+export function providerLineAmount(line: any) {
+  return Number(line?.providerAmount ?? line?.provider_amount ?? 0);
+}
+
+function providerLinePercent(line: any) {
+  return Number(line?.providerPercent ?? line?.provider_percent ?? 0);
+}
+
+function providerLineRule(line: any) {
+  return line?.ruleName || line?.rule_name || '';
+}
+
+export function visibleProviderLines(lines: any[] | null | undefined) {
+  return (lines || []).filter((line) => providerLineName(line) || providerLineAmount(line) !== 0);
+}
+
+export function providerShareLabel(line: any, lines: any[]) {
+  const name = providerLineName(line) || 'Provider';
+  const sameName = lines.filter((item) => (providerLineName(item) || 'Provider') === name).length > 1;
+  const rule = providerLineRule(line);
+  const percent = providerLinePercent(line);
+  if (sameName && rule) return `${name} · ${rule}`;
+  if (lines.length > 1 && percent) return `${name} ${percent}%`;
+  return name;
+}
+
 const ONES = [
   '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
   'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',

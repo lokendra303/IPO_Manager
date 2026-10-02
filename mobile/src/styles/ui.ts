@@ -47,8 +47,8 @@ export const ui = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.borderLight,
   },
-  infoLabel: { ...typography.caption, color: colors.textSecondary, flex: 1 },
-  infoValue: { ...typography.caption, fontWeight: '600', color: colors.text, textAlign: 'right', flex: 1 },
+  infoLabel: { ...typography.body, fontWeight: '500', color: colors.textSecondary, flex: 1 },
+  infoValue: { ...typography.body, fontWeight: '700', color: colors.text, textAlign: 'right', flex: 1 },
 
   banner: {
     borderRadius: radii.md,
@@ -60,7 +60,7 @@ export const ui = StyleSheet.create({
   bannerInfo: { backgroundColor: colors.infoLight, borderColor: '#bae6fd' },
   bannerWarn: { backgroundColor: colors.warningLight, borderColor: '#fcd34d' },
   bannerSuccess: { backgroundColor: colors.successLight, borderColor: '#86efac' },
-  bannerText: { ...typography.caption, color: colors.text, lineHeight: 20 },
+  bannerText: { ...typography.body, fontWeight: '500', color: colors.text, lineHeight: 22 },
 
   rowActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
@@ -103,10 +103,10 @@ export const ui = StyleSheet.create({
   modalNav: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.lg, gap: spacing.sm },
 
   sectionLabel: {
-    ...typography.label,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    marginTop: spacing.sm,
+    ...typography.body,
+    fontWeight: '700',
+    color: colors.text,
+    marginTop: spacing.md,
     marginBottom: spacing.sm,
   },
 
@@ -127,10 +127,10 @@ export const ui = StyleSheet.create({
     borderColor: colors.primaryDark,
   },
   chipDisabled: { opacity: 0.55 },
-  chipText: { ...typography.caption, fontWeight: '600', color: colors.text },
+  chipText: { ...typography.body, fontWeight: '700', color: colors.text },
   chipTextActive: { color: '#fff' },
 
   input: { marginBottom: spacing.sm },
-  hint: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md, lineHeight: 20 },
+  hint: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.sm, lineHeight: 22 },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.md },
 });

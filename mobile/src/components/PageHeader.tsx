@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   textBlock: { flex: 1 },
-  title: { ...typography.title, fontSize: 22, color: colors.text },
-  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 6, lineHeight: 20 },
+  title: { ...typography.title, fontSize: 24, color: colors.text },
+  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 4, lineHeight: 21 },
   right: { flexShrink: 0, alignItems: 'flex-end' },
 });

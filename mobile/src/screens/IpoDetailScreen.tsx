@@ -25,7 +25,7 @@ import {
   ipoAllowsHni,
   ipoHasHniLot,
 } from '../utils/ipoCategories';
-import { formatCurrency, formatPan, pnlColor } from '../utils/format';
+import { formatCurrency, formatPan, pnlColor, providerLineAmount, providerShareLabel, visibleProviderLines } from '../utils/format';
 import { isThirdPartyMandate, isMandateAllotted } from '../utils/fundingMode';
 import { computeProfitFromWithdrawal, getApplicationProfit, ipoIsListed, remarksOrMemberSendNote } from '../utils/ipoProfit';
 import { allotmentCheckPdfBase64, summarizeAllotmentRows } from '../utils/allotmentCheckPdf';
@@ -65,6 +65,64 @@ function remainingAppPrincipal(app: any) {
   return Math.max(0, Number(app?.amount || 0) - Number(app?.adjusted_out_amount || 0));
 }
 
+function emptyInstantRule() {
+  return {
+    fundProviderId: undefined as number | undefined,
+    profitProviderPercent: '0',
+    profitManagerPercent: '0',
+    lossProviderPercent: '0',
+    lossManagerPercent: '0',
+  };
+}
+
+function percentOk(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= 100;
+}
+
+function providerInvolved(rule: any) {
+  return Number(rule?.profitProviderPercent) > 0 || Number(rule?.lossProviderPercent) > 0;
+}
+
+function memberSharePercent(provider: unknown, manager: unknown) {
+  const p = Number(provider ?? 0);
+  const m = Number(manager ?? 0);
+  if (!percentOk(p) || !percentOk(m) || p + m > 100) return null;
+  return Math.round((100 - p - m) * 100) / 100;
+}
+
+function instantRuleReady(rule: any) {
+  if (memberSharePercent(rule?.profitProviderPercent, rule?.profitManagerPercent) == null) return false;
+  if (memberSharePercent(rule?.lossProviderPercent, rule?.lossManagerPercent) == null) return false;
+  if (providerInvolved(rule) && !rule?.fundProviderId) return false;
+  return true;
+}
+
+function liveOneTimeSplit(gross: unknown, rule: any) {
+  if (!rule) return null;
+  const g = Number(gross);
+  const isLoss = g < 0;
+  const providerPercent = Number(isLoss ? rule.lossProviderPercent : rule.profitProviderPercent);
+  const managerPercent = Number(isLoss ? rule.lossManagerPercent : rule.profitManagerPercent);
+  const memberPercent = memberSharePercent(providerPercent, managerPercent);
+  if (memberPercent == null) return null;
+  const providerAmount = Math.round((g * providerPercent) / 100 * 100) / 100;
+  const managerAmount = Math.round((g * managerPercent) / 100 * 100) / 100;
+  const memberAmount = Math.round((g - providerAmount - managerAmount) * 100) / 100;
+  return { providerPercent, managerPercent, memberPercent, providerAmount, managerAmount, memberAmount, pnlType: isLoss ? 'LOSS' : 'PROFIT' };
+}
+
+function instantRulePayload(applicationId: number, rule: any) {
+  return {
+    applicationId,
+    fundProviderId: rule.fundProviderId ? Number(rule.fundProviderId) : null,
+    profitProviderPercent: Number(rule.profitProviderPercent ?? 0),
+    profitManagerPercent: Number(rule.profitManagerPercent ?? 0),
+    lossProviderPercent: Number(rule.lossProviderPercent ?? 0),
+    lossManagerPercent: Number(rule.lossManagerPercent ?? 0),
+  };
+}
+
 export default function IpoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -84,6 +142,9 @@ export default function IpoDetailScreen() {
   const [profitModalOpen, setProfitModalOpen] = useState(false);
   const [profitPreview, setProfitPreview] = useState<any[]>([]);
   const [profitLoading, setProfitLoading] = useState(false);
+  const [instantByApp, setInstantByApp] = useState<Record<number, any>>({});
+  const [fundProviders, setFundProviders] = useState<any[]>([]);
+  const [singleSplit, setSingleSplit] = useState(false);
   const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [hniModalOpen, setHniModalOpen] = useState(false);
@@ -195,11 +256,7 @@ export default function IpoDetailScreen() {
       : shareRules.filter((r: any) => ipoShareRuleIds.includes(Number(r.id))));
   const hasShareRule = selectedShareRules.length > 0;
   const ruleMemberIdSet = new Set(selectedShareRules.flatMap(shareRuleMemberIds));
-  const availableMembers = members.filter((m) => {
-    if (appliedMemberIds.has(m.id)) return false;
-    if (hasShareRule && !ruleMemberIdSet.has(m.id)) return false;
-    return true;
-  });
+  const availableMembers = members.filter((m) => !appliedMemberIds.has(m.id));
   const isMemberAvailable = (memberId: number) => availableMembers.some((m) => m.id === memberId);
   const getGroupMemberDistributeReason = (m: any): 'inactive' | 'applied' | null => {
     if (m.status === 'INACTIVE' || !members.some((am) => am.id === m.id)) return 'inactive';
@@ -575,10 +632,6 @@ export default function IpoDetailScreen() {
   };
 
   const openDistribute = async () => {
-    if (!hasShareRule) {
-      Alert.alert('Share template required', 'Select a share template for this IPO first');
-      return;
-    }
     setSelectedIds([]);
     setSelectedGroupBulkIds([]);
     setStep(0);
@@ -638,19 +691,19 @@ export default function IpoDetailScreen() {
       }
     }
 
-    const savingPnl = updates.some((u: any) => u.withdrawalMoney !== undefined || u.profitLoss !== undefined);
-    if (savingPnl && !hasShareRule) {
-      Alert.alert('Share template required', 'Select a share template for this IPO before saving P&L');
-      return;
-    }
-
     try {
       const { data } = await client.patch('/ipo-applications/bulk', { updates });
       const auto = data.autoDistributions || [];
       const applied = auto.filter((r: any) => !r.skipped);
+      const needRules = auto.filter((r: any) => r.skipped && /share|one-time|Profit Sharing/i.test(r.reason || ''));
       setEditedRows({});
       load();
-      if (applied.length) {
+      if (needRules.length) {
+        Alert.alert(
+          'Saved',
+          `${applied.length ? `P&L split for ${applied.length} member(s). ` : ''}${needRules.length} member(s) were saved but not split. Use Split P&L and enter a one-time rule, or add them to the IPO template.`
+        );
+      } else if (applied.length) {
         Alert.alert('Success', `Saved. P&L share applied for ${applied.length} member(s).`);
       } else {
         Alert.alert('Success', 'Applications updated');
@@ -1098,15 +1151,85 @@ export default function IpoDetailScreen() {
     }
   };
 
-  const onPreviewProfitShare = async () => {
-    if (!hasShareRule) {
-      Alert.alert('Share template required', 'Select a share template for this IPO first');
+  const instantFor = (applicationId: number) => instantByApp[applicationId] || emptyInstantRule();
+
+  const patchInstant = (applicationId: number, patch: Record<string, unknown>) => {
+    setInstantByApp((prev) => ({
+      ...prev,
+      [applicationId]: { ...(prev[applicationId] || emptyInstantRule()), ...patch },
+    }));
+  };
+
+  const oneTimeIntent = (rule: any) => Boolean(rule?.fundProviderId)
+    || Number(rule?.profitProviderPercent) > 0
+    || Number(rule?.profitManagerPercent) > 0
+    || Number(rule?.lossProviderPercent) > 0
+    || Number(rule?.lossManagerPercent) > 0;
+
+  const splitRowBlocked = (row: any) => {
+    if (!row.needsInstantRule) return Boolean(row.configWarning);
+    const rule = instantFor(row.applicationId);
+    const percentsValid = memberSharePercent(rule.profitProviderPercent, rule.profitManagerPercent) != null
+      && memberSharePercent(rule.lossProviderPercent, rule.lossManagerPercent) != null;
+    if (!percentsValid) return true;
+    if (providerInvolved(rule) && !rule.fundProviderId) return true;
+    if (singleSplit && !instantRuleReady(rule)) return true;
+    return false;
+  };
+
+  const rowWillSplit = (row: any) => {
+    if (!row.needsInstantRule) return !row.configWarning;
+    const rule = instantFor(row.applicationId);
+    if (!instantRuleReady(rule)) return false;
+    if (singleSplit) return true;
+    return oneTimeIntent(rule);
+  };
+
+  const openOneTimeSplit = async (app: any) => {
+    const gross = getComputedProfit(app);
+    if (gross == null || Number(gross) === 0) {
+      Alert.alert('P&L required', 'Set withdrawal so this member has a P&L before a one-time split');
       return;
     }
     setProfitLoading(true);
     try {
-      const { data } = await client.post('/profit-shares/preview', { ipoId: Number(id) });
+      if (!fundProviders.length) {
+        const { data } = await client.get('/profit-shares/providers');
+        setFundProviders(Array.isArray(data) ? data : []);
+      }
+      setProfitPreview([{
+        applicationId: app.id,
+        memberName: app.display_name,
+        grossProfitLoss: Number(gross),
+        needsInstantRule: true,
+        needsResplit: Boolean(app.profit_share_distribution_id),
+        providerAmount: 0,
+        managerAmount: 0,
+        memberAmount: 0,
+        ruleLines: [],
+      }]);
+      setInstantByApp({});
+      setSingleSplit(true);
+      setProfitModalOpen(true);
+    } catch (err) {
+      Alert.alert('Error', getErrorMessage(err));
+    } finally {
+      setProfitLoading(false);
+    }
+  };
+
+  const onPreviewProfitShare = async () => {
+    setProfitLoading(true);
+    try {
+      const [previewRes, providersRes] = await Promise.all([
+        client.post('/profit-shares/preview', { ipoId: Number(id) }),
+        client.get('/profit-shares/providers'),
+      ]);
+      const data = Array.isArray(previewRes.data) ? previewRes.data : [];
+      setFundProviders(Array.isArray(providersRes.data) ? providersRes.data : []);
       setProfitPreview(data);
+      setInstantByApp({});
+      setSingleSplit(false);
       setProfitModalOpen(true);
       if (!data.length) Alert.alert('Info', 'No pending allotted applications with P&L to distribute');
     } catch (err) {
@@ -1117,12 +1240,36 @@ export default function IpoDetailScreen() {
   };
 
   const onConfirmProfitShare = async () => {
+    if (profitPreview.some(splitRowBlocked) || !profitPreview.some(rowWillSplit)) {
+      Alert.alert(
+        'Rule required',
+        singleSplit
+          ? 'Enter a one-time rule for this member on this IPO'
+          : 'Fill a one-time rule only for the members who should use it. Leave the others blank.'
+      );
+      return;
+    }
+    const instantRules = profitPreview
+      .filter((row) => row.needsInstantRule && instantRuleReady(instantFor(row.applicationId)))
+      .map((row) => instantRulePayload(row.applicationId, instantFor(row.applicationId)));
     setProfitLoading(true);
     try {
-      const { data } = await client.post('/profit-shares/distribute', { ipoId: Number(id) });
-      setProfitModalOpen(false);
+      const { data } = await client.post('/profit-shares/distribute', singleSplit
+        ? { applicationIds: profitPreview.map((row) => row.applicationId), instantRules }
+        : { ipoId: Number(id), instantRules });
+      const skipped = data.skipped || [];
       load();
-      Alert.alert('Success', `Distributed P&L for ${data.count} application(s)`);
+      if (skipped.length) {
+        const reasons = skipped.map((s: any) => `${s.memberName || 'Member'}: ${s.reason}`).join('\n');
+        if (!data.count) {
+          Alert.alert('Not split', reasons || 'Nothing was split');
+          return;
+        }
+        Alert.alert('Partial split', `Split ${data.count}. Not split:\n${reasons}`);
+      } else {
+        Alert.alert('Success', `Distributed P&L for ${data.count} application(s)`);
+      }
+      setProfitModalOpen(false);
     } catch (err) {
       Alert.alert('Error', getErrorMessage(err));
     } finally {
@@ -1130,7 +1277,7 @@ export default function IpoDetailScreen() {
     }
   };
 
-  const profitHasWarnings = profitPreview.some((r) => r.configWarning);
+  const profitBlocked = !profitPreview.some(rowWillSplit) || profitPreview.some(splitRowBlocked);
 
   if (loading && !ipo) return <Loading />;
 
@@ -1153,27 +1300,17 @@ export default function IpoDetailScreen() {
         title={ipo.name}
         subtitle={
           `${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'}` +
-          ` · Open ${formatIpoDate(ipo.open_date)} · Close ${formatIpoDate(ipo.last_apply_date)}` +
-          ` · Listing ${ipoListed ? formatIpoDate(ipo.listing_date) : 'waiting'}` +
           ` · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
-          (ipoAllowsHni(ipo) && ipoHasHniLot(ipo)
-            ? ` · HNI ${formatCurrency(getLotAmountForCategory(ipo, 'HNI'))}`
-            : '')
+          (ipoListed ? '' : ' · Listing pending')
         }
         extra={
           <View style={{ gap: 6, alignItems: 'flex-end' }}>
-            <Button compact mode="outlined" onPress={openEditIpo}>Edit</Button>
+            <Button mode="outlined" onPress={openEditIpo}>Edit</Button>
             {!ipoListed && !isInvalid ? (
-              <Button compact mode="contained" loading={listingSaving} onPress={onMarkListed}>
+              <Button mode="contained" loading={listingSaving} onPress={onMarkListed}>
                 Mark listed
               </Button>
             ) : null}
-            {ipoListed && !isInvalid ? (
-              <Button compact mode="outlined" textColor="#dc2626" loading={listingSaving} onPress={onUndoMarkListed}>
-                Undo listed
-              </Button>
-            ) : null}
-            <Button compact mode="text" onPress={() => router.back()}>Back</Button>
           </View>
         }
       />
@@ -1194,7 +1331,7 @@ export default function IpoDetailScreen() {
 
       <ContentCard title="Share template">
         {!hasShareRule && (
-          <Banner variant="warn">Select a share template before distribute or P&L. Group rules on Profit sharing so members do not overlap.</Banner>
+          <Banner variant="info">No template. Funds can still be distributed. Profit split needs a template or a one-time rule.</Banner>
         )}
         {shareRuleSaving ? <Text style={ui.muted}>Saving…</Text> : null}
         {sharePacks.map((p: any) => {
@@ -1285,7 +1422,7 @@ export default function IpoDetailScreen() {
       <ContentCard title="Actions">
         <View style={styles.primaryActions}>
           {!isFrozen && (
-            <Button mode="contained" disabled={!availableMembers.length || !hasShareRule} onPress={openDistribute} style={styles.primaryBtn}>
+            <Button mode="contained" disabled={!availableMembers.length} onPress={openDistribute} style={styles.primaryBtn}>
               Distribute
             </Button>
           )}
@@ -1302,22 +1439,6 @@ export default function IpoDetailScreen() {
             Reuse leftover funds
           </Button>
         )}
-        {!isFrozen && (
-          <Button
-            mode="outlined"
-            style={{ marginTop: 8 }}
-            onPress={() => router.push('/(manager)/adjust-combine')}
-          >
-            Reuse on several IPOs
-          </Button>
-        )}
-        <Button
-          mode="outlined"
-          style={{ marginTop: 8 }}
-          onPress={() => router.push('/(manager)/group-leader-wallets')}
-        >
-          Leader wallets
-        </Button>
         <Button
           mode="outlined"
           style={{ marginTop: 8 }}
@@ -1342,14 +1463,12 @@ export default function IpoDetailScreen() {
               }
             }
             if (!isFrozen) {
-              if (!hasShareRule) {
-                buttons.push({
-                  text: 'Distribute P&L (select a share template first)',
-                  onPress: () => Alert.alert('Share template required', 'Select a share template for this IPO first'),
-                });
-              } else {
-                buttons.push({ text: 'Distribute P&L', onPress: onPreviewProfitShare });
-              }
+              buttons.push({ text: 'Split P&L', onPress: onPreviewProfitShare });
+              buttons.push({ text: 'Reuse on several IPOs', onPress: () => router.push('/(manager)/adjust-combine') });
+            }
+            buttons.push({ text: 'Leader wallets', onPress: () => router.push('/(manager)/group-leader-wallets') });
+            if (ipoListed && !isInvalid) {
+              buttons.push({ text: 'Undo listed', onPress: onUndoMarkListed });
             }
             buttons.push({
               text: 'Share template',
@@ -1558,6 +1677,7 @@ export default function IpoDetailScreen() {
               onUndoReceive={() => onUndoReceive(app.id, false)}
               onUndoReceiveWithProfit={() => onUndoReceive(app.id, true)}
               onRevokeProfitSplit={() => onRevokeProfitSplit(app.id)}
+              onOneTimeSplit={() => openOneTimeSplit(app)}
               receiving={receivingAppId === app.id}
               undistributing={undistributingAppId === app.id}
               undoing={undoingAppId === app.id}
@@ -1853,7 +1973,6 @@ export default function IpoDetailScreen() {
                           <View key={a.id} style={styles.splitRow}>
                             <Text style={{ flex: 1 }}>{a.label}</Text>
                             <TextInput
-                              dense
                               mode="outlined"
                               keyboardType="numeric"
                               placeholder="₹0"
@@ -1988,30 +2107,86 @@ export default function IpoDetailScreen() {
       <Modal visible={profitModalOpen} animationType="slide" onRequestClose={() => setProfitModalOpen(false)}>
         <SafeAreaView style={ui.modal}>
           <View style={ui.modalHeader}>
-            <Text style={ui.modalTitle}>Distribute P&L (by %)</Text>
+            <Text style={ui.modalTitle}>{singleSplit ? 'One-time split for this member' : 'Split P&L (by %)'}</Text>
             <Button mode="text" onPress={() => setProfitModalOpen(false)}>Cancel</Button>
           </View>
           <ScrollView contentContainerStyle={ui.modalBody}>
-            {profitHasWarnings && (
-              <Banner variant="warn">Some members need share rules under Profit Sharing before confirming.</Banner>
+            <Banner variant="info">{singleSplit
+              ? 'This one-time rule is separate from the share template. It applies only to this member on this IPO.'
+              : 'Template members use the template. A one-time rule applies only to the member you fill in, on this IPO. Blank members are skipped.'}</Banner>
+            {profitPreview.some((row) => row.configWarning && !row.needsInstantRule) && (
+              <Banner variant="warn">A member is on more than one rule in this template. Fix the template before splitting those rows.</Banner>
             )}
-            {profitPreview.map((row) => (
-              <View key={row.applicationId} style={styles.profitRow}>
-                <Text style={styles.bold}>{row.memberName}</Text>
-                <Text style={{ color: pnlColor(row.grossProfitLoss) }}>Gross: {formatCurrency(row.grossProfitLoss)}</Text>
-                {row.configWarning ? (
-                  <Tag label={row.configWarning} color="#dc2626" />
-                ) : (
-                  <Text style={ui.muted}>
-                    Provider {formatCurrency(row.providerAmount)} · Manager {formatCurrency(row.managerAmount)} · Member keeps {formatCurrency(row.memberAmount)}
-                  </Text>
-                )}
-              </View>
-            ))}
+            {profitPreview.map((row) => {
+              const rule = instantFor(row.applicationId);
+              const live = row.needsInstantRule ? liveOneTimeSplit(row.grossProfitLoss, rule) : null;
+              const amounts = live || row;
+              return (
+                <View key={row.applicationId} style={styles.profitRow}>
+                  <Text style={styles.memberName}>{row.memberName}</Text>
+                  <Text style={{ color: pnlColor(row.grossProfitLoss) }}>Gross: {formatCurrency(row.grossProfitLoss)}</Text>
+                  {row.needsInstantRule ? (
+                    <>
+                      <Text style={ui.muted}>
+                        {providerInvolved(rule)
+                          ? 'Select a fund provider. They receive a share of this split.'
+                          : 'Fund provider is optional while their share is 0%.'}
+                      </Text>
+                      {fundProviders.map((p) => (
+                        <Pressable
+                          key={p.fundProviderId}
+                          style={[ui.accountOption, Number(rule.fundProviderId) === Number(p.fundProviderId) && ui.accountOptionActive]}
+                          onPress={() => patchInstant(row.applicationId, { fundProviderId: p.fundProviderId })}
+                        >
+                          <Text>{p.providerName}</Text>
+                        </Pressable>
+                      ))}
+                      {!fundProviders.length ? <Text style={ui.muted}>Add a fund provider first.</Text> : null}
+                      <TextInput label="Profit provider %" value={String(rule.profitProviderPercent ?? '')} onChangeText={(profitProviderPercent) => patchInstant(row.applicationId, { profitProviderPercent })} keyboardType="numeric" mode="outlined" style={ui.input} />
+                      <TextInput label="Profit manager %" value={String(rule.profitManagerPercent ?? '')} onChangeText={(profitManagerPercent) => patchInstant(row.applicationId, { profitManagerPercent })} keyboardType="numeric" mode="outlined" style={ui.input} />
+                      <TextInput label="Loss provider %" value={String(rule.lossProviderPercent ?? '')} onChangeText={(lossProviderPercent) => patchInstant(row.applicationId, { lossProviderPercent })} keyboardType="numeric" mode="outlined" style={ui.input} />
+                      <TextInput label="Loss manager %" value={String(rule.lossManagerPercent ?? '')} onChangeText={(lossManagerPercent) => patchInstant(row.applicationId, { lossManagerPercent })} keyboardType="numeric" mode="outlined" style={ui.input} />
+                      <Text style={styles.bold}>
+                        Member profit {memberSharePercent(rule.profitProviderPercent, rule.profitManagerPercent) ?? '—'}%
+                        {' · '}
+                        Member loss {memberSharePercent(rule.lossProviderPercent, rule.lossManagerPercent) ?? '—'}%
+                      </Text>
+                    </>
+                  ) : row.configWarning ? (
+                    <Tag label={row.configWarning} color="#dc2626" />
+                  ) : (
+                    <Text style={ui.muted}>Template rule</Text>
+                  )}
+                  {!row.configWarning || row.needsInstantRule ? (
+                    <View>
+                      {(() => {
+                        const templateLines = visibleProviderLines(row.ruleLines);
+                        const selected = fundProviders.find((p) => Number(p.fundProviderId) === Number(rule?.fundProviderId));
+                        const lines = templateLines.length
+                          ? templateLines
+                          : [{
+                            providerName: selected?.providerName || null,
+                            providerAmount: amounts.providerAmount,
+                            providerPercent: amounts.providerPercent,
+                          }];
+                        return lines.map((line: any, index: number) => (
+                          <Text key={`${line.fundProviderId || index}-${providerShareLabel(line, lines)}`} style={ui.muted}>
+                            {providerShareLabel(line, lines)} {formatCurrency(providerLineAmount(line))}
+                          </Text>
+                        ));
+                      })()}
+                      <Text style={ui.muted}>
+                        Manager {formatCurrency(amounts.managerAmount)} · Member keeps {formatCurrency(amounts.memberAmount)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
             <Button
               mode="contained"
               loading={profitLoading}
-              disabled={!profitPreview.length || profitHasWarnings}
+              disabled={!profitPreview.length || profitBlocked}
               onPress={onConfirmProfitShare}
             >
               Confirm distribution
@@ -2062,6 +2237,7 @@ function ApplicationCard({
   onUndoReceive,
   onUndoReceiveWithProfit,
   onRevokeProfitSplit,
+  onOneTimeSplit,
   receiving,
   undistributing,
   undoing,
@@ -2088,7 +2264,7 @@ function ApplicationCard({
           <Checkbox status={selected ? 'checked' : 'unchecked'} onPress={onToggleSelect} />
         )}
         <View style={{ flex: 1 }}>
-          <Text style={styles.bold}>{app.display_name}</Text>
+          <Text style={styles.memberName}>{app.display_name}</Text>
           <Text style={ui.muted}>PAN {formatPan(app.pan)}</Text>
         </View>
         {isFundReturned(app) ? (
@@ -2139,7 +2315,6 @@ function ApplicationCard({
       ) : null}
 
       <TextInput
-        dense
         label="Amount (₹)"
         value={String(amount ?? '')}
         onChangeText={(v) => updateAmount(app, v === '' ? null : Number(v))}
@@ -2176,8 +2351,7 @@ function ApplicationCard({
       {status === 'ALLOTED' && ipoIsListed(ipo) ? (
         <>
           <TextInput
-            dense
-            label="Withdrawal money (₹ received back)"
+            label="Withdrawal (₹)"
             value={withdrawal != null ? String(withdrawal) : ''}
             onChangeText={(v) => updateWithdrawal(app, v === '' ? null : Number(v))}
             keyboardType="numeric"
@@ -2185,29 +2359,45 @@ function ApplicationCard({
             disabled={isClosed}
             style={ui.input}
           />
-          <Text style={[styles.sectionTitle, { color: pnlColor(pnl) }]}>
-            P&L (profit): {pnl != null ? formatCurrency(pnl) : '—'}
+          <Text style={[styles.memberName, { color: pnlColor(pnl) }]}>
+            P&L {pnl != null ? formatCurrency(pnl) : '—'}
           </Text>
-          <Text style={ui.hint}>Profit = withdrawal − distributed amount</Text>
         </>
       ) : status === 'ALLOTED' ? (
-        <Text style={ui.hint}>Waiting for listing — tap Mark listed on this IPO to enter withdrawal and P&L.</Text>
+          <Text style={ui.hint}>Mark this IPO listed to enter withdrawal and P&L.</Text>
       ) : null}
 
       {app.profit_share_distribution_id ? (
         <View style={{ marginBottom: 8 }}>
           <Text style={ui.hint}>Member: {formatCurrency(app.share_member_amount)}</Text>
           <Text style={ui.hint}>Manager: {formatCurrency(app.share_manager_amount)}</Text>
-          <Text style={ui.hint}>Provider: {formatCurrency(app.share_provider_amount)}</Text>
+          {(() => {
+            const lines = visibleProviderLines(app.share_provider_lines);
+            if (!lines.length) {
+              return <Text style={ui.hint}>Provider: {formatCurrency(app.share_provider_amount)}</Text>;
+            }
+            return lines.map((line: any, index: number) => (
+              <Text key={`${line.fundProviderId || index}-${providerShareLabel(line, lines)}`} style={ui.hint}>
+                {providerShareLabel(line, lines)}: {formatCurrency(providerLineAmount(line))}
+              </Text>
+            ));
+          })()}
           <Tag label="P&L split done" color="#7c3aed" />
+          {!isClosed && (
+            <Button compact mode="text" onPress={onOneTimeSplit}>One-time rule for this member</Button>
+          )}
         </View>
       ) : status === 'ALLOTED' && !waitingForListing && pnl != null && Number(pnl) !== 0 ? (
-        <Tag label="P&L splits on save" color="#d97706" />
+        <View style={{ marginBottom: 8 }}>
+          <Tag label="P&L splits on save" color="#d97706" />
+          {!isClosed && (
+            <Button compact mode="text" onPress={onOneTimeSplit}>One-time rule for this member</Button>
+          )}
+        </View>
       ) : null}
 
       <TextInput
-        dense
-        label={app.profit_share_distribution_id ? 'Notes (member will send)' : 'Remarks'}
+        label={app.profit_share_distribution_id ? 'Notes' : 'Remarks'}
         value={remarksOrMemberSendNote(
           { ...app, withdrawalMoney: withdrawal },
           remarks,
@@ -2259,16 +2449,17 @@ function ApplicationCard({
 
 const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-  warnText: { color: '#dc2626', fontSize: 13, marginTop: 4 },
-  errorText: { color: '#dc2626', marginBottom: 12 },
-  summaryMeta: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
+  warnText: { color: '#dc2626', fontSize: 15, fontWeight: '600', marginTop: 4 },
+  errorText: { color: '#dc2626', marginBottom: 12, fontSize: 15 },
+  summaryMeta: { fontSize: 15, fontWeight: '500', color: colors.textSecondary, lineHeight: 22 },
   fullBtn: { width: '100%' },
   primaryActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   primaryBtn: { flexGrow: 1, minWidth: 120 },
   accountDisabled: { opacity: 0.5 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
-  sectionTitle: { fontWeight: '600', fontSize: 13, marginTop: 4, color: colors.text },
-  bold: { fontWeight: '600' },
+  sectionTitle: { fontWeight: '700', fontSize: 15, marginTop: 8, color: colors.text },
+  memberName: { fontWeight: '700', fontSize: 18, color: colors.text },
+  bold: { fontWeight: '700', fontSize: 16 },
   groupBox: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, marginBottom: 12, padding: 4, backgroundColor: '#fff' },
   selectActions: {
     flexDirection: 'row',

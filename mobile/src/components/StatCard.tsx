@@ -50,7 +50,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingTop: spacing.lg,
     flex: 1,
-    minHeight: 84,
+    minHeight: 92,
     borderWidth: 1,
     borderColor: colors.borderLight,
     overflow: 'hidden',
@@ -65,8 +65,7 @@ const styles = StyleSheet.create({
   title: {
     ...typography.label,
     color: colors.textSecondary,
-    textTransform: 'uppercase',
     marginBottom: spacing.sm,
   },
-  value: { fontSize: 20, fontWeight: '800', letterSpacing: -0.3 },
+  value: { fontSize: 22, fontWeight: '800', letterSpacing: -0.3 },
 });

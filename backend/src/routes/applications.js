@@ -7,6 +7,7 @@ import {
   revokeProfitShareDistribution,
   isIpoFinancialsFrozen,
   assertIpoApplicationsEditable,
+  attachShareProviderLines,
 } from '../services/profitShareService.js';
 import { normalizeInvestorCategory } from '../constants/ipoCategories.js';
 import { assertIpoListedForWithdrawal, ipoIsListed } from '../utils/ipoListing.js';
@@ -222,7 +223,7 @@ router.patch('/bulk', async (req, res, next) => {
       [...updatedIds, req.tenantId]
     );
 
-    res.json({ applications: rows, autoDistributions });
+    res.json({ applications: await attachShareProviderLines(pool, rows), autoDistributions });
   } catch (err) {
     next(err);
   }

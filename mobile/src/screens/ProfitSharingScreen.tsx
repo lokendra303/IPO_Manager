@@ -14,7 +14,7 @@ import Banner from '../components/Banner';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
-import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
+import { formatCurrency, formatDateTime, formatPan, providerLineAmount, providerLineName, providerShareLabel, visibleProviderLines } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import { openActionSheet } from '../utils/actionSheet';
 import { colors, radii, spacing } from '../theme';
@@ -652,6 +652,10 @@ export default function ProfitSharingScreen() {
   };
 
   const openDistributionMore = (r: any) => {
+    const lines = visibleProviderLines(r.ruleLines);
+    const providerLines = lines.length
+      ? lines.map((line) => `${providerShareLabel(line, lines)}: ${formatCurrency(providerLineAmount(line))}`)
+      : [`${r.provider_name || 'Provider'}: ${formatCurrency(r.provider_amount)}`];
     openActionSheet(r.display_name, [
       {
         text: 'View details',
@@ -660,7 +664,7 @@ export default function ProfitSharingScreen() {
             r.ipo_name,
             [
               `Gross P&L: ${formatCurrency(r.gross_profit_loss)}`,
-              `Provider: ${formatCurrency(r.provider_amount)}`,
+              ...providerLines,
               `Manager: ${formatCurrency(r.manager_amount)}`,
               `Member: ${formatCurrency(r.member_amount)}`,
               formatDateTime(r.distributed_at),
@@ -929,12 +933,14 @@ export default function ProfitSharingScreen() {
           ) : distributions.length === 0 ? (
             <Text style={ui.muted}>No distributions yet</Text>
           ) : (
-            distributions.map((r: any) => (
+            distributions.map((r: any) => {
+              const names = [...new Set(visibleProviderLines(r.ruleLines).map((line) => providerLineName(line)).filter(Boolean))];
+              return (
               <View key={r.id} style={styles.compactRow}>
                 <View style={styles.compactRowMain}>
                   <ListRow
                     title={r.display_name}
-                    subtitle={`${formatCurrency(r.gross_profit_loss)} · ${r.ipo_name}`}
+                    subtitle={`${formatCurrency(r.gross_profit_loss)}${names.length ? ` · ${names.join(', ')}` : ''} · ${r.ipo_name}`}
                     onPress={() => openDistributionMore(r)}
                     right={
                       <Tag
@@ -948,7 +954,8 @@ export default function ProfitSharingScreen() {
                   <Text style={styles.moreText}>···</Text>
                 </Pressable>
               </View>
-            ))
+              );
+            })
           )}
         </ContentCard>
       )}

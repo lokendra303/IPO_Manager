@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, usePathname } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radii, shadows, spacing, typography } from '../theme';
+import { colors, radii, shadows, spacing } from '../theme';
 
 export type BottomNavTab = {
   key: string;
@@ -45,7 +45,7 @@ export default function AppBottomNav({ tabs }: Props) {
             <View style={[styles.iconWrap, active && styles.iconWrapActive]}>
               <Ionicons
                 name={active ? tab.iconActive : tab.icon}
-                size={20}
+                size={22}
                 color={active ? '#fff' : colors.textSecondary}
               />
             </View>
@@ -90,9 +90,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   label: {
-    ...typography.caption,
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.textSecondary,
   },
   labelActive: {
