@@ -44,6 +44,13 @@ function yearOptions() {
   return years;
 }
 
+function formatOpenDate(value) {
+  if (!value) return 'No open date';
+  const d = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function initials(name) {
   const parts = String(name || '')
     .trim()
@@ -287,6 +294,8 @@ export default function ProfitAnalysisPage() {
   const iposProfitLabel =
     reportScope.iposProfitLabel
     || (iposProfit === 1 ? '1 IPO gave profit' : `${iposProfit} IPOs gave profit`);
+  const appliedIpos = data?.appliedIpos || [];
+
   const periodLabel =
     reportScope.filters?.label
     || reportScope.periodLabel
@@ -446,6 +455,34 @@ export default function ProfitAnalysisPage() {
           active={view === 'members'}
           onClick={() => setView('members')}
         />
+      </section>
+
+      <section className="dash-card">
+        <header className="dash-card-head">
+          <h2>IPOs applied</h2>
+          <span className="panal-group-meta">{appliedIpos.length} in this period</span>
+        </header>
+        {appliedIpos.length === 0 ? (
+          <EmptyState>No IPOs applied in this period.</EmptyState>
+        ) : (
+          <ul className="panal-list">
+            {appliedIpos.map((ipo) => (
+              <li key={ipo.ipoId} className="panal-ipo">
+                <div>
+                  <strong>{ipo.name}</strong>
+                  <em>
+                    Open {formatOpenDate(ipo.openDate)}
+                    {' · '}
+                    {ipo.applicationCount} applied
+                  </em>
+                </div>
+                <span className={ipo.grossPnL == null ? '' : pnlClassName(ipo.grossPnL)}>
+                  {ipo.grossPnL == null ? '—' : formatCurrency(ipo.grossPnL)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <nav className="pshare-tabs" role="tablist" aria-label="Profit analysis sections">

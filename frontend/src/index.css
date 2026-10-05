@@ -1022,6 +1022,30 @@ body {
   margin-top: 14px;
 }
 
+.panal-ipo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.panal-ipo strong {
+  display: block;
+  color: #0f172a;
+}
+
+.panal-ipo em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 13px;
+  color: #64748b;
+}
+
 .panal-person,
 .panal-slice {
   display: grid;

@@ -1928,6 +1928,37 @@ export async function getProfitAnalysisReport(pool, tenantId, filters = {}) {
   const iposProfit = Number(ipoLifeRows[0]?.ipos_profit ?? 0);
   const iposLoss = Number(ipoLifeRows[0]?.ipos_loss ?? 0);
 
+  const appliedParams = [tenantId];
+  const appliedIpoSql = appendIpoIdIn('i.id', ipoIds, appliedParams);
+  const [appliedIpoRows] = await pool.query(
+    `SELECT i.id AS ipo_id, i.name,
+            DATE_FORMAT(i.open_date, '%Y-%m-%d') AS open_date,
+            COUNT(a.id) AS application_count,
+            SUM(CASE
+              WHEN a.allotment_status = 'ALLOTED'
+               AND a.withdrawal_money IS NOT NULL
+               AND a.profit_loss IS NOT NULL THEN 1 ELSE 0 END) AS pnl_count,
+            COALESCE(SUM(CASE
+              WHEN a.allotment_status = 'ALLOTED'
+               AND a.withdrawal_money IS NOT NULL
+               AND a.profit_loss IS NOT NULL THEN a.profit_loss ELSE 0 END), 0) AS gross_pnl
+     FROM ipos i
+     JOIN ipo_applications a
+       ON a.ipo_id = i.id AND a.tenant_id = i.tenant_id AND a.allotment_status <> 'NOT_APPLIED'
+     WHERE i.tenant_id = ?
+       AND COALESCE(i.is_invalid, 0) = 0${appliedIpoSql}
+     GROUP BY i.id, i.name, i.open_date
+     ORDER BY i.open_date, i.name`,
+    appliedParams
+  );
+  const appliedIpos = appliedIpoRows.map((r) => ({
+    ipoId: r.ipo_id,
+    name: r.name,
+    openDate: r.open_date,
+    applicationCount: Number(r.application_count),
+    grossPnL: Number(r.pnl_count) > 0 ? num(r.gross_pnl) : null,
+  }));
+
   return {
     overall: {
       ...totals.overall,
@@ -1965,6 +1996,7 @@ export async function getProfitAnalysisReport(pool, tenantId, filters = {}) {
       memberShare: num(r.member_share),
       distributionCount: Number(r.distribution_count),
     })),
+    appliedIpos,
     revenue: {
       memberShare: num(totals.overall?.memberShare),
       managerShare: num(totals.overall?.managerShare),

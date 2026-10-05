@@ -15,6 +15,13 @@ import EmailPdfModal from '../components/EmailPdfModal';
 
 type Tab = 'revenue' | 'members' | 'subgroups' | 'providers' | 'manager';
 
+function formatOpenDate(value: unknown) {
+  if (!value) return 'No open date';
+  const d = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function pnlColor(v: unknown) {
@@ -147,7 +154,7 @@ export default function ProfitAnalysisScreen() {
     const { data } = await client.get('/profit-shares/analysis', { params });
     return data;
   }, [year, months]);
-  const cacheKey = `profit-analysis-v3-${year || 'all'}-${months.join(',') || 'all'}`;
+  const cacheKey = `profit-analysis-v4-${year || 'all'}-${months.join(',') || 'all'}`;
   const { data, loading, error, reload } = useQuery(fetcher, [year, months], { cacheKey });
 
   const toggleMonth = (m: number) => {
@@ -359,6 +366,25 @@ export default function ProfitAnalysisScreen() {
           <Text style={styles.kpiHint}>{profitApps} apps profit</Text>
         </View>
       </View>
+
+      <Text style={styles.cardTitle}>IPOs applied</Text>
+      {(data?.appliedIpos || []).length === 0 ? (
+        <Text style={styles.empty}>No IPOs applied in this period.</Text>
+      ) : (
+        (data.appliedIpos || []).map((ipo: any) => (
+          <View key={ipo.ipoId} style={styles.person}>
+            <View style={styles.personTop}>
+              <Text style={styles.personName}>{ipo.name}</Text>
+            </View>
+            <Text style={styles.personMeta}>
+              Open {formatOpenDate(ipo.openDate)} · {ipo.applicationCount} applied
+            </Text>
+            <Text style={[styles.amt, { color: ipo.grossPnL == null ? colors.textSecondary : pnlColor(ipo.grossPnL) }]}>
+              {ipo.grossPnL == null ? '—' : formatCurrency(ipo.grossPnL)}
+            </Text>
+          </View>
+        ))
+      )}
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
         {tabs.map((t) => {
