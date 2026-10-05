@@ -384,9 +384,9 @@ export default function ProfitAnalysisPage() {
           ))}
         </div>
         {!year ? (
-          <p className="panal-period-hint">Pick a year to filter by month.</p>
+          <p className="panal-period-hint">Pick a year to filter by month. Months follow the IPO open date.</p>
         ) : (
-          <p className="panal-period-hint">{appsLabel} in this period.</p>
+          <p className="panal-period-hint">{appsLabel} in this period, by IPO open date.</p>
         )}
       </section>
 

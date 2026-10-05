@@ -289,6 +289,7 @@ export default function ProfitAnalysisScreen() {
           options={yearOptions}
         />
         <Text style={ui.sectionLabel}>Months {year ? `(${year})` : '(select year first)'}</Text>
+        <Text style={ui.muted}>By IPO open date</Text>
         <View style={[styles.monthRow, !year && styles.monthRowDisabled]}>
           {MONTH_SHORT.map((label, idx) => {
             const m = idx + 1;

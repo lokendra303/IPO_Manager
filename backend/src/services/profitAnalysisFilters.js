@@ -2,8 +2,8 @@
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** IPO calendar date used for month/year buckets. */
-export const IPO_PERIOD_DATE_SQL = 'COALESCE(i.open_date, DATE(i.created_at))';
+/** Month and year buckets use the IPO open date only. */
+export const IPO_PERIOD_DATE_SQL = 'i.open_date';
 
 /**
  * @param {Record<string, unknown>} query
