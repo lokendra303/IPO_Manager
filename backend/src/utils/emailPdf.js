@@ -1,7 +1,7 @@
 import { AppError } from '../middleware/errorHandler.js';
 import { normalizeEmail } from './validate.js';
 
-const MAX_PDF_BYTES = 2 * 1024 * 1024;
+const MAX_PDF_BYTES = 6 * 1024 * 1024;
 const MAX_EMAILS = 5;
 
 export function uniqueEmails(values) {
@@ -17,7 +17,7 @@ export function uniqueEmails(values) {
 }
 
 export function decodePdfBase64(raw) {
-  const cleaned = String(raw || '').replace(/^data:application\/pdf;base64,/i, '').replace(/\s/g, '');
+  const cleaned = String(raw || '').replace(/^data:application\/pdf;[^,]*,/i, '').replace(/\s/g, '');
   if (!cleaned) throw new AppError('PDF is required');
   const buf = Buffer.from(cleaned, 'base64');
   if (buf.length < 5 || buf.subarray(0, 5).toString() !== '%PDF-') {

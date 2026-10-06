@@ -183,28 +183,8 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
   };
 
   const waitingForListing = !ipoIsListed(data?.ipo);
-  const blocked = Boolean(data?.blocked);
-
-  if (blocked) {
-    return (
-      <Modal
-        title="Check allotment"
-        open={open}
-        onCancel={onClose}
-        footer={<Button onClick={onClose}>Close</Button>}
-        width={560}
-        destroyOnClose
-        className="allotment-check-modal"
-      >
-        <Alert
-          type="info"
-          showIcon
-          message="Allotment not open yet"
-          description={data.message}
-        />
-      </Modal>
-    );
-  }
+  const blocked = Boolean(data?.blocked) || data?.allotmentCheckReady === false;
+  const blockedMessage = data?.blockedReason || data?.message;
 
   const memberCols = [
     {
@@ -237,7 +217,7 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
 
   return (
     <Modal
-      title={data ? `Check allotment — ${data.ipo.name}` : 'Check allotment'}
+      title={data?.ipo?.name ? `Check allotment — ${data.ipo.name}` : 'Check allotment'}
       open={open}
       onCancel={onClose}
       footer={
@@ -250,10 +230,10 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
           >
             Email PDF
           </Button>
-          <Button onClick={() => runCheck(true)} disabled={checking || loading}>
+          <Button onClick={() => runCheck(true)} disabled={checking || loading || blocked}>
             Recheck all
           </Button>
-          <Button type="primary" icon={<SearchOutlined />} loading={checking} onClick={() => runCheck(false)}>
+          <Button type="primary" icon={<SearchOutlined />} loading={checking} disabled={blocked} onClick={() => runCheck(false)}>
             Check pending
           </Button>
         </Space>
@@ -262,6 +242,15 @@ export default function AllotmentCheckModal({ ipoId, open, onClose, onChecked, o
       destroyOnClose
       className="allotment-check-modal"
     >
+      {blocked && blockedMessage ? (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Registrar check is not open yet"
+          description={`${blockedMessage} You can still email the current allotment list.`}
+        />
+      ) : null}
       <div className="allotment-check-registrar" style={{ marginBottom: 16 }}>
         <Typography.Text strong style={{ marginRight: 8 }}>
           IPO registrar (optional)

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radii, spacing } from '../theme';
@@ -7,7 +8,10 @@ type AuthFieldProps = TextInputProps & {
   icon?: keyof typeof Ionicons.glyphMap;
 };
 
-export function AuthField({ label, icon, style, ...props }: AuthFieldProps) {
+export function AuthField({ label, icon, style, secureTextEntry, ...props }: AuthFieldProps) {
+  const [visible, setVisible] = useState(false);
+  const isPassword = Boolean(secureTextEntry);
+
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -16,10 +20,22 @@ export function AuthField({ label, icon, style, ...props }: AuthFieldProps) {
           <Ionicons name={icon} size={18} color={colors.textMuted} style={styles.icon} />
         ) : null}
         <TextInput
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor="#94a3b8"
           style={[styles.input, icon ? styles.inputWithIcon : null, style]}
+          secureTextEntry={isPassword && !visible}
           {...props}
         />
+        {isPassword ? (
+          <Pressable
+            onPress={() => setVisible((v) => !v)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={visible ? 'Hide password' : 'Show password'}
+            style={styles.eye}
+          >
+            <Ionicons name={visible ? 'eye-off-outline' : 'eye-outline'} size={22} color={colors.text} />
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
@@ -131,6 +147,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   icon: { marginRight: 10 },
+  eye: { marginLeft: 8, padding: 4 },
   input: {
     flex: 1,
     fontSize: 16,

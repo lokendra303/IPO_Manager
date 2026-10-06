@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -9,7 +9,6 @@ import { formatCurrency, formatPan } from '../utils/format';
 import { colors, radii, spacing, typography } from '../theme';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
-import { useAuth } from '../context/AuthContext';
 import { previewProfitAnalysisPdf, profitAnalysisPdfBase64, shareProfitAnalysisPdf } from '../utils/profitAnalysisPdf';
 import EmailPdfModal from '../components/EmailPdfModal';
 
@@ -32,7 +31,16 @@ function pnlColor(v: unknown) {
 }
 
 function Amt({ value }: { value: unknown }) {
-  return <Text style={[styles.amt, { color: pnlColor(value) }]}>{formatCurrency(value)}</Text>;
+  return (
+    <Text
+      style={[styles.amt, { color: pnlColor(value) }]}
+      numberOfLines={1}
+      adjustsFontSizeToFit
+      minimumFontScale={0.62}
+    >
+      {formatCurrency(value)}
+    </Text>
+  );
 }
 
 function ShareGrid({
@@ -137,7 +145,6 @@ function buildYearOptions() {
 }
 
 export default function ProfitAnalysisScreen() {
-  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('revenue');
   const [pdfLoading, setPdfLoading] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -165,19 +172,21 @@ export default function ProfitAnalysisScreen() {
     setMonths((prev) => (prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m].sort((a, b) => a - b)));
   };
 
-  const pdfMeta = () => ({
-    teamName: user?.tenantName || 'IPO Team',
-    generatedAt: new Date().toISOString(),
-  });
+  const pdfQuery = () => {
+    const params: { year?: string; months?: string } = {};
+    if (year) {
+      params.year = year;
+      if (months.length) params.months = months.join(',');
+    }
+    return params;
+  };
 
   const downloadPdf = async () => {
     setPdfLoading(true);
     try {
-      const fresh = (await reload()) || data;
-      if (!fresh) throw new Error('No data returned');
-      await shareProfitAnalysisPdf(fresh, pdfMeta());
+      await shareProfitAnalysisPdf(pdfQuery());
     } catch (err: any) {
-      Alert.alert('PDF', err?.message || 'Could not generate PDF');
+      Alert.alert('PDF', err?.response?.data?.error || err?.message || 'Could not download PDF');
     } finally {
       setPdfLoading(false);
     }
@@ -186,11 +195,9 @@ export default function ProfitAnalysisScreen() {
   const previewPdf = async () => {
     setPdfLoading(true);
     try {
-      const fresh = (await reload()) || data;
-      if (!fresh) throw new Error('No data returned');
-      await previewProfitAnalysisPdf(fresh, pdfMeta());
+      await previewProfitAnalysisPdf(pdfQuery());
     } catch (err: any) {
-      Alert.alert('Preview', err?.message || 'Could not preview PDF');
+      Alert.alert('Preview', err?.response?.data?.error || err?.message || 'Could not preview PDF');
     } finally {
       setPdfLoading(false);
     }
@@ -200,7 +207,7 @@ export default function ProfitAnalysisScreen() {
 
   if ((error && !data) || !data) {
     return (
-      <Screen>
+      <Screen bottomNavInset>
         <View style={ui.card}>
           <Text style={styles.error}>{error || 'No data returned'}</Text>
           <Button mode="contained" onPress={() => reload()}>Retry</Button>
@@ -246,11 +253,17 @@ export default function ProfitAnalysisScreen() {
   ];
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <View style={styles.head}>
         <Text style={styles.hello}>P&L report</Text>
         <Text style={styles.title}>Profit analysis</Text>
-        <Text style={styles.lead}>{periodLabel} · {iposAppliedLabel} · {iposProfitLabel}</Text>
+        <View style={styles.facts}>
+          {[periodLabel, iposAppliedLabel, iposProfitLabel].map((label) => (
+            <View key={label} style={styles.fact}>
+              <Text style={styles.factText}>{label}</Text>
+            </View>
+          ))}
+        </View>
       </View>
 
       <View style={styles.actions}>
@@ -274,29 +287,30 @@ export default function ProfitAnalysisScreen() {
         >
           Download
         </Button>
+        <Button
+          mode="outlined"
+          icon="email-outline"
+          disabled={pdfLoading || !data}
+          onPress={() => setEmailOpen(true)}
+          style={styles.actionWide}
+        >
+          Email PDF
+        </Button>
       </View>
-      <Button
-        mode="outlined"
-        icon="email-outline"
-        disabled={pdfLoading || !data}
-        onPress={() => setEmailOpen(true)}
-        style={{ marginBottom: 12 }}
-      >
-        Email PDF
-      </Button>
 
       <View style={ui.card}>
         <Text style={styles.cardTitle}>Period</Text>
         <FilterChips
           value={year}
+          scrollable={false}
           onChange={(v) => {
             setYear(v);
             if (!v) setMonths([]);
           }}
           options={yearOptions}
         />
-        <Text style={ui.sectionLabel}>Months {year ? `(${year})` : '(select year first)'}</Text>
-        <Text style={ui.muted}>By IPO open date</Text>
+        <Text style={styles.monthHeading}>Months {year ? `(${year})` : '(select a year first)'}</Text>
+        <Text style={styles.openDateHint}>Counted by IPO open date</Text>
         <View style={[styles.monthRow, !year && styles.monthRowDisabled]}>
           {MONTH_SHORT.map((label, idx) => {
             const m = idx + 1;
@@ -330,22 +344,22 @@ export default function ProfitAnalysisScreen() {
       <View style={styles.money}>
         <View style={[styles.moneyCell, styles.moneyMain]}>
           <Text style={styles.moneyLabelLight}>Gross IPO P&L</Text>
-          <Text style={styles.moneyValueLight}>{formatCurrency(overall.grossIpoPnL)}</Text>
+          <Text style={styles.moneyValueLight} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+            {formatCurrency(overall.grossIpoPnL)}
+          </Text>
           <Text style={styles.moneyHintLight}>{appsLabel}</Text>
         </View>
-        <View style={styles.moneyRow}>
-          <View style={styles.moneyCell}>
-            <Text style={styles.moneyLabel}>Members</Text>
-            <Amt value={revenue.memberShare} />
-          </View>
-          <View style={[styles.moneyCell, styles.moneyUp]}>
-            <Text style={styles.moneyLabel}>You</Text>
-            <Amt value={revenue.managerShare} />
-          </View>
-          <View style={styles.moneyCell}>
-            <Text style={styles.moneyLabel}>Providers</Text>
-            <Amt value={revenue.providerShare} />
-          </View>
+        <View style={styles.splitRow}>
+          <Text style={styles.moneyLabel}>Members</Text>
+          <View style={styles.splitAmt}><Amt value={revenue.memberShare} /></View>
+        </View>
+        <View style={[styles.splitRow, styles.moneyUp]}>
+          <Text style={styles.moneyLabel}>You</Text>
+          <View style={styles.splitAmt}><Amt value={revenue.managerShare} /></View>
+        </View>
+        <View style={styles.splitRow}>
+          <Text style={styles.moneyLabel}>Providers</Text>
+          <View style={styles.splitAmt}><Amt value={revenue.providerShare} /></View>
         </View>
       </View>
 
@@ -358,12 +372,14 @@ export default function ProfitAnalysisScreen() {
         <View style={[styles.kpi, pendingCount > 0 ? styles.kpiWarn : null]}>
           <Text style={styles.kpiLabel}>Pending</Text>
           <Text style={styles.kpiValue}>{pendingCount}</Text>
-          <Text style={styles.kpiHint}>{formatCurrency(revenue.pendingGross)}</Text>
+          <Text style={styles.kpiHint} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+            {formatCurrency(revenue.pendingGross)}
+          </Text>
         </View>
         <View style={[styles.kpi, styles.kpiTeal]}>
           <Text style={styles.kpiLabel}>Splits</Text>
           <Text style={styles.kpiValue}>{splitCount}</Text>
-          <Text style={styles.kpiHint}>{profitApps} apps profit</Text>
+          <Text style={styles.kpiHint}>{profitApps} apps with profit</Text>
         </View>
       </View>
 
@@ -372,26 +388,33 @@ export default function ProfitAnalysisScreen() {
         <Text style={styles.empty}>No IPOs applied in this period.</Text>
       ) : (
         (data.appliedIpos || []).map((ipo: any) => (
-          <View key={ipo.ipoId} style={styles.person}>
-            <View style={styles.personTop}>
-              <Text style={styles.personName}>{ipo.name}</Text>
+          <View key={ipo.ipoId} style={styles.ipoCard}>
+            <View style={styles.ipoTop}>
+              <Text style={styles.ipoName}>{ipo.name}</Text>
+              <Text
+                style={[styles.ipoAmt, { color: ipo.grossPnL == null ? colors.textSecondary : pnlColor(ipo.grossPnL) }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {ipo.grossPnL == null ? 'No P&L yet' : formatCurrency(ipo.grossPnL)}
+              </Text>
             </View>
-            <Text style={styles.personMeta}>
-              Open {formatOpenDate(ipo.openDate)} · {ipo.applicationCount} applied
-            </Text>
-            <Text style={[styles.amt, { color: ipo.grossPnL == null ? colors.textSecondary : pnlColor(ipo.grossPnL) }]}>
-              {ipo.grossPnL == null ? '—' : formatCurrency(ipo.grossPnL)}
+            <Text style={styles.ipoMeta}>
+              Opened {formatOpenDate(ipo.openDate)} · {ipo.applicationCount} applied
             </Text>
           </View>
         ))
       )}
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
+      <View style={styles.tabs}>
         {tabs.map((t) => {
           const on = tab === t.key;
           return (
             <Pressable key={t.key} style={[styles.tab, on && styles.tabOn]} onPress={() => setTab(t.key)}>
-              <Text style={[styles.tabText, on && styles.tabTextOn]}>{t.label}</Text>
+              <Text style={[styles.tabText, on && styles.tabTextOn]} numberOfLines={1}>
+                {t.label}
+              </Text>
               {t.count != null ? (
                 <View style={[styles.tabCount, on && styles.tabCountOn]}>
                   <Text style={[styles.tabCountText, on && styles.tabCountTextOn]}>{t.count}</Text>
@@ -400,7 +423,7 @@ export default function ProfitAnalysisScreen() {
             </Pressable>
           );
         })}
-      </ScrollView>
+      </View>
 
       {tab === 'revenue' && (
         <>
@@ -528,7 +551,9 @@ export default function ProfitAnalysisScreen() {
           <Text style={styles.cardTitle}>{manager.label || 'Your share'}</Text>
           <View style={[styles.moneyCell, styles.moneyMain, { borderRadius: radii.md, marginBottom: 10 }]}>
             <Text style={styles.moneyLabelLight}>Total share</Text>
-            <Text style={styles.moneyValueLight}>{formatCurrency(manager.totalShare)}</Text>
+            <Text style={styles.moneyValueLight} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+              {formatCurrency(manager.totalShare)}
+            </Text>
           </View>
           <View style={styles.mini}>
             <View style={[styles.miniCell, { backgroundColor: colors.successLight }]}>
@@ -552,7 +577,7 @@ export default function ProfitAnalysisScreen() {
         canSend={Boolean(data)}
         disabledReason="Report is not loaded yet"
         buildAttachment={async () => {
-          const built = await profitAnalysisPdfBase64(data, pdfMeta());
+          const built = await profitAnalysisPdfBase64(pdfQuery());
           const summary = `${periodLabel} · ${iposAppliedLabel} · ${iposProfitLabel}`;
           return {
             pdfBase64: built.pdfBase64,
@@ -580,9 +605,19 @@ const styles = StyleSheet.create({
     color: colors.primaryDark,
   },
   title: { ...typography.title, color: colors.text, marginTop: 2 },
-  lead: { ...typography.caption, color: colors.textSecondary, marginTop: 6, lineHeight: 22 },
-  actions: { flexDirection: 'row', gap: 8, marginBottom: spacing.md },
-  actionBtn: { flex: 1 },
+  facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  fact: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  factText: { fontSize: 14, fontWeight: '700', color: colors.text },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
+  actionBtn: { flexGrow: 1, flexBasis: '46%' },
+  actionWide: { flexGrow: 1, flexBasis: '100%' },
   cardTitle: { ...typography.section, color: colors.text, marginBottom: 8, marginTop: 4 },
   money: {
     borderRadius: radii.xl,
@@ -597,15 +632,29 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryDark,
     padding: spacing.lg,
   },
-  moneyRow: { flexDirection: 'row' },
   moneyUp: { backgroundColor: colors.primaryLight },
-  moneyLabel: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+  moneyLabel: { fontSize: 16, fontWeight: '800', color: colors.text },
   moneyLabelLight: { fontSize: 14, fontWeight: '700', color: 'rgba(236,253,245,0.92)' },
-  moneyValueLight: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -0.5 },
-  moneyHintLight: { fontSize: 14, color: 'rgba(236,253,245,0.9)' },
-  kpis: { flexDirection: 'row', gap: 8, marginBottom: spacing.md },
+  moneyValueLight: { fontSize: 28, fontWeight: '800', color: '#fff' },
+  moneyHintLight: { fontSize: 15, fontWeight: '600', color: 'rgba(236,253,245,0.9)' },
+  splitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  splitAmt: { flexShrink: 1, maxWidth: '62%', alignItems: 'flex-end' },
+  kpis: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   kpi: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: '46%',
+    maxWidth: '100%',
     minHeight: 88,
     padding: 12,
     borderRadius: radii.md,
@@ -617,19 +666,24 @@ const styles = StyleSheet.create({
   kpiInfo: { backgroundColor: colors.infoLight, borderColor: '#bfdbfe' },
   kpiWarn: { backgroundColor: colors.warningLight, borderColor: '#fde68a' },
   kpiTeal: { backgroundColor: colors.primaryLight, borderColor: colors.primaryMuted },
-  kpiLabel: { fontSize: 14, fontWeight: '700', color: colors.textSecondary },
+  kpiLabel: { fontSize: 16, fontWeight: '800', color: colors.text },
   kpiValue: { fontSize: 22, fontWeight: '800', color: colors.text },
   kpiHint: { fontSize: 14, fontWeight: '500', color: colors.textSecondary },
-  tabs: { gap: 8, paddingBottom: spacing.md },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   tab: {
-    height: 40,
-    paddingHorizontal: 14,
+    flexGrow: 1,
+    flexBasis: '46%',
+    minWidth: '46%',
+    minHeight: 44,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
   },
   tabOn: { backgroundColor: colors.primaryDark, borderColor: colors.primaryDark },
@@ -645,9 +699,13 @@ const styles = StyleSheet.create({
   tabCountText: { fontSize: 13, fontWeight: '800', color: colors.text },
   tabCountTextOn: { color: '#fff' },
   sectionLead: { ...typography.caption, color: colors.textSecondary, marginBottom: spacing.md, lineHeight: 22 },
-  mini: { flexDirection: 'row', gap: 8, marginBottom: spacing.md },
+  mini: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   miniCell: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: '46%',
+    maxWidth: '100%',
     padding: 12,
     borderRadius: radii.md,
     backgroundColor: colors.card,
@@ -668,8 +726,30 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   personTop: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
-  personName: { ...typography.body, fontWeight: '700', color: colors.text, fontSize: 17 },
+  personName: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 160,
+    minWidth: '62%',
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 24,
+    color: colors.text,
+  },
   personMeta: { ...typography.caption, color: colors.textSecondary },
+  ipoCard: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  ipoTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  ipoName: { flex: 1, fontSize: 17, fontWeight: '800', lineHeight: 22, color: colors.text },
+  ipoMeta: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
+  ipoAmt: { flexShrink: 1, maxWidth: '42%', fontSize: 18, fontWeight: '800', textAlign: 'right' },
   leaderTag: {
     fontSize: 13,
     fontWeight: '700',
@@ -683,18 +763,23 @@ const styles = StyleSheet.create({
   },
   shares: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
   shareCell: {
-    minWidth: '30%',
     flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: '46%',
+    maxWidth: '100%',
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: radii.sm,
     backgroundColor: '#f8fafc',
   },
   shareCellWarn: { backgroundColor: colors.warningLight },
   shareLabel: { fontSize: 14, fontWeight: '700', color: colors.textSecondary, marginBottom: 2 },
-  amt: { fontSize: 16, fontWeight: '800', color: colors.text },
+  amt: { fontSize: 18, fontWeight: '800', color: colors.text },
   mix: { flexDirection: 'row', height: 8, borderRadius: radii.pill, overflow: 'hidden', backgroundColor: colors.border, marginTop: 4 },
   mixSeg: { minWidth: 0, height: '100%' },
+  monthHeading: { fontSize: 16, fontWeight: '800', color: colors.text, marginTop: 4, marginBottom: 4 },
+  openDateHint: { fontSize: 15, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 },
   monthRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -703,9 +788,14 @@ const styles = StyleSheet.create({
   },
   monthRowDisabled: { opacity: 0.55 },
   monthChip: {
+    flexGrow: 1,
+    flexBasis: '22%',
+    minWidth: '22%',
+    maxWidth: '32%',
+    alignItems: 'center',
     borderRadius: radii.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
@@ -717,7 +807,7 @@ const styles = StyleSheet.create({
   monthChipDisabled: {
     backgroundColor: colors.borderLight || colors.card,
   },
-  monthText: { ...typography.caption, fontWeight: '600', color: colors.text },
+  monthText: { fontSize: 15, fontWeight: '700', color: colors.text },
   monthTextActive: { color: '#fff' },
   monthTextDisabled: { color: colors.textSecondary },
 });

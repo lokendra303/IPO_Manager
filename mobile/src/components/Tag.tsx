@@ -26,5 +26,5 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   dot: { width: 6, height: 6, borderRadius: 3 },
-  text: { fontSize: 13, fontWeight: '700' },
+  text: { fontSize: 15, fontWeight: '800' },
 });

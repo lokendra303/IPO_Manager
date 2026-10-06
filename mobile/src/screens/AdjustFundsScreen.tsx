@@ -228,12 +228,12 @@ export default function AdjustFundsScreen() {
   const lot = targetIpo ? getLotAmountForCategory(targetIpo, category) : null;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Reuse leftover funds"
         subtitle={targetIpo ? `Onto ${targetIpo.name}` : ''}
         right={
-          <View style={{ flexDirection: 'row', gap: 4 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
             <Button compact mode="text" onPress={() => router.push('/(manager)/group-leader-wallets')}>
               Leaders
             </Button>

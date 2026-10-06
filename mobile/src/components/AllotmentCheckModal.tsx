@@ -18,9 +18,18 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onChecked?: () => void;
+  fallbackApplications?: any[];
+  fallbackIpoName?: string;
 };
 
-export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked }: Props) {
+export default function AllotmentCheckModal({
+  ipoId,
+  visible,
+  onClose,
+  onChecked,
+  fallbackApplications = [],
+  fallbackIpoName,
+}: Props) {
   const { user } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -40,7 +49,20 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
     client
       .get(`/ipos/${ipoId}/allotment-check`)
       .then((r) => setData(r.data))
-      .catch((err) => Alert.alert('Error', getErrorMessage(err, 'Failed to load')))
+      .catch((err) => {
+        const status = (err as { response?: { status?: number; data?: { code?: string } } })?.response?.status;
+        const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+        if (status === 409 && code === 'ALLOTMENT_NOT_OPEN') {
+          setData({
+            allotmentCheckReady: false,
+            blockedReason: getErrorMessage(err, 'Registrar check is not open yet. You can still email the current list.'),
+            ipo: { name: fallbackIpoName },
+            applications: fallbackApplications,
+          });
+          return;
+        }
+        Alert.alert('Error', getErrorMessage(err, 'Failed to load'));
+      })
       .finally(() => setLoading(false));
   };
 
@@ -96,10 +118,12 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
 
   return (
     <>
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible && !emailOpen} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={ui.modal}>
         <View style={ui.modalHeader}>
-          <Text style={ui.modalTitle}>{data ? `Check allotment — ${data.ipo.name}` : 'Check allotment'}</Text>
+          <Text style={ui.modalTitle}>
+            {data?.ipo?.name ? `Check allotment — ${data.ipo.name}` : 'Check allotment'}
+          </Text>
           <Button mode="text" onPress={onClose}>Close</Button>
         </View>
         <ScrollView contentContainerStyle={ui.modalBody}>
@@ -109,10 +133,29 @@ export default function AllotmentCheckModal({ ipoId, visible, onClose, onChecked
             </Text>
           </View>
 
-          <Button mode="contained" loading={checking} onPress={() => runCheck(false)} style={{ marginBottom: 8 }}>
+          {data?.allotmentCheckReady === false ? (
+            <View style={[ui.banner, ui.bannerWarn, { marginBottom: 12 }]}>
+              <Text style={ui.bannerText}>
+                {data.blockedReason || 'Registrar check is not open yet. You can still email the current list.'}
+              </Text>
+            </View>
+          ) : null}
+          <Button
+            mode="contained"
+            loading={checking}
+            disabled={data?.allotmentCheckReady === false}
+            onPress={() => runCheck(false)}
+            style={{ marginBottom: 8 }}
+          >
             Check pending
           </Button>
-          <Button mode="outlined" loading={checking} onPress={() => runCheck(true)} style={{ marginBottom: 8 }}>
+          <Button
+            mode="outlined"
+            loading={checking}
+            disabled={data?.allotmentCheckReady === false}
+            onPress={() => runCheck(true)}
+            style={{ marginBottom: 8 }}
+          >
             Recheck all
           </Button>
           <Button

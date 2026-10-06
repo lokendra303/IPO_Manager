@@ -113,7 +113,7 @@ export default function AdminLoginScreen() {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            placeholder="••••••••"
+            placeholder="Enter password"
             textContentType="password"
             autoComplete="password"
           />

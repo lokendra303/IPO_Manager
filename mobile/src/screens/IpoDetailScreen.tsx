@@ -5,7 +5,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Button, Checkbox, SegmentedButtons, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
-import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
 import StatGrid from '../components/StatGrid';
@@ -124,7 +123,7 @@ function instantRulePayload(applicationId: number, rule: any) {
 }
 
 export default function IpoDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, allotment } = useLocalSearchParams<{ id: string; allotment?: string }>();
   const router = useRouter();
   const { user } = useAuth();
 
@@ -145,7 +144,11 @@ export default function IpoDetailScreen() {
   const [instantByApp, setInstantByApp] = useState<Record<number, any>>({});
   const [fundProviders, setFundProviders] = useState<any[]>([]);
   const [singleSplit, setSingleSplit] = useState(false);
-  const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(false);
+  const [allotmentCheckOpen, setAllotmentCheckOpen] = useState(allotment === '1');
+
+  useEffect(() => {
+    if (allotment === '1') setAllotmentCheckOpen(true);
+  }, [allotment]);
   const [emailOpen, setEmailOpen] = useState(false);
   const [hniModalOpen, setHniModalOpen] = useState(false);
   const [hniSaving, setHniSaving] = useState(false);
@@ -1283,7 +1286,7 @@ export default function IpoDetailScreen() {
 
   if (loadError && !loading) {
     return (
-      <Screen>
+      <Screen bottomNavInset>
         <ContentCard title="Could not load IPO">
           <Text style={styles.errorText}>{loadError}</Text>
           <Button mode="contained" onPress={() => router.back()}>Back to IPOs</Button>
@@ -1295,25 +1298,21 @@ export default function IpoDetailScreen() {
   if (!ipo) return <Loading />;
 
   return (
-    <Screen>
-      <PageHeader
-        title={ipo.name}
-        subtitle={
-          `${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'}` +
-          ` · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}` +
-          (ipoListed ? '' : ' · Listing pending')
-        }
-        extra={
-          <View style={{ gap: 6, alignItems: 'flex-end' }}>
-            <Button mode="outlined" onPress={openEditIpo}>Edit</Button>
-            {!ipoListed && !isInvalid ? (
-              <Button mode="contained" loading={listingSaving} onPress={onMarkListed}>
-                Mark listed
-              </Button>
-            ) : null}
-          </View>
-        }
-      />
+    <Screen bottomNavInset>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>{ipo.name}</Text>
+        <Text style={styles.headerSub}>
+          {`${isInvalid ? 'Invalid' : isClosed ? 'Closed' : 'Open'} · ${formatCurrency(getLotAmountForCategory(ipo, 'RII'))}${ipoListed ? '' : ' · Listing pending'}`}
+        </Text>
+        <View style={styles.headerActions}>
+          <Button mode="outlined" onPress={openEditIpo}>Edit</Button>
+          {!ipoListed && !isInvalid ? (
+            <Button mode="contained" loading={listingSaving} onPress={onMarkListed}>
+              Mark listed
+            </Button>
+          ) : null}
+        </View>
+      </View>
 
       {unsavedRowCount > 0 && (
         <Banner variant="warn">{`${unsavedRowCount} unsaved — tap Save`}</Banner>
@@ -1343,7 +1342,7 @@ export default function IpoDetailScreen() {
               disabled={isFrozen}
               onPress={() => onAssignSharePack(checked ? null : Number(p.id))}
             >
-              <Text>{sharePackLabel(p)}</Text>
+              <Text style={styles.packLabel}>{sharePackLabel(p)}</Text>
             </Pressable>
           );
         })}
@@ -1373,18 +1372,21 @@ export default function IpoDetailScreen() {
       {displaySummary && (
         <ContentCard title="IPO Summary">
           <StatGrid>
-            <StatCard title="Members" value={displaySummary.applicationCount} variant="info" />
+            <StatCard compact title="Members" value={displaySummary.applicationCount} variant="info" />
             <StatCard
+              compact
               title="Total pending fund"
               value={formatCurrency(displaySummary.pendingFundTotal ?? 0)}
               variant={Number(displaySummary.pendingFundTotal ?? 0) > 0 ? 'danger' : 'success'}
             />
             <StatCard
+              compact
               title="Pending after adjust"
               value={formatCurrency(displaySummary.pendingAfterAdjust ?? 0)}
               variant={Number(displaySummary.pendingAfterAdjust ?? 0) > 0 ? 'warning' : 'success'}
             />
             <StatCard
+              compact
               title="P&L"
               value={displaySummary.totalProfitLoss == null ? '—' : formatCurrency(displaySummary.totalProfitLoss)}
               variant={
@@ -1396,11 +1398,13 @@ export default function IpoDetailScreen() {
               }
             />
             <StatCard
+              compact
               title="Provider share"
               value={formatCurrency(displaySummary.shareProviderTotal ?? 0)}
               variant="primary"
             />
             <StatCard
+              compact
               title="Returned"
               value={`${displaySummary.returnedCount}/${displaySummary.applicationCount}`}
               variant="primary"
@@ -2200,6 +2204,8 @@ export default function IpoDetailScreen() {
         visible={allotmentCheckOpen}
         onClose={() => setAllotmentCheckOpen(false)}
         onChecked={() => load()}
+        fallbackIpoName={ipo?.name}
+        fallbackApplications={emailApplications}
       />
 
       <EmailPdfModal
@@ -2369,15 +2375,15 @@ function ApplicationCard({
 
       {app.profit_share_distribution_id ? (
         <View style={{ marginBottom: 8 }}>
-          <Text style={ui.hint}>Member: {formatCurrency(app.share_member_amount)}</Text>
-          <Text style={ui.hint}>Manager: {formatCurrency(app.share_manager_amount)}</Text>
+          <Text style={styles.bold}>Member {formatCurrency(app.share_member_amount)}</Text>
+          <Text style={styles.bold}>Manager {formatCurrency(app.share_manager_amount)}</Text>
           {(() => {
             const lines = visibleProviderLines(app.share_provider_lines);
             if (!lines.length) {
-              return <Text style={ui.hint}>Provider: {formatCurrency(app.share_provider_amount)}</Text>;
+              return <Text style={styles.bold}>Provider {formatCurrency(app.share_provider_amount)}</Text>;
             }
             return lines.map((line: any, index: number) => (
-              <Text key={`${line.fundProviderId || index}-${providerShareLabel(line, lines)}`} style={ui.hint}>
+              <Text key={`${line.fundProviderId || index}-${providerShareLabel(line, lines)}`} style={styles.bold}>
                 {providerShareLabel(line, lines)}: {formatCurrency(providerLineAmount(line))}
               </Text>
             ));
@@ -2451,15 +2457,27 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
   warnText: { color: '#dc2626', fontSize: 15, fontWeight: '600', marginTop: 4 },
   errorText: { color: '#dc2626', marginBottom: 12, fontSize: 15 },
-  summaryMeta: { fontSize: 15, fontWeight: '500', color: colors.textSecondary, lineHeight: 22 },
+  summaryMeta: { fontSize: 16, fontWeight: '600', color: colors.text, lineHeight: 22 },
   fullBtn: { width: '100%' },
-  primaryActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  primaryBtn: { flexGrow: 1, minWidth: 120 },
+  header: {
+    backgroundColor: colors.card,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginBottom: 16,
+  },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: colors.text, lineHeight: 28 },
+  headerSub: { fontSize: 15, fontWeight: '600', color: colors.text, marginTop: 6, lineHeight: 21 },
+  headerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  packLabel: { fontSize: 16, fontWeight: '700', color: colors.text },
+  primaryActions: { gap: 8 },
+  primaryBtn: { width: '100%' },
   accountDisabled: { opacity: 0.5 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
-  sectionTitle: { fontWeight: '700', fontSize: 15, marginTop: 8, color: colors.text },
-  memberName: { fontWeight: '700', fontSize: 18, color: colors.text },
-  bold: { fontWeight: '700', fontSize: 16 },
+  sectionTitle: { fontWeight: '800', fontSize: 16, marginTop: 8, color: colors.text },
+  memberName: { fontWeight: '800', fontSize: 20, color: colors.text },
+  bold: { fontWeight: '800', fontSize: 17, color: colors.text, marginBottom: 2 },
   groupBox: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, marginBottom: 12, padding: 4, backgroundColor: '#fff' },
   selectActions: {
     flexDirection: 'row',

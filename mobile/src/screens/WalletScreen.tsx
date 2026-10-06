@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, SegmentedButtons, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
@@ -7,7 +7,6 @@ import PageHeader from '../components/PageHeader';
 import ContentCard from '../components/ContentCard';
 import StatCard from '../components/StatCard';
 import Loading from '../components/Loading';
-import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
 import { formatCurrency, formatDateTime } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
@@ -15,6 +14,7 @@ import { openActionSheet } from '../utils/actionSheet';
 import SlideModal from '../components/SlideModal';
 import { ui } from '../styles/ui';
 import { useQuery } from '../hooks/useQuery';
+import { colors, radii, spacing } from '../theme';
 
 const typeColors: Record<string, string> = {
   PROVIDER_IN: '#059669',
@@ -248,7 +248,7 @@ export default function WalletScreen() {
   };
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Wallet"
         extra={
@@ -278,41 +278,56 @@ export default function WalletScreen() {
           </Button>
         }
       >
-        {accounts.map((a) => (
-          <ListRow
-            key={a.id}
-            title={a.label}
-            subtitle={formatCurrency(a.balance)}
-            right={
-              <Tag
-                label={
-                  a.purpose === 'MANAGER'
-                    ? 'Manager'
-                    : a.is_active
-                      ? a.is_default
-                        ? 'Default'
-                        : 'Provider'
-                      : 'Inactive'
-                }
-              />
-            }
-            onPress={() => openAccountMore(a)}
-          />
-        ))}
+        {accounts.length === 0 ? (
+          <Text style={styles.empty}>No bank accounts yet. Use More to add one.</Text>
+        ) : (
+          accounts.map((a) => {
+            const role =
+              a.purpose === 'MANAGER'
+                ? 'Manager'
+                : a.is_active
+                  ? a.is_default
+                    ? 'Default'
+                    : 'Provider'
+                  : 'Inactive';
+            const roleColor = a.purpose === 'MANAGER' ? '#7c3aed' : a.is_active ? colors.primary : '#64748b';
+            return (
+              <Pressable
+                key={a.id}
+                style={({ pressed }) => [styles.account, pressed && styles.pressed]}
+                onPress={() => openAccountMore(a)}
+              >
+                <View style={styles.accountTop}>
+                  <Text style={styles.accountName}>{a.label}</Text>
+                  <Tag label={role} color={roleColor} />
+                </View>
+                <Text style={styles.accountAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                  {formatCurrency(a.balance)}
+                </Text>
+              </Pressable>
+            );
+          })
+        )}
       </ContentCard>
       <ContentCard title="Transactions">
-        {txns.map((t) => (
-          <ListRow
-            key={t.id}
-            title={t.type?.replace(/_/g, ' ')}
-            subtitle={`${formatDateTime(t.txn_date)} · ${t.bank_account_label || '—'}`}
-            right={
-              <Text style={{ color: typeColors[t.type] || '#64748b', fontWeight: '600' }}>
-                {formatCurrency(t.amount)}
+        {txns.length === 0 ? (
+          <Text style={styles.empty}>No transactions yet.</Text>
+        ) : (
+          txns.map((t) => (
+            <View key={t.id} style={styles.txn}>
+              <View style={styles.txnTop}>
+                <Text style={styles.txnType}>{String(t.type || '').replace(/_/g, ' ')}</Text>
+                <Text style={[styles.txnAmount, { color: typeColors[t.type] || colors.text }]} numberOfLines={1}>
+                  {formatCurrency(t.amount)}
+                </Text>
+              </View>
+              <Text style={styles.txnMeta}>
+                {formatDateTime(t.txn_date)}
+                {t.bank_account_label ? ` · ${t.bank_account_label}` : ''}
               </Text>
-            }
-          />
-        ))}
+            </View>
+          ))
+        )}
       </ContentCard>
 
       <SlideModal
@@ -394,3 +409,28 @@ export default function WalletScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  account: {
+    backgroundColor: '#f8fafc',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  pressed: { backgroundColor: colors.primaryLight, borderColor: colors.primaryMuted },
+  accountTop: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  accountName: { flex: 1, fontSize: 16, fontWeight: '800', color: colors.text },
+  accountAmount: { marginTop: 6, fontSize: 20, fontWeight: '800', color: colors.text },
+  txn: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  txnTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  txnType: { flex: 1, fontSize: 15, fontWeight: '800', color: colors.text },
+  txnAmount: { fontSize: 16, fontWeight: '800', flexShrink: 0 },
+  txnMeta: { marginTop: 4, fontSize: 14, fontWeight: '600', color: colors.textSecondary },
+  empty: { fontSize: 15, fontWeight: '600', color: colors.text },
+});

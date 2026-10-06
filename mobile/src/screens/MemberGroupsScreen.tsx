@@ -10,11 +10,10 @@ import ContentCard from '../components/ContentCard';
 import Loading from '../components/Loading';
 import ListRow from '../components/ListRow';
 import Tag from '../components/Tag';
-import StatCard from '../components/StatCard';
 import { formatCurrency, formatDateTime, formatPan } from '../utils/format';
 import { getErrorMessage } from '../utils/errors';
 import { openActionSheet } from '../utils/actionSheet';
-import { colors } from '../theme';
+import { colors, radii, spacing } from '../theme';
 import { useQuery } from '../hooks/useQuery';
 
 type MemberGroupsCache = {
@@ -440,10 +439,21 @@ export default function MemberGroupsScreen() {
                 )}
               </ContentCard>
 
-              <View style={styles.statRow}>
-                <StatCard title="Members" value={viewGroup.memberCount ?? 0} variant="info" />
-                <StatCard title="Bulk IPO pays" value={bulkTxns.length} variant="warning" />
-                <StatCard title="Total to owner" value={formatCurrency(bulkTotal)} variant="success" />
+              <View style={styles.statPair}>
+                <View style={[styles.statTile, styles.statInfo]}>
+                  <Text style={styles.statLabel}>Members</Text>
+                  <Text style={styles.statValue}>{viewGroup.memberCount ?? 0}</Text>
+                </View>
+                <View style={[styles.statTile, styles.statWarn]}>
+                  <Text style={styles.statLabel}>Bulk IPO pays</Text>
+                  <Text style={styles.statValue}>{bulkTxns.length}</Text>
+                </View>
+              </View>
+              <View style={[styles.statTile, styles.statMoney]}>
+                <Text style={styles.statLabel}>Total to owner</Text>
+                <Text style={styles.statMoneyValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                  {formatCurrency(bulkTotal)}
+                </Text>
               </View>
 
               {!viewHasOwner && (viewGroup.members?.length ?? 0) > 0 && (
@@ -497,14 +507,22 @@ export default function MemberGroupsScreen() {
                 {(viewGroup.members?.length ?? 0) === 0 ? (
                   <Text style={styles.muted}>No members — use Manage members.</Text>
                 ) : (
-                  viewGroup.members.map((m: any) => (
-                    <ListRow
-                      key={m.id}
-                      title={m.displayName}
-                      subtitle={`PAN ${formatPan(m.pan)} · ${m.status}`}
-                      right={m.id === viewGroup.ownerMemberId ? <Tag label="Owner" color="#d97706" /> : undefined}
-                    />
-                  ))
+                  viewGroup.members.map((m: any) => {
+                    const inactive = m.status === 'INACTIVE';
+                    const isOwner = m.id === viewGroup.ownerMemberId;
+                    return (
+                      <View key={m.id} style={styles.memberRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.memberName}>{m.displayName}</Text>
+                          <Text style={styles.memberPan}>PAN {formatPan(m.pan)}</Text>
+                        </View>
+                        <View style={styles.memberTags}>
+                          {isOwner ? <Tag label="Owner" color="#d97706" /> : null}
+                          <Tag label={inactive ? 'Inactive' : 'Active'} color={inactive ? '#b45309' : '#059669'} />
+                        </View>
+                      </View>
+                    );
+                  })
                 )}
               </ContentCard>
 
@@ -515,12 +533,18 @@ export default function MemberGroupsScreen() {
                   <Text style={styles.muted}>No bulk payments yet.</Text>
                 ) : (
                   bulkTxns.map((t) => (
-                    <ListRow
-                      key={t.id}
-                      title={t.ipoName || 'IPO'}
-                      subtitle={`${t.paidAt ? formatDateTime(t.paidAt) : '—'} · ${t.memberCount} members${t.investorCategory ? ` · ${t.investorCategory}` : ''}`}
-                      right={<Text style={styles.amount}>{formatCurrency(t.totalAmount)}</Text>}
-                    />
+                    <View key={t.id} style={styles.payRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.memberName}>{t.ipoName || 'IPO'}</Text>
+                        <Text style={styles.memberPan}>
+                          {t.paidAt ? formatDateTime(t.paidAt) : '—'} · {t.memberCount} members
+                          {t.investorCategory ? ` · ${t.investorCategory}` : ''}
+                        </Text>
+                      </View>
+                      <Text style={styles.payAmount} numberOfLines={1}>
+                        {formatCurrency(t.totalAmount)}
+                      </Text>
+                    </View>
                   ))
                 )}
               </ContentCard>
@@ -658,8 +682,41 @@ const styles = StyleSheet.create({
   },
   modalBody: { padding: 16, paddingBottom: 32 },
   ownerBar: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  ownerName: { fontSize: 16, fontWeight: '600', color: colors.text, flex: 1 },
-  statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 16 },
+  ownerName: { fontSize: 18, fontWeight: '800', color: colors.text, flex: 1 },
+  statPair: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
+  statTile: {
+    flex: 1,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  statInfo: { backgroundColor: colors.infoLight, borderColor: '#7dd3fc' },
+  statWarn: { backgroundColor: colors.warningLight, borderColor: '#fcd34d' },
+  statMoney: { backgroundColor: colors.successLight, borderColor: '#86efac', flex: 0 },
+  statLabel: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 4 },
+  statValue: { fontSize: 26, fontWeight: '800', color: colors.text },
+  statMoneyValue: { fontSize: 28, fontWeight: '800', color: colors.text },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  memberName: { fontSize: 17, fontWeight: '800', color: colors.text },
+  memberPan: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginTop: 2 },
+  memberTags: { alignItems: 'flex-end', gap: 4 },
+  payRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  payAmount: { fontSize: 16, fontWeight: '800', color: colors.text, flexShrink: 0 },
   ownerOption: {
     padding: 12,
     borderRadius: 8,
@@ -674,5 +731,4 @@ const styles = StyleSheet.create({
   },
   memberCheck: { marginBottom: 2 },
   memberCheckDisabled: { opacity: 0.65 },
-  amount: { fontWeight: '600', color: colors.text },
 });

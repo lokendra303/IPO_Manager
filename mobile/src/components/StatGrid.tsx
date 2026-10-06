@@ -7,9 +7,9 @@ type Props = {
   columns?: number;
 };
 
-export default function StatGrid({ children, gap = 12, columns = 2 }: Props) {
+export default function StatGrid({ children, gap = 10, columns = 2 }: Props) {
   const items = React.Children.toArray(children);
-  const widthPercent = `${Math.floor(10000 / columns) / 100 - 2}%` as const;
+  const widthPercent = columns <= 1 ? '100%' : '48%';
 
   return (
     <View style={[styles.grid, { gap }]}>
@@ -29,6 +29,6 @@ const styles = StyleSheet.create({
   },
   cell: {
     flexGrow: 1,
-    minWidth: 140,
+    maxWidth: '100%',
   },
 });

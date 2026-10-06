@@ -1,5 +1,5 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors, radii, shadows, spacing, typography } from '../theme';
+import { colors, radii, spacing } from '../theme';
 
 type Option<T extends string> = {
   value: T;
@@ -15,7 +15,7 @@ type Props<T extends string> = {
 
 export default function FilterChips<T extends string>({ value, options, onChange, scrollable = true }: Props<T>) {
   const chips = (
-    <View style={styles.row}>
+    <View style={[styles.row, !scrollable && styles.wrap]}>
       {options.map((opt) => {
         const active = value === opt.value;
         return (
@@ -45,22 +45,21 @@ export default function FilterChips<T extends string>({ value, options, onChange
 }
 
 const styles = StyleSheet.create({
-  scroll: { paddingBottom: spacing.sm, gap: spacing.sm },
-  wrap: { marginBottom: spacing.sm },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  scroll: { paddingBottom: spacing.sm, gap: 8 },
+  wrap: { flexWrap: 'wrap', marginBottom: spacing.sm },
+  row: { flexDirection: 'row', gap: 8 },
   chip: {
     borderRadius: radii.pill,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
-    ...shadows.soft,
   },
   chipActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primaryDark,
   },
-  chipText: { ...typography.body, fontWeight: '700', color: colors.text },
+  chipText: { fontSize: 14, fontWeight: '700', color: colors.text },
   chipTextActive: { color: '#fff' },
 });

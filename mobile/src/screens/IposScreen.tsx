@@ -3,12 +3,12 @@ import { router } from 'expo-router';
 import { Button, Checkbox, TextInput } from 'react-native-paper';
 import client from '../api/client';
 import Screen from '../components/Screen';
-import PageHeader from '../components/PageHeader';
 import Loading from '../components/Loading';
 import Tag from '../components/Tag';
 import Banner from '../components/Banner';
 import { getLotAmountForCategory, ipoAllowsHni, ipoHasHniLot } from '../utils/ipoCategories';
 import { formatCurrency } from '../utils/format';
+import { formatGmp } from '../utils/liveIpo';
 import { getErrorMessage } from '../utils/errors';
 import { openActionSheet } from '../utils/actionSheet';
 import SlideModal from '../components/SlideModal';
@@ -128,6 +128,7 @@ export default function IposScreen() {
     }
 
     openActionSheet(r.name, [
+      { text: 'Check allotment', onPress: () => router.push(`/(manager)/ipos/${r.id}?allotment=1`) },
       r.status === 'OPEN'
         ? {
             text: 'Close',
@@ -166,34 +167,43 @@ export default function IposScreen() {
         onPress={() => router.push(`/(manager)/ipos/${r.id}`)}
         onLongPress={() => openMore(r, invalid)}
       >
-        <View style={styles.rowMain}>
-          <Text style={styles.name} numberOfLines={1}>
-            {r.name}
-          </Text>
-          <Text style={styles.lot} numberOfLines={1}>
-            {lot}
-            {hniLot ? ` · HNI ${hniLot}` : ''}
-          </Text>
-          <View style={styles.chipRow}>
-            <Text style={styles.meta}>{apps} apps</Text>
-            {pending > 0 ? (
-              <Text style={styles.pending}>{pending} pending</Text>
-            ) : (
-              <Text style={styles.meta}>All returned</Text>
-            )}
-            {invalid ? <Tag label="Invalid" color="#64748b" /> : null}
-          </View>
+        <View style={styles.nameRow}>
+          <Text style={styles.name}>{r.name}</Text>
+          <Pressable
+            hitSlop={12}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              openMore(r, invalid);
+            }}
+            style={styles.moreBtn}
+          >
+            <Text style={styles.moreText}>···</Text>
+          </Pressable>
         </View>
-        <Pressable
-          hitSlop={12}
-          onPress={(e) => {
-            e.stopPropagation?.();
-            openMore(r, invalid);
-          }}
-          style={styles.moreBtn}
-        >
-          <Text style={styles.moreText}>···</Text>
-        </Pressable>
+        <Text style={styles.lot} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+          {lot}
+        </Text>
+        {hniLot ? <Text style={styles.meta}>HNI {hniLot}</Text> : null}
+        {r.gmp != null && r.gmp !== '' ? <Text style={styles.meta}>GMP {formatGmp(r.gmp)}</Text> : null}
+        <View style={styles.chipRow}>
+          <Text style={styles.meta}>{apps} apps</Text>
+          {pending > 0 ? (
+            <Text style={styles.pending}>{pending} pending</Text>
+          ) : (
+            <Text style={styles.meta}>All returned</Text>
+          )}
+          {invalid ? <Tag label="Invalid" color="#64748b" /> : (
+            <Pressable
+              hitSlop={8}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                router.push(`/(manager)/ipos/${r.id}?allotment=1`);
+              }}
+            >
+              <Text style={styles.allotment}>Allotment</Text>
+            </Pressable>
+          )}
+        </View>
       </Pressable>
     );
   };
@@ -201,33 +211,36 @@ export default function IposScreen() {
   if (loading && !data) return <Loading />;
 
   return (
-    <Screen>
-      <PageHeader
-        title="IPOs"
-        subtitle={`${visible.length} ${tab === 'ALL' ? 'active' : tab.toLowerCase()}`}
-        extra={
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button compact mode="outlined" onPress={() => router.push('/(manager)/adjust-combine')}>
-              Combine
-            </Button>
-            <Button
-              compact
-              mode="contained"
-              onPress={() => {
-                setForm({ ipoSegment: 'MAINBOARD', enableHni: false });
-                setModalOpen(true);
-                if (!sharePacks.length) {
-                  client.get('/profit-shares/packs')
-                    .then(({ data }) => setSharePacks(Array.isArray(data) ? data : []))
-                    .catch(() => {});
-                }
-              }}
-            >
-              New
-            </Button>
-          </View>
-        }
-      />
+    <Screen bottomNavInset>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>IPOs</Text>
+        <Text style={styles.headerSub}>
+          {visible.length} {tab === 'ALL' ? 'active' : tab.toLowerCase()}
+        </Text>
+        <View style={styles.headerActions}>
+          <Button compact mode="outlined" onPress={() => router.push('/(manager)/live-ipos' as never)}>
+            Live
+          </Button>
+          <Button compact mode="outlined" onPress={() => router.push('/(manager)/adjust-combine' as never)}>
+            Combine
+          </Button>
+          <Button
+            compact
+            mode="contained"
+            onPress={() => {
+              setForm({ ipoSegment: 'MAINBOARD', enableHni: false });
+              setModalOpen(true);
+              if (!sharePacks.length) {
+                client.get('/profit-shares/packs')
+                  .then(({ data }) => setSharePacks(Array.isArray(data) ? data : []))
+                  .catch(() => {});
+              }
+            }}
+          >
+            New
+          </Button>
+        </View>
+      </View>
 
       <FilterChips
         value={tab}
@@ -346,26 +359,34 @@ export default function IposScreen() {
 }
 
 const styles = StyleSheet.create({
-  list: { gap: spacing.sm },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  header: {
     backgroundColor: colors.card,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: colors.borderLight,
-    paddingVertical: spacing.md,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
-    gap: spacing.sm,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  headerTitle: { fontSize: 24, fontWeight: '800', color: colors.text },
+  headerSub: { fontSize: 15, fontWeight: '600', color: colors.text, marginTop: 4 },
+  headerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: spacing.md },
+  list: { gap: spacing.sm },
+  row: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    gap: 4,
   },
   rowPressed: { backgroundColor: colors.primaryLight, borderColor: colors.primaryMuted },
-  rowMain: { flex: 1, gap: 4 },
-  name: { fontSize: 18, fontWeight: '700', color: colors.text },
-  lot: { fontSize: 16, fontWeight: '700', color: colors.primaryDark, fontVariant: ['tabular-nums'] },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  name: { flex: 1, fontSize: 18, fontWeight: '800', color: colors.text, lineHeight: 24 },
+  lot: { fontSize: 20, fontWeight: '800', color: colors.primaryDark, fontVariant: ['tabular-nums'] },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 2 },
-  meta: { fontSize: 15, fontWeight: '500', color: colors.textSecondary },
-  pending: { fontSize: 15, fontWeight: '700', color: colors.warning },
+  meta: { fontSize: 16, fontWeight: '700', color: colors.text },
+  pending: { fontSize: 16, fontWeight: '800', color: colors.warning },
+  allotment: { fontSize: 16, fontWeight: '800', color: colors.primaryDark },
   moreBtn: {
     minWidth: 40,
     minHeight: 40,

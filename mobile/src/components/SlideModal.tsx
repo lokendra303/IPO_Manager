@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { Modal, ScrollView, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button } from 'react-native-paper';
 import { ui } from '../styles/ui';
+import { spacing } from '../theme';
 
 type Props = {
   visible: boolean;
@@ -26,32 +27,43 @@ export default function SlideModal({
   footer,
 }: Props) {
   const body = scroll ? (
-    <ScrollView contentContainerStyle={ui.modalBody} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={ui.modalBody}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="none"
+    >
       {children}
-      {footer}
     </ScrollView>
   ) : (
-    <View style={[ui.modalBody, { flex: 1 }]}>
-      {children}
-      {footer}
-    </View>
+    <View style={[ui.modalBody, { flex: 1 }]}>{children}</View>
   );
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={ui.modal}>
-        <View style={ui.modalHeader}>
-          <Text style={ui.modalTitle} numberOfLines={2}>
-            {title}
-          </Text>
-          {headerRight ?? (
-            <Button mode="text" onPress={onClose}>
-              {closeLabel}
-            </Button>
-          )}
-        </View>
-        {body}
-      </SafeAreaView>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <SafeAreaView style={ui.modal}>
+          <View style={ui.modalHeader}>
+            <Text style={ui.modalTitle} numberOfLines={2}>
+              {title}
+            </Text>
+            {headerRight ?? (
+              <Button mode="text" onPress={onClose}>
+                {closeLabel}
+              </Button>
+            )}
+          </View>
+          {body}
+          {footer ? (
+            <View style={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, paddingTop: spacing.sm }}>
+              {footer}
+            </View>
+          ) : null}
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

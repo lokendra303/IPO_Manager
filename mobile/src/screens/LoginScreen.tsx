@@ -4,6 +4,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -314,10 +315,13 @@ export default function LoginScreen() {
               { paddingBottom: Math.max(spacing.xl, keyboardInset) + spacing.md },
             ]}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode="none"
             showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.brandBlock, keyboardOpen && styles.brandCompact]}>
+            <Pressable
+              onPress={Keyboard.dismiss}
+              style={[styles.brandBlock, keyboardOpen && styles.brandCompact]}
+            >
               <View style={styles.brandMark}>
                 <Ionicons name="trending-up" size={22} color="#fff" />
               </View>
@@ -329,7 +333,7 @@ export default function LoginScreen() {
                     : 'Wallet, members, and IPO profit — built for mobile.'}
                 </Text>
               ) : null}
-            </View>
+            </Pressable>
 
             <View style={styles.sheet}>
               <Text style={styles.sheetTitle}>{copy.title}</Text>
@@ -389,7 +393,7 @@ export default function LoginScreen() {
                     value={password}
                     onChangeText={setPassword}
                     secureTextEntry
-                    placeholder="••••••••"
+                    placeholder="Enter password"
                     textContentType="password"
                     autoComplete="password"
                   />

@@ -32,7 +32,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: colors.borderLight,
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   accent: {
@@ -41,13 +41,13 @@ const styles = StyleSheet.create({
   },
   inner: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     padding: spacing.lg,
-    gap: spacing.md,
+    gap: spacing.sm,
   },
-  textBlock: { flex: 1 },
-  title: { ...typography.title, fontSize: 24, color: colors.text },
-  subtitle: { ...typography.caption, color: colors.textSecondary, marginTop: 4, lineHeight: 21 },
+  textBlock: { flexGrow: 1, flexBasis: 180, minWidth: '62%' },
+  title: { ...typography.title, fontSize: 22, color: colors.text },
+  subtitle: { fontSize: 15, fontWeight: '600', color: colors.text, marginTop: 4, lineHeight: 21 },
   right: { flexShrink: 0, alignItems: 'flex-end' },
 });

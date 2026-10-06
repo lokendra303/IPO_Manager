@@ -21,6 +21,8 @@ const MENU = [
   { href: '/(manager)/fund-providers' as const, label: 'Fund Providers', icon: 'business-outline' as const },
   { href: '/(manager)/wallet' as const, label: 'Wallet', icon: 'wallet-outline' as const },
   { href: '/(manager)/ipos' as const, label: 'IPOs', icon: 'trending-up-outline' as const },
+  { href: '/(manager)/live-ipos' as const, label: 'Live IPOs', icon: 'globe-outline' as const },
+  { href: '/(manager)/gmp' as const, label: 'GMP', icon: 'pulse-outline' as const },
   { href: '/(manager)/adjust-combine' as const, label: 'Reuse leftover', icon: 'swap-horizontal-outline' as const },
   { href: '/(manager)/summary' as const, label: 'Summary', icon: 'bar-chart-outline' as const },
   { type: 'heading' as const, label: 'Profit' },
@@ -74,7 +76,7 @@ function CustomDrawerContent({ navigation }: { navigation: { closeDrawer: () => 
             key={item.href}
             style={[styles.item, item.nested && styles.itemNested, active && styles.itemActive]}
             onPress={() => {
-              router.push(item.href);
+              router.push(item.href as never);
               navigation.closeDrawer();
             }}
           >
@@ -155,6 +157,9 @@ export default function ManagerLayout() {
         <Drawer.Screen name="wallet" />
         <Drawer.Screen name="ipos/index" />
         <Drawer.Screen name="ipos/[id]" options={{ drawerItemStyle: { display: 'none' } }} />
+        <Drawer.Screen name="live-ipos/index" />
+        <Drawer.Screen name="live-ipos/[id]" options={{ drawerItemStyle: { display: 'none' } }} />
+        <Drawer.Screen name="gmp" />
         <Drawer.Screen name="adjust-combine" />
         <Drawer.Screen name="summary" />
         <Drawer.Screen name="profit-analysis" />
@@ -190,7 +195,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   brandTitle: { color: '#f8fafc', fontWeight: '800', fontSize: 18, letterSpacing: -0.3 },
-  brandSub: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
+  brandSub: { color: '#e2e8f0', fontSize: 15, fontWeight: '600', marginTop: 2 },
   teamCard: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.lg,
@@ -200,14 +205,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(13, 148, 136, 0.25)',
   },
-  teamLabel: { color: '#64748b', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: '600' },
-  teamName: { color: '#e2e8f0', fontSize: 15, fontWeight: '600', marginTop: 4 },
+  teamLabel: { color: '#e2e8f0', fontSize: 14, fontWeight: '700' },
+  teamName: { color: '#ffffff', fontSize: 18, fontWeight: '800', marginTop: 4 },
   menuHeading: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    color: '#e2e8f0',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0,
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.sm,
   },
@@ -239,7 +243,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(148, 163, 184, 0.12)',
   },
   itemIconActive: { backgroundColor: colors.primary },
-  itemLabel: { color: '#94a3b8', fontSize: 15, fontWeight: '500', flex: 1 },
+  itemLabel: { color: '#f8fafc', fontSize: 17, fontWeight: '700', flex: 1 },
   itemLabelActive: { color: '#f8fafc', fontWeight: '700' },
   badge: {
     backgroundColor: colors.error,

@@ -29,6 +29,7 @@ import {
   resolveOptionalIpoId,
 } from '../services/profitShareService.js';
 import { parseProfitAnalysisFilters } from '../services/profitAnalysisFilters.js';
+import { renderProfitAnalysisPdf } from '../services/profitAnalysisPdf.js';
 import {
   listShareRules,
   getShareRule,
@@ -856,6 +857,24 @@ router.get('/analysis', async (req, res, next) => {
     const filters = parseProfitAnalysisFilters(req.query);
     const analysis = await getProfitAnalysisReport(pool, req.tenantId, filters);
     res.json(analysis);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Same PDF the website downloads. The phone saves this file instead of building its own. */
+router.get('/analysis/pdf', async (req, res, next) => {
+  try {
+    const filters = parseProfitAnalysisFilters(req.query);
+    const analysis = await getProfitAnalysisReport(pool, req.tenantId, filters);
+    const [tenantRows] = await pool.query('SELECT name FROM tenants WHERE id = ?', [req.tenantId]);
+    const { fileName, pdfBuffer } = renderProfitAnalysisPdf(analysis, {
+      teamName: tenantRows[0]?.name || 'IPO Team',
+      generatedAt: new Date().toISOString(),
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(pdfBuffer);
   } catch (err) {
     next(err);
   }

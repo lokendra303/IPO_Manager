@@ -230,12 +230,12 @@ export default function CombineAdjustScreen() {
   if (loading) return <Loading />;
 
   return (
-    <Screen>
+    <Screen bottomNavInset>
       <PageHeader
         title="Reuse leftover funds"
         subtitle="Old leftover onto new IPOs. Extra comes from the provider wallet."
         extra={
-          <View style={{ flexDirection: 'row', gap: 4 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
             <Button compact mode="text" onPress={() => router.push('/(manager)/group-leader-wallets')}>
               Leaders
             </Button>

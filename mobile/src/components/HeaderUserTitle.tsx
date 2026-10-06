@@ -59,12 +59,13 @@ const styles = StyleSheet.create({
   text: { flex: 1, minWidth: 0 },
   title: {
     ...typography.section,
-    fontSize: 16,
+    fontSize: 18,
     color: colors.text,
   },
   subtitle: {
-    ...typography.caption,
-    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
     marginTop: 1,
   },
 });

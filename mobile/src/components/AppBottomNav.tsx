@@ -13,7 +13,7 @@ export type BottomNavTab = {
   match?: (path: string) => boolean;
 };
 
-export const BOTTOM_NAV_HEIGHT = 58;
+export const BOTTOM_NAV_HEIGHT = 68;
 
 type Props = {
   tabs: BottomNavTab[];
@@ -45,8 +45,8 @@ export default function AppBottomNav({ tabs }: Props) {
             <View style={[styles.iconWrap, active && styles.iconWrapActive]}>
               <Ionicons
                 name={active ? tab.iconActive : tab.icon}
-                size={22}
-                color={active ? '#fff' : colors.textSecondary}
+                size={26}
+                color={active ? '#fff' : colors.text}
               />
             </View>
             <Text style={[styles.label, active && styles.labelActive]} numberOfLines={1}>
@@ -90,9 +90,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   label: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.text,
   },
   labelActive: {
     color: colors.primaryDark,

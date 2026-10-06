@@ -121,7 +121,6 @@ router.post('/:id/allotment/email-pdf', async (req, res, next) => {
 router.get('/:id/allotment-check', async (req, res, next) => {
   try {
     const ipoId = parsePositiveInt(req.params.id, 'IPO id');
-    await assertIpoAllotmentCheckReady(pool, { tenantId: req.tenantId, ipoId });
     const [ipoRows] = await pool.query(
       `SELECT i.id, i.name, i.status, i.registrar, i.listing_date,
               c.listing_date AS catalog_listing_date, c.status AS catalog_status
@@ -132,6 +131,19 @@ router.get('/:id/allotment-check', async (req, res, next) => {
     );
     if (!ipoRows.length) throw new AppError('IPO not found', 404);
     const ipo = ipoRows[0];
+
+    let allotmentCheckReady = true;
+    let blockedReason = null;
+    try {
+      await assertIpoAllotmentCheckReady(pool, { tenantId: req.tenantId, ipoId });
+    } catch (err) {
+      if (err.status === 409 && err.code === 'ALLOTMENT_NOT_OPEN') {
+        allotmentCheckReady = false;
+        blockedReason = err.message;
+      } else {
+        throw err;
+      }
+    }
 
     const [applications] = await pool.query(
       `SELECT a.id, a.allotment_status, m.display_name, m.pan
@@ -153,6 +165,8 @@ router.get('/:id/allotment-check', async (req, res, next) => {
         catalogStatus: ipo.catalog_status || null,
       },
       portals: getAllotmentPortalsMeta(ipo.registrar).portals,
+      allotmentCheckReady,
+      blockedReason,
       applications: applications.map((a) => ({
         id: a.id,
         allotment_status: a.allotment_status,

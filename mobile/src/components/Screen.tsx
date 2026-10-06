@@ -32,7 +32,6 @@ export default function Screen({
 
   return (
     <SafeAreaView style={styles.safe} edges={[]}>
-      <View style={styles.bgAccent} pointerEvents="none" />
       {scroll ? (
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -50,15 +49,6 @@ export default function Screen({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
-  bgAccent: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 180,
-    backgroundColor: colors.primaryLight,
-    opacity: 0.35,
-  },
   scroll: { flexGrow: 1 },
   padded: { padding: spacing.lg, paddingBottom: spacing.xxl },
 });

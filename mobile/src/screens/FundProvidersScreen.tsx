@@ -775,8 +775,8 @@ export default function FundProvidersScreen() {
 }
 
 const styles = StyleSheet.create({
-  providerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
-  providerMain: { flex: 1 },
+  providerRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs },
+  providerMain: { flexGrow: 1, flexBasis: 160, minWidth: '58%' },
   providerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   moreBtn: {
     minWidth: 36,
@@ -790,7 +790,7 @@ const styles = StyleSheet.create({
   txnRow: { marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 8 },
   words: { fontSize: 14, fontWeight: '500', color: '#334155', paddingHorizontal: 4, marginBottom: 4 },
   splitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  splitLabel: { flex: 1, fontSize: 14 },
+  splitLabel: { flex: 1, fontSize: 17, fontWeight: '700', color: colors.text },
   splitInput: { width: 120 },
   splitTotal: { fontSize: 15, fontWeight: '600', color: '#334155', marginBottom: 4 },
   splitError: { color: '#dc2626' },
